@@ -9,4 +9,9 @@ enum class StatusEffect {
   Dexterity,
 };
 
+struct StatusApplication {
+  StatusEffect effect;
+  int amount;
+};
+
 }  // namespace minispire
