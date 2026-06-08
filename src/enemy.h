@@ -1,13 +1,20 @@
 #pragma once
 
+#include <cstddef>
+#include <functional>
+#include <map>
 #include <optional>
-#include <string>
+#include <random>
 #include <unordered_map>
 #include <vector>
 
 #include "status_effect.h"
 
 namespace minispire {
+
+enum class EnemyKind {
+  JawWorm,
+};
 
 enum class MoveName {
   Chomp,
@@ -19,24 +26,55 @@ struct Move {
   MoveName name;
   int damage;
   int block;
+  std::vector<StatusApplication> applies;
 };
 
-struct MoveOption {
-  Move move;
+struct MoveTransition {
+  MoveName next_move;
   float probability;
-  int max_consecutive;
 };
+
+struct TransitionKey {
+  MoveName last;
+  int consecutive;
+
+  bool operator==(const TransitionKey& other) const {
+    return last == other.last && consecutive == other.consecutive;
+  }
+};
+
+}  // namespace minispire
+
+namespace std {
+template <>
+struct hash<minispire::TransitionKey> {
+  std::size_t operator()(const minispire::TransitionKey& k) const noexcept {
+    std::size_t h1 = std::hash<int>{}(static_cast<int>(k.last));
+    std::size_t h2 = std::hash<int>{}(k.consecutive);
+    return h1 ^ (h2 << 1);
+  }
+};
+}  // namespace std
+
+namespace minispire {
 
 struct Enemy {
-  std::string name;
+  EnemyKind kind;
   int hp;
   int max_hp;
   int current_block;
   std::unordered_map<StatusEffect, int> status_effects;
-  std::vector<MoveOption> moveset;
-  std::optional<int> first_turn_move;
-  int last_move_index;
+
+  std::unordered_map<MoveName, Move> moves;
+  std::optional<MoveName> first_turn_move;
+  std::unordered_map<TransitionKey, std::vector<MoveTransition>> transitions;
+
+  std::optional<MoveName> last_move;
   int consecutive_count;
 };
+
+MoveName select_next_move(Enemy& enemy, std::mt19937& rng);
+
+Enemy make_jaw_worm(std::mt19937& rng);
 
 }  // namespace minispire

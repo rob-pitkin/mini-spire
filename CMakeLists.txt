@@ -13,6 +13,7 @@ add_compile_options(-Wall -Wextra -Wpedantic)
 
 add_library(minispire
   src/combat_state.cc
+  src/enemy.cc
 )
 
 target_include_directories(minispire PUBLIC src)

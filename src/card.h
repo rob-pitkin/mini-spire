@@ -33,8 +33,8 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     {CardId::StrikePlus, {1, 9,  0, {}}},
     {CardId::Defend,     {1, 0,  5, {}}},
     {CardId::DefendPlus, {1, 0,  8, {}}},
-    {CardId::Bash,       {2, 8,  0, {StatusApplication{StatusEffect::Vulnerable, 2}}}},
-    {CardId::BashPlus,   {2, 10, 0, {StatusApplication{StatusEffect::Vulnerable, 3}}}},
+    {CardId::Bash,       {2, 8,  0, {StatusApplication{StatusEffect::Vulnerable, 2, StatusApplication::Target::Enemy}}}},
+    {CardId::BashPlus,   {2, 10, 0, {StatusApplication{StatusEffect::Vulnerable, 3, StatusApplication::Target::Enemy}}}},
 };
 
 }  // namespace minispire
