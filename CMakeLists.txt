@@ -18,3 +18,6 @@ add_library(minispire
 )
 
 target_include_directories(minispire PUBLIC src)
+
+add_executable(minispire-cli src/cli.cc)
+target_link_libraries(minispire-cli PRIVATE minispire)

@@ -43,3 +43,6 @@ checkpoints/
 *.ckpt
 *.pt
 *.pth
+
+# CLI trajectory logs
+logs/
