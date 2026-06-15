@@ -292,8 +292,39 @@ std::string pad_col(const std::string& s) {
   return s + std::string(COL_WIDTH - s.size(), ' ');
 }
 
+// Single-character avatar tokens, roguelike-style.
+char character_token() {
+  return '@';
+}
+
+char enemy_token(EnemyKind k) {
+  switch (k) {
+    case EnemyKind::JawWorm: return 'W';
+  }
+  return '?';
+}
+
+// Build a column-aligned row with a single character "centered" under the
+// label. Centering uses the label start offset so the token visually sits
+// over the label name rather than at the absolute column midpoint.
+std::string fmt_avatar_row(char token, const char* label) {
+  // Match the indent of the labels in the header row: "  IRONCLAD" starts
+  // at col 2; the label center is col 2 + len/2. Place token at that
+  // center, padded with spaces so the row aligns with the column.
+  int label_len = static_cast<int>(std::char_traits<char>::length(label));
+  int token_col = 2 + label_len / 2;
+  std::string row(token_col, ' ');
+  row.push_back(token);
+  return row;
+}
+
 // Renders the IRONCLAD / JAW WORM two-column block.
 void render_entities(const Character& c, const Enemy& e) {
+  // Avatar row
+  std::string left_avatar = fmt_avatar_row(character_token(), "IRONCLAD");
+  std::string right_avatar = fmt_avatar_row(enemy_token(e.kind), enemy_kind_name(e.kind));
+  std::cout << pad_col(left_avatar) << right_avatar << "\n";
+
   // Header row
   std::string left_h = "  IRONCLAD";
   std::string right_h = std::string("  ") + enemy_kind_name(e.kind);
