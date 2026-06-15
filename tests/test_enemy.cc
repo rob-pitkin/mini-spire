@@ -68,12 +68,11 @@ TEST(Enemy, TransitionRowsSumToOne) {
   }
 }
 
-TEST(Enemy, FirstSelectReturnsFirstTurnMove) {
+TEST(Enemy, FactoryPrimesFirstTurnIntent) {
+  // make_jaw_worm leaves the enemy in a ready-to-fight state: last_move
+  // is set to first_turn_move (Chomp) and consecutive_count is 1.
   std::mt19937 rng(0);
   Enemy e = make_jaw_worm(rng);
-  ASSERT_FALSE(e.last_move.has_value());
-  MoveName first = select_next_move(e, rng);
-  EXPECT_EQ(first, MoveName::Chomp);
   ASSERT_TRUE(e.last_move.has_value());
   EXPECT_EQ(*e.last_move, MoveName::Chomp);
   EXPECT_EQ(e.consecutive_count, 1);

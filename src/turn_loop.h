@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 #include "combat_state.h"
+#include "status_effect.h"
 
 namespace minispire {
 
@@ -11,6 +13,17 @@ constexpr int IRONCLAD_MAX_HP = 80;
 constexpr int IRONCLAD_ENERGY_PER_TURN = 3;
 constexpr int STARTING_HAND_SIZE = 5;
 constexpr int HAND_SIZE_LIMIT = 10;
+
+// Compute the actual damage dealt by an attack with the given base damage,
+// given the attacker's status effects (Strength adds, Weak multiplies down)
+// and defender's status effects (Vulnerable multiplies up). Float-internal,
+// truncated once at the end. Returns max(result, 0).
+//
+// Exposed so the CLI / observation layer can display the *effective* enemy
+// attack damage (Strength-modified, etc.) rather than the raw move.damage.
+int compute_attack_damage(int base,
+                          const std::unordered_map<StatusEffect, int>& attacker,
+                          const std::unordered_map<StatusEffect, int>& defender);
 
 // Constructs the v1 initial CombatState: seeded RNG, Ironclad starter
 // character (80 HP / 3 energy), one Jaw Worm with rolled HP, starter deck

@@ -114,6 +114,12 @@ Enemy make_jaw_worm(std::mt19937& rng) {
            "Transition probabilities must sum to 1.0");
   }
 
+  // Prime the intent. The factory is responsible for leaving the enemy in a
+  // "ready to fight" state where last_move stores the upcoming intent and
+  // the agent's observation can read it. After this call, last_move is set
+  // to first_turn_move and consecutive_count is 1.
+  select_next_move(e, rng);
+
   return e;
 }
 

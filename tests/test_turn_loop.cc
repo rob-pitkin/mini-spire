@@ -163,6 +163,86 @@ TEST(TurnLoop, BlockPartiallyAbsorbsDamage) {
   EXPECT_EQ(s.enemies[0].hp, 42);  // 44 - (6 - 4)
 }
 
+TEST(TurnLoop, HpClampedAtZeroOnLethal) {
+  // Character takes a 100-damage overkill — HP should clamp at 0.
+  CombatState s = make_minimal_state(0);
+  s.character.hp = 5;
+  // Force the enemy intent into Chomp (already primed from make_jaw_worm)
+  // and end-turn so the enemy attacks.
+  ASSERT_EQ(*s.enemies[0].last_move, MoveName::Chomp);
+  // Chomp deals 11. Character at 5 HP. End turn — character should clamp to 0.
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  EXPECT_EQ(s.character.hp, 0);
+  EXPECT_EQ(s.outcome, Outcome::Lost);
+}
+
+TEST(TurnLoop, EnemyHpClampedAtZeroOnLethal) {
+  // Enemy takes more damage than it has — HP should clamp at 0.
+  CombatState s = make_minimal_state(0);
+  s.enemies[0].hp = 2;  // Strike (6) is overkill
+  s.current_hand.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
+  EXPECT_EQ(s.enemies[0].hp, 0);
+  EXPECT_EQ(s.outcome, Outcome::Won);
+}
+
+// ============================================================================
+// compute_attack_damage (public formula helper)
+// ============================================================================
+
+TEST(ComputeAttackDamage, BaseNoStatuses) {
+  std::unordered_map<StatusEffect, int> empty;
+  EXPECT_EQ(compute_attack_damage(6, empty, empty), 6);
+}
+
+TEST(ComputeAttackDamage, AttackerStrengthAdds) {
+  std::unordered_map<StatusEffect, int> attacker{{StatusEffect::Strength, 3}};
+  std::unordered_map<StatusEffect, int> empty;
+  EXPECT_EQ(compute_attack_damage(11, attacker, empty), 14);
+}
+
+TEST(ComputeAttackDamage, AttackerWeakReduces) {
+  std::unordered_map<StatusEffect, int> attacker{{StatusEffect::Weak, 1}};
+  std::unordered_map<StatusEffect, int> empty;
+  EXPECT_EQ(compute_attack_damage(6, attacker, empty), 4);  // floor(6*0.75)
+}
+
+TEST(ComputeAttackDamage, DefenderVulnerableAmplifies) {
+  std::unordered_map<StatusEffect, int> empty;
+  std::unordered_map<StatusEffect, int> defender{{StatusEffect::Vulnerable, 1}};
+  EXPECT_EQ(compute_attack_damage(6, empty, defender), 9);  // floor(6*1.5)
+}
+
+TEST(ComputeAttackDamage, SingleTruncationWhenMultipleModifiers) {
+  // Strength 3 + Weak + Vulnerable on a base-11 attack (Chomp with Strength):
+  // d = 11 + 3 = 14
+  // d *= 0.75 = 10.5
+  // d *= 1.5 = 15.75
+  // floor = 15
+  std::unordered_map<StatusEffect, int> attacker{
+      {StatusEffect::Strength, 3}, {StatusEffect::Weak, 1}};
+  std::unordered_map<StatusEffect, int> defender{
+      {StatusEffect::Vulnerable, 1}};
+  EXPECT_EQ(compute_attack_damage(11, attacker, defender), 15);
+}
+
+TEST(ComputeAttackDamage, NeverNegative) {
+  // Hypothetically negative damage via overlapping debuffs — formula must
+  // clamp at 0.
+  std::unordered_map<StatusEffect, int> empty;
+  EXPECT_EQ(compute_attack_damage(0, empty, empty), 0);
+  EXPECT_EQ(compute_attack_damage(-5, empty, empty), 0);
+}
+
+TEST(ComputeAttackDamage, JawWormChompWithStrength) {
+  // Real-world case: Bellow gives Jaw Worm Strength 3; subsequent Chomp
+  // should display as 14 attack.
+  std::unordered_map<StatusEffect, int> attacker{{StatusEffect::Strength, 3}};
+  std::unordered_map<StatusEffect, int> empty;
+  EXPECT_EQ(compute_attack_damage(11, attacker, empty), 14);
+}
+
 // ============================================================================
 // Energy / hand mechanics
 // ============================================================================

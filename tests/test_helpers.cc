@@ -16,8 +16,7 @@ CombatState make_minimal_state(uint32_t seed) {
   state.character.current_block = 0;
 
   state.enemies.push_back(make_jaw_worm(state.rng));
-  // Prime the intent: handle_end_turn requires enemy.last_move to be set.
-  select_next_move(state.enemies[0], state.rng);
+  // make_jaw_worm primes the intent — last_move is already set.
 
   state.turn_number = 1;
   state.character_turn = true;

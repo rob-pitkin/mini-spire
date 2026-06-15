@@ -12,34 +12,29 @@ namespace minispire {
 
 namespace {
 
+// Helper: look up a stack count in a status map, returning 0 if absent.
 int get_status(const std::unordered_map<StatusEffect, int>& m, StatusEffect e) {
   auto it = m.find(e);
   return it == m.end() ? 0 : it->second;
 }
 
-// Damage formula per design section 8: floats internally, truncated once.
-int attack_damage(int base, const std::unordered_map<StatusEffect, int>& attacker,
-                  const std::unordered_map<StatusEffect, int>& defender) {
-  float d = static_cast<float>(base) +
-            static_cast<float>(get_status(attacker, StatusEffect::Strength));
-  if (get_status(attacker, StatusEffect::Weak) > 0) d *= 0.75f;
-  if (get_status(defender, StatusEffect::Vulnerable) > 0) d *= 1.5f;
-  int result = static_cast<int>(std::floor(d));
-  return result < 0 ? 0 : result;
+// Apply damage to a HP/block pair: block absorbs first, then HP. HP is
+// clamped at 0 so we don't end up with negative HP in observations.
+//
+// LIMITATION: STS technically tracks "overkill" damage for some end-of-fight
+// effects (e.g. Centennial Puzzle). Clamping at 0 loses that information.
+// Not used by any v1 mechanic.
+void apply_damage_to_hp_block(int& hp, int& block, int amount) {
+  int blocked = std::min(amount, block);
+  block -= blocked;
+  hp -= (amount - blocked);
+  if (hp < 0) hp = 0;
 }
 
-void apply_damage_to_character(Character& c, int amount) {
-  int blocked = std::min(amount, c.current_block);
-  c.current_block -= blocked;
-  c.hp -= (amount - blocked);
-}
-
-void apply_damage_to_enemy(Enemy& e, int amount) {
-  int blocked = std::min(amount, e.current_block);
-  e.current_block -= blocked;
-  e.hp -= (amount - blocked);
-}
-
+// LIMITATION (multi-enemy): Target::Enemy currently means "enemies[0]". With
+// multiple enemies this should know the source's index and which enemies are
+// targeted (Target::AllEnemies, Target::EnemyIndex(n), etc.). See ROB-34
+// design doc note on multi-enemy target semantics.
 void apply_status(CombatState& state, const StatusApplication& app) {
   auto& target_status = (app.target == StatusApplication::Target::Character)
                             ? state.character.status_effects
@@ -102,12 +97,14 @@ void handle_play_card(CombatState& state, CardId card_id) {
   // 1. Pay energy
   state.character.energy -= data.cost;
 
-  // 2. Apply damage to the (single) enemy
+  // 2. Apply damage to the (single) enemy.
+  // LIMITATION (multi-enemy): v1 has one enemy; cards that target all enemies
+  // (Cleave, Whirlwind) will need a target field on CardData and iteration here.
   Enemy& enemy = state.enemies[0];
   if (data.damage > 0) {
-    int dmg = attack_damage(data.damage, state.character.status_effects,
-                            enemy.status_effects);
-    apply_damage_to_enemy(enemy, dmg);
+    int dmg = compute_attack_damage(data.damage, state.character.status_effects,
+                                    enemy.status_effects);
+    apply_damage_to_hp_block(enemy.hp, enemy.current_block, dmg);
   }
 
   // 3. Apply block (with Dexterity)
@@ -140,22 +137,32 @@ void handle_play_card(CombatState& state, CardId card_id) {
   check_character_terminal(state);  // currently unreachable in v1
 }
 
+// LIMITATION (multi-enemy): this assumes a single attacking enemy at
+// state.enemies[0]. With multiple enemies, each enemy's intent fires in turn
+// order and references its own status_effects.
 void apply_move_to_state(CombatState& state, const Move& move) {
   Enemy& enemy = state.enemies[0];
 
   if (move.damage > 0) {
-    int dmg = attack_damage(move.damage, enemy.status_effects,
-                            state.character.status_effects);
-    apply_damage_to_character(state.character, dmg);
+    int dmg = compute_attack_damage(move.damage, enemy.status_effects,
+                                    state.character.status_effects);
+    apply_damage_to_hp_block(state.character.hp, state.character.current_block,
+                             dmg);
   }
   if (move.block > 0) {
     enemy.current_block += move.block;
   }
+  // STS limitation: STS cards/moves with multi-hit attacks (Twin Strike,
+  // Pommel Strike) deal Strength bonus per-hit. Our Move model is one hit
+  // per cast; multi-hit will need a `hits` field on Move.
   for (const auto& app : move.applies) {
     apply_status(state, app);
   }
 }
 
+// LIMITATION (multi-enemy): single enemy assumed. Multi-enemy needs to iterate
+// state.enemies in turn order and let each act sequentially, with intermediate
+// terminal checks.
 void handle_end_turn(CombatState& state) {
   Enemy& enemy = state.enemies[0];
 
@@ -204,6 +211,18 @@ void handle_end_turn(CombatState& state) {
 
 }  // namespace
 
+int compute_attack_damage(int base,
+                          const std::unordered_map<StatusEffect, int>& attacker,
+                          const std::unordered_map<StatusEffect, int>& defender) {
+  // Float-internal, truncated once at the end (per the STS wiki rounding rule).
+  float d = static_cast<float>(base) +
+            static_cast<float>(get_status(attacker, StatusEffect::Strength));
+  if (get_status(attacker, StatusEffect::Weak) > 0) d *= 0.75f;
+  if (get_status(defender, StatusEffect::Vulnerable) > 0) d *= 1.5f;
+  int result = static_cast<int>(std::floor(d));
+  return result < 0 ? 0 : result;
+}
+
 CombatState start_v1_combat(uint32_t seed) {
   CombatState state;
   state.seed = seed;
@@ -229,11 +248,7 @@ CombatState start_v1_combat(uint32_t seed) {
   state.character_turn = true;
   state.outcome = Outcome::InProgress;
 
-  // Set the enemy's intent for turn 1. select_next_move fires
-  // first_turn_move (because last_move is nullopt) and updates
-  // last_move = first_turn_move. From this point on, enemy.last_move
-  // stores the move that will fire on the next enemy turn.
-  select_next_move(state.enemies[0], state.rng);
+  // (Enemy intent is already primed by make_jaw_worm.)
 
   // Draw the opening hand.
   for (int i = 0; i < STARTING_HAND_SIZE; ++i) {

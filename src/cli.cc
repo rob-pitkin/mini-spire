@@ -198,7 +198,10 @@ std::string status_list(const std::unordered_map<StatusEffect, int>& effects) {
 }
 
 // Format the enemy's intent string: e.g. "Thrash  (7 atk + 5 blk)".
-std::string format_intent(const Enemy& e) {
+// The displayed attack damage reflects the actual damage that will be dealt
+// once Strength / Weak / Vulnerable are applied, matching STS behavior where
+// intent numbers always show the final value.
+std::string format_intent(const Enemy& e, const Character& c) {
   if (!e.last_move.has_value()) return "(none)";
   MoveName name = *e.last_move;
   auto it = e.moves.find(name);
@@ -222,7 +225,13 @@ std::string format_intent(const Enemy& e) {
     os << "  (";
     bool first = true;
     if (has_atk) {
-      os << m.damage << " atk";
+      // Compute the effective attack damage so the player sees what the
+      // enemy will actually deal, accounting for enemy Strength / Weak and
+      // character Vulnerable. Block is shown raw because Dexterity does not
+      // apply to enemy block in STS (it's a character-only relic effect).
+      int displayed =
+          compute_attack_damage(m.damage, e.status_effects, c.status_effects);
+      os << displayed << " atk";
       first = false;
     }
     if (has_blk) {
@@ -345,13 +354,13 @@ void render_entities(const Character& c, const Enemy& e) {
   if (!e_status.empty()) {
     right_first = "  " + e_status;
   } else {
-    right_first = "  Intent: " + format_intent(e);
+    right_first = "  Intent: " + format_intent(e, c);
   }
   std::cout << pad_col(left_nrg) << right_first << "\n";
 
   // If we showed status on the right first row, show intent on the next row.
   if (!e_status.empty()) {
-    std::cout << pad_col("") << "  Intent: " << format_intent(e) << "\n";
+    std::cout << pad_col("") << "  Intent: " << format_intent(e, c) << "\n";
   }
 
   // Character statuses, if any

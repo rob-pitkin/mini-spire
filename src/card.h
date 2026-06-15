@@ -7,6 +7,9 @@
 
 namespace minispire {
 
+// Action-space stability note: the integer values of CardId enumerators are
+// the agent's action indices. Reordering or inserting new enumerators in the
+// middle will invalidate any trained policy's action mapping. Append-only.
 enum class CardId {
   Strike,
   Defend,
@@ -16,6 +19,9 @@ enum class CardId {
   BashPlus,
 };
 
+// FUTURE: per-instance card state (e.g. Ritual Dagger's accumulated damage,
+// Searing Blow's cumulative upgrades) will require widening this struct.
+// v1 cards don't need it.
 struct Card {
   CardId card_id;
 };

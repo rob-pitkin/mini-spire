@@ -22,6 +22,8 @@ enum class MoveName {
   Bellow,
 };
 
+// FUTURE: multi-hit moves (Lagavulin's attacks, Hexaghost) need a `hits`
+// field — Strength applies per-hit. v1 moves are single-hit.
 struct Move {
   MoveName name;
   int damage;
@@ -69,6 +71,11 @@ struct Enemy {
   std::optional<MoveName> first_turn_move;
   std::unordered_map<TransitionKey, std::vector<MoveTransition>> transitions;
 
+  // last_move stores the upcoming intent — the move that will fire on the
+  // next enemy turn. It does double duty as Markov history (transitions are
+  // keyed on the move that "was just sampled," which is also the move that
+  // "will be played next"). Factory functions like make_jaw_worm leave this
+  // primed so the agent's observation can read it immediately.
   std::optional<MoveName> last_move;
   int consecutive_count;
 };
