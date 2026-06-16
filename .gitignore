@@ -35,6 +35,7 @@ build-*/
 *.swp
 *.swo
 .clangd/
+.claude/
 .cache/
 
 # OS

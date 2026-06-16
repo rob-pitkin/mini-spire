@@ -3,7 +3,6 @@
 import gymnasium as gym
 import numpy as np
 import pytest
-from gymnasium.utils.env_checker import check_env
 
 import minispire
 from minispire import MinispireEnv
@@ -180,16 +179,17 @@ def test_gym_make_works():
 
 
 # ---------------------------------------------------------------------------
-# Gymnasium env_checker
+# Gymnasium env_checker — intentionally NOT run.
+#
+# `gymnasium.utils.env_checker.check_env` samples random actions from the full
+# action_space, ignoring the action mask. Our step() raises on masked actions
+# (per ROB-41 design), so check_env will flake whenever it happens to sample
+# an illegal action. The check is designed for envs without masking.
+#
+# Our explicit per-aspect tests (spaces, reset/step shape, determinism,
+# action_masks, gym.make registration) provide stronger conformance guarantees
+# specific to the masked-env design. MaskablePPO doesn't use check_env either.
 # ---------------------------------------------------------------------------
-
-
-def test_passes_gymnasium_env_checker():
-    """Comprehensive Gymnasium API conformance check."""
-    env = MinispireEnv()
-    # warn=False so we don't get noise on optional render_mode etc.
-    check_env(env, warn=False, skip_render_check=True)
-
 
 # ---------------------------------------------------------------------------
 # Random rollout
