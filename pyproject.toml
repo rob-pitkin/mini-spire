@@ -29,6 +29,11 @@ train = [
   "sb3-contrib>=2.9",
   "torch>=2.12",
 ]
+# Lightweight extra for CI: pytest only, no torch/sb3. Keeps CI install fast
+# (~10s vs ~60s with the full train extra). Local devs should use [dev].
+ci = [
+  "pytest>=8.0",
+]
 dev = [
   "pytest>=8.0",
   "minispire[train]",

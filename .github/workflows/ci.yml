@@ -12,16 +12,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Install system build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake build-essential
 
-      - name: Configure
+      # ---- C++ build + tests -----------------------------------------------
+
+      - name: Configure C++
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build
+      - name: Build C++
         run: cmake --build build --parallel
 
-      - name: Test
+      - name: Run C++ tests
         run: ctest --test-dir build --output-on-failure
+
+      # ---- Python build + tests --------------------------------------------
+
+      - name: Install uv + Python 3.12
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install Python package + ci deps (frozen)
+        # `uv sync --frozen` installs exactly what's in uv.lock — fails if
+        # the lockfile is out of date. `--extra ci` pulls in pytest only,
+        # skipping the train extras (torch / sb3) which would dominate
+        # CI install time.
+        run: uv sync --frozen --extra ci
+
+      - name: Run Python tests
+        run: uv run pytest python/tests

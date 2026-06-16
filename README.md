@@ -1,5 +1,7 @@
 # Mini-Spire
 
+[![CI](https://github.com/rob-pitkin/mini-spire/actions/workflows/ci.yml/badge.svg)](https://github.com/rob-pitkin/mini-spire/actions/workflows/ci.yml)
+
 A fast, open-source Slay the Spire combat engine in C++ with Python bindings,
 designed as a research platform for benchmarking reinforcement learning approaches
 on roguelike environments.

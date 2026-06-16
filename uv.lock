@@ -172,6 +172,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+ci = [
+    { name = "pytest" },
+]
 dev = [
     { name = "pytest" },
     { name = "sb3-contrib" },
@@ -189,12 +192,13 @@ requires-dist = [
     { name = "gymnasium", specifier = ">=1.3" },
     { name = "minispire", extras = ["train"], marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=2.0" },
+    { name = "pytest", marker = "extra == 'ci'", specifier = ">=8.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "sb3-contrib", marker = "extra == 'train'", specifier = ">=2.9" },
     { name = "stable-baselines3", marker = "extra == 'train'", specifier = ">=2.9" },
     { name = "torch", marker = "extra == 'train'", specifier = ">=2.12" },
 ]
-provides-extras = ["train", "dev"]
+provides-extras = ["train", "ci", "dev"]
 
 [[package]]
 name = "mpmath"
