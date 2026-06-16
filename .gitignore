@@ -20,6 +20,11 @@ __pycache__/
 .venv/
 venv/
 .python-version
+.pytest_cache/
+
+# scikit-build-core build outputs
+_skbuild/
+build-*/
 
 # pybind11 build outputs
 *.pyd

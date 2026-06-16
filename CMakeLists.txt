@@ -19,12 +19,31 @@ add_library(minispire
 
 target_include_directories(minispire PUBLIC src)
 
-add_executable(minispire-cli src/cli.cc)
-target_link_libraries(minispire-cli PRIVATE minispire)
+# Position-independent code so this static lib can be linked into the
+# pybind11 shared-object extension module (required on Linux; harmless on
+# macOS/Windows).
+set_target_properties(minispire PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# CLI and tests are dev-only artifacts — skip them when scikit-build-core is
+# driving the build (wheel construction). SKBUILD is set by scikit-build-core
+# whenever it invokes CMake.
+if(NOT SKBUILD)
+  add_executable(minispire-cli src/cli.cc)
+  target_link_libraries(minispire-cli PRIVATE minispire)
+endif()
+
+# Pybind11 extension module — only when scikit-build-core invokes us.
+if(SKBUILD)
+  find_package(pybind11 CONFIG REQUIRED)
+  pybind11_add_module(_core bindings/_core.cc)
+  target_link_libraries(_core PRIVATE minispire)
+  # Install into the package directory inside the wheel.
+  install(TARGETS _core LIBRARY DESTINATION minispire)
+endif()
 
 # Tests
 option(MINISPIRE_BUILD_TESTS "Build unit tests" ON)
-if(MINISPIRE_BUILD_TESTS)
+if(MINISPIRE_BUILD_TESTS AND NOT SKBUILD)
   include(FetchContent)
   FetchContent_Declare(
     googletest

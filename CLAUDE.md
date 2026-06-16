@@ -220,18 +220,43 @@ its own way, same philosophy as the Miles project's most successful design choic
 ```
 mini-spire/
   src/              C++ engine — headers (.h) and implementations (.cc) together
-  bindings/         pybind11 module definition
+  bindings/         pybind11 module (_core.cc) — built into minispire._core
   python/
-    env.py          Gymnasium wrapper
-    train.py        PPO training script
-    benchmark.py    throughput measurement (steps/sec, episode length, reset latency)
-  terminal/         ASCII renderer
+    minispire/
+      __init__.py   Public Python API (re-exports from _core / env)
+      env.py        Gymnasium wrapper (ROB-42)
+    tests/          pytest suite for the Python side
+  tests/            GoogleTest unit tests for the C++ engine
   benchmarks/       results, scripts
-  tests/            unit tests for engine logic
-  docs/             architecture notes
   CLAUDE.md         this file
   README.md         public-facing project description
-  CMakeLists.txt
+  CMakeLists.txt    builds engine lib + CLI + GoogleTest binary (and the
+                    pybind11 extension when scikit-build-core invokes it)
+  pyproject.toml    scikit-build-core build + package metadata
+```
+
+## Python dev workflow
+
+`uv` is the package manager — always use it for Python commands.
+
+```
+uv venv --python 3.12          # one-time, creates .venv/
+uv pip install -e ".[dev]"     # installs minispire + dev/train extras
+uv run pytest python/tests     # run Python tests
+uv run python -c "import minispire"
+```
+
+Editable install caveat: with scikit-build-core, the C++ extension is built
+once and cached. After C++ changes, re-run `uv pip install -e .` to rebuild,
+or install once with `--config-settings=editable.rebuild=true` to rebuild
+on import (slower per-import, automatic).
+
+The standalone C++ build (CLI binary, GoogleTest) is unchanged:
+
+```
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build
 ```
 
 ## C++ style preferences
