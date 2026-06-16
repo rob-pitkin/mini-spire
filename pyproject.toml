@@ -19,15 +19,15 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-  "numpy>=1.24",
-  "gymnasium>=0.29",
+  "numpy>=2.0",
+  "gymnasium>=1.3",
 ]
 
 [project.optional-dependencies]
 train = [
-  "stable-baselines3>=2.3",
-  "sb3-contrib>=2.3",
-  "torch>=2.2",
+  "stable-baselines3>=2.9",
+  "sb3-contrib>=2.9",
+  "torch>=2.12",
 ]
 dev = [
   "pytest>=8.0",
