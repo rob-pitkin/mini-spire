@@ -93,3 +93,65 @@ def test_obs_view_reflects_state_after_step():
     # Character either took damage or has block; HP shouldn't increase
     # without a heal effect (none in v1).
     assert float(new_obs[0]) <= hp_before
+
+
+# ---------------------------------------------------------------------------
+# state_piles + CardId enum (ROB-46)
+# ---------------------------------------------------------------------------
+
+
+def test_state_piles_after_reset():
+    env = minispire._core.CombatEnv()
+    env.reset(seed=0)
+    piles = env.state_piles()
+    assert len(piles.hand) == 5
+    # draw is a count map (dict-like); total count across CardIds is 5.
+    assert sum(piles.draw.values()) == 5
+    assert len(piles.discard) == 0
+    assert len(piles.exhaust) == 0
+
+
+def test_state_piles_items_are_card_id_enum():
+    env = minispire._core.CombatEnv()
+    env.reset(seed=0)
+    piles = env.state_piles()
+    for card_id in piles.hand:
+        assert isinstance(card_id, minispire._core.CardId)
+    for card_id in piles.draw:
+        assert isinstance(card_id, minispire._core.CardId)
+
+
+def test_card_id_enum_has_expected_values():
+    CardId = minispire._core.CardId
+    # All 6 v1 variants exist.
+    assert CardId.Strike is not None
+    assert CardId.Defend is not None
+    assert CardId.Bash is not None
+    assert CardId.StrikePlus is not None
+    assert CardId.DefendPlus is not None
+    assert CardId.BashPlus is not None
+
+
+def test_state_piles_total_matches_starter_deck():
+    env = minispire._core.CombatEnv()
+    env.reset(seed=0)
+    piles = env.state_piles()
+    CardId = minispire._core.CardId
+
+    def total_for(card_id):
+        in_hand = sum(1 for c in piles.hand if c == card_id)
+        in_draw = piles.draw.get(card_id, 0)
+        return in_hand + in_draw
+
+    assert total_for(CardId.Strike) == 5
+    assert total_for(CardId.Defend) == 4
+    assert total_for(CardId.Bash) == 1
+
+
+def test_state_piles_draw_does_not_leak_order():
+    """The draw pile is exposed as a count map, not an ordered sequence."""
+    env = minispire._core.CombatEnv()
+    env.reset(seed=0)
+    piles = env.state_piles()
+    # draw should not be a list/tuple — it's a dict-like count map.
+    assert not isinstance(piles.draw, (list, tuple))

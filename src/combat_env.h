@@ -2,11 +2,32 @@
 
 #include <array>
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
+#include "card.h"
 #include "combat_state.h"
 
 namespace minispire {
+
+// Pile contents accessor returned by CombatEnv::state_piles(). Used by the
+// Python TUI (ROB-47) to render the pile-view. Not called per training step;
+// allocation overhead is acceptable.
+//
+// Hand / discard / exhaust are ordered lists because the player sees them
+// in order in real STS (hand left-to-right, discard top-most = most recently
+// played, exhaust similarly).
+//
+// Draw is a **count map** because real STS shows the draw pile as a shuffled
+// peek — the player can see *what* is in the draw pile but never the order.
+// Exposing the engine's ordered draw_pile vector would leak the secret
+// shuffle order to any consumer.
+struct StatePiles {
+  std::vector<CardId> hand;
+  std::unordered_map<CardId, int> draw;
+  std::vector<CardId> discard;
+  std::vector<CardId> exhaust;
+};
 
 // CombatEnv wraps CombatState + TurnLoop into a Gym-shaped env that owns its
 // observation and action-mask buffers. The buffers are stable (never
@@ -54,6 +75,9 @@ class CombatEnv {
   const CombatState& state() const { return state_; }
   Outcome outcome() const { return state_.outcome; }
   int turn_number() const { return state_.turn_number; }
+
+  // Pile contents — for the Python TUI pile-view. Not used during training.
+  StatePiles state_piles() const;
 
  private:
   CombatState state_;

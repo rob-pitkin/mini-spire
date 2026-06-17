@@ -155,4 +155,17 @@ void CombatEnv::compute_mask() {
   }
 }
 
+StatePiles CombatEnv::state_piles() const {
+  StatePiles out;
+  out.hand.reserve(state_.current_hand.size());
+  out.discard.reserve(state_.discard_pile.size());
+  out.exhaust.reserve(state_.exhaust_pile.size());
+  for (const Card& c : state_.current_hand) out.hand.push_back(c.card_id);
+  for (const Card& c : state_.discard_pile) out.discard.push_back(c.card_id);
+  for (const Card& c : state_.exhaust_pile) out.exhaust.push_back(c.card_id);
+  // Draw pile: tally per CardId. Order is not exposed (see StatePiles doc).
+  for (const Card& c : state_.draw_pile) ++out.draw[c.card_id];
+  return out;
+}
+
 }  // namespace minispire

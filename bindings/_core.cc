@@ -9,6 +9,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include "card.h"
 #include "combat_env.h"
 #include "combat_state.h"
 
@@ -46,6 +47,22 @@ PYBIND11_MODULE(_core, m) {
       .value("Won", Outcome::Won)
       .value("Lost", Outcome::Lost);
 
+  // CardId is exposed so Python code (the TUI in ROB-47) can identify cards
+  // in StatePiles without needing to also expose CARD_DATABASE.
+  py::enum_<CardId>(m, "CardId")
+      .value("Strike", CardId::Strike)
+      .value("Defend", CardId::Defend)
+      .value("Bash", CardId::Bash)
+      .value("StrikePlus", CardId::StrikePlus)
+      .value("DefendPlus", CardId::DefendPlus)
+      .value("BashPlus", CardId::BashPlus);
+
+  py::class_<StatePiles>(m, "StatePiles")
+      .def_readonly("hand", &StatePiles::hand)
+      .def_readonly("draw", &StatePiles::draw)
+      .def_readonly("discard", &StatePiles::discard)
+      .def_readonly("exhaust", &StatePiles::exhaust);
+
   py::class_<CombatEnv>(m, "CombatEnv")
       .def(py::init<>())
       .def_readonly_static("OBS_SIZE", &CombatEnv::kObsSize)
@@ -75,6 +92,9 @@ PYBIND11_MODULE(_core, m) {
           "Apply an action. Returns (obs, reward, terminated, truncated, info).")
       .def("action_mask", &mask_view,
            "Boolean mask of legal actions (length NUM_ACTIONS).")
+      .def("state_piles", &CombatEnv::state_piles,
+           "Read pile contents (hand/draw/discard/exhaust) as CardId lists. "
+           "Allocates — not for use in the training loop.")
       .def("clone", &CombatEnv::clone,
            "Deep-copy clone of the env (for MCTS).")
       .def_property_readonly("outcome", &CombatEnv::outcome)

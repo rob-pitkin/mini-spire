@@ -267,3 +267,63 @@ TEST(CombatEnv, CloneRngIsIndependent) {
   EXPECT_EQ(a.state().enemies[0].hp, b.state().enemies[0].hp);
   EXPECT_EQ(a.state().character.hp, b.state().character.hp);
 }
+
+// ============================================================================
+// state_piles() — ROB-46
+// ============================================================================
+
+TEST(CombatEnv, StatePilesAfterResetHasFiveHandFiveDraw) {
+  CombatEnv env;
+  env.reset(0);
+  StatePiles piles = env.state_piles();
+  EXPECT_EQ(piles.hand.size(), 5u);
+  // Draw is a count map; total count across CardIds should be 5.
+  int draw_total = 0;
+  for (const auto& [id, n] : piles.draw) draw_total += n;
+  EXPECT_EQ(draw_total, 5);
+  EXPECT_EQ(piles.discard.size(), 0u);
+  EXPECT_EQ(piles.exhaust.size(), 0u);
+}
+
+TEST(CombatEnv, StatePilesHandPlusDrawMatchesStarterDeck) {
+  // 5 Strike + 4 Defend + 1 Bash across hand + draw.
+  CombatEnv env;
+  env.reset(0);
+  StatePiles piles = env.state_piles();
+
+  // Hand is ordered (a vector); draw is a count map.
+  auto count_in_hand = [&](CardId id) {
+    int n = 0;
+    for (CardId h : piles.hand) if (h == id) ++n;
+    return n;
+  };
+  auto count_in_draw = [&](CardId id) {
+    auto it = piles.draw.find(id);
+    return it == piles.draw.end() ? 0 : it->second;
+  };
+  EXPECT_EQ(count_in_hand(CardId::Strike) + count_in_draw(CardId::Strike), 5);
+  EXPECT_EQ(count_in_hand(CardId::Defend) + count_in_draw(CardId::Defend), 4);
+  EXPECT_EQ(count_in_hand(CardId::Bash) + count_in_draw(CardId::Bash), 1);
+}
+
+TEST(CombatEnv, StatePilesUpdatesAfterPlayingCard) {
+  // End the turn so the discard reshuffle behavior is tested too: actually,
+  // simpler — find a Strike in hand, play it, verify discard now has 1 Strike.
+  CombatEnv env;
+  env.reset(0);
+
+  // Find Strike's action index = static_cast<int>(CardId::Strike) = 0
+  // (per CardId enum order). Verify it's legal before stepping.
+  int strike_action = static_cast<int>(CardId::Strike);
+  if (!env.action_mask()[strike_action]) {
+    GTEST_SKIP() << "Seed 0 opening hand has no Strike";
+  }
+
+  std::size_t hand_before = env.state_piles().hand.size();
+  env.step(strike_action);
+  StatePiles after = env.state_piles();
+
+  EXPECT_EQ(after.hand.size(), hand_before - 1);
+  EXPECT_EQ(after.discard.size(), 1u);
+  EXPECT_EQ(after.discard[0], CardId::Strike);
+}
