@@ -12,6 +12,7 @@
 #include "card.h"
 #include "combat_env.h"
 #include "combat_state.h"
+#include "status_effect.h"
 
 namespace py = pybind11;
 using namespace minispire;
@@ -62,6 +63,37 @@ PYBIND11_MODULE(_core, m) {
       .def_readonly("draw", &StatePiles::draw)
       .def_readonly("discard", &StatePiles::discard)
       .def_readonly("exhaust", &StatePiles::exhaust);
+
+  // Card data model (ROB-49) — lets the TUI render what each card does.
+  py::enum_<StatusEffect>(m, "StatusEffect")
+      .value("Vulnerable", StatusEffect::Vulnerable)
+      .value("Weak", StatusEffect::Weak)
+      .value("Strength", StatusEffect::Strength)
+      .value("Dexterity", StatusEffect::Dexterity);
+
+  py::class_<StatusApplication> status_application(m, "StatusApplication");
+  py::enum_<StatusApplication::Target>(status_application, "Target")
+      .value("Character", StatusApplication::Target::Character)
+      .value("Enemy", StatusApplication::Target::Enemy);
+  status_application
+      .def_readonly("effect", &StatusApplication::effect)
+      .def_readonly("amount", &StatusApplication::amount)
+      .def_readonly("target", &StatusApplication::target);
+
+  py::class_<CardData>(m, "CardData")
+      .def_readonly("cost", &CardData::cost)
+      .def_readonly("damage", &CardData::damage)
+      .def_readonly("block", &CardData::block)
+      .def_readonly("applies", &CardData::applies)
+      .def_readonly("exhaust", &CardData::exhaust);
+
+  // Look up the static card definition for a CardId. Backed by CARD_DATABASE.
+  m.def(
+      "card_data",
+      [](CardId id) { return CARD_DATABASE.at(id); },
+      py::arg("card_id"),
+      "Return the CardData (cost / damage / block / applies / exhaust) for a "
+      "CardId.");
 
   py::class_<CombatEnv>(m, "CombatEnv")
       .def(py::init<>())
