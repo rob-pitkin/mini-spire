@@ -19,10 +19,14 @@ def test_instantiates_with_no_args():
     assert env.render_mode is None
 
 
-def test_render_mode_raises():
-    # Until ROB-45 ships, any render mode is rejected.
+def test_render_mode_human_accepted():
+    env = MinispireEnv(render_mode="human")
+    assert env.render_mode == "human"
+
+
+def test_render_mode_unknown_raises():
     with pytest.raises(ValueError):
-        MinispireEnv(render_mode="human")
+        MinispireEnv(render_mode="rgb_array")
 
 
 # ---------------------------------------------------------------------------

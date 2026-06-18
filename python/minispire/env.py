@@ -20,21 +20,21 @@ class MinispireEnv(gym.Env):
     MaskablePPO calls between policy forward passes.
     """
 
-    metadata = {"render_modes": []}
+    metadata = {"render_modes": ["human"]}
     OBS_SIZE = _CombatEnv.OBS_SIZE
     NUM_ACTIONS = _CombatEnv.NUM_ACTIONS
 
     def __init__(self, render_mode: str | None = None):
         super().__init__()
-        # ROB-45 will add a Python TUI for human play. Until then, render
-        # modes are unsupported — fail loudly rather than silently no-op.
-        if render_mode is not None:
+        if render_mode is not None and render_mode not in self.metadata["render_modes"]:
             raise ValueError(
-                f"render_mode={render_mode!r} is not yet supported. "
-                "ROB-45 will add a Python TUI."
+                f"render_mode={render_mode!r} is not supported. "
+                f"Supported: {self.metadata['render_modes']}."
             )
         self.render_mode = render_mode
         self._env = _CombatEnv()
+        self._last_obs: np.ndarray | None = None
+        self._console = None  # lazily created on first human render
         self.observation_space = gym.spaces.Box(
             low=-np.inf,
             high=np.inf,
@@ -54,11 +54,34 @@ class MinispireEnv(gym.Env):
         else:
             cpp_seed = int(self.np_random.integers(0, 2**32 - 1))
         obs, info = self._env.reset(cpp_seed)
+        self._last_obs = obs
         return obs, info
 
     def step(self, action: int):
         obs, reward, terminated, truncated, info = self._env.step(int(action))
+        self._last_obs = obs
         return obs, reward, terminated, truncated, info
+
+    def render(self):
+        """Render the current state. Only render_mode='human' is supported.
+
+        Draws the fight panel via the rich renderer. Returns None per the
+        Gymnasium human-mode convention.
+        """
+        if self.render_mode is None:
+            return None
+        if self._last_obs is None:
+            raise RuntimeError("render() called before reset()")
+        # Import here so the renderer (and rich) is only pulled in when
+        # actually rendering, keeping the training import path lean.
+        from rich.console import Console
+
+        from minispire.render import screen
+
+        if self._console is None:
+            self._console = Console()
+        screen.render_fight(self._console, self._last_obs)
+        return None
 
     def action_masks(self) -> np.ndarray:
         """Return the boolean action mask. MaskablePPO calls this."""
