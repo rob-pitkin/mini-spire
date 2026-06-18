@@ -230,7 +230,7 @@ mini-spire/
   benchmarks/       results, scripts
   CLAUDE.md         this file
   README.md         public-facing project description
-  CMakeLists.txt    builds engine lib + CLI + GoogleTest binary (and the
+  CMakeLists.txt    builds engine lib + GoogleTest binary (and the
                     pybind11 extension when scikit-build-core invokes it)
   pyproject.toml    scikit-build-core build + package metadata
 ```
@@ -244,14 +244,19 @@ uv venv --python 3.12          # one-time, creates .venv/
 uv pip install -e ".[dev]"     # installs minispire + dev/train extras
 uv run pytest python/tests     # run Python tests
 uv run python -c "import minispire"
+uv run minispire-play [seed]   # interactive human play (rich TUI)
 ```
+
+Human play is the Python `minispire-play` TUI (rich-based). The old C++
+`minispire-cli` was retired once the TUI reached parity — there is no
+standalone CLI binary anymore.
 
 Editable install caveat: with scikit-build-core, the C++ extension is built
 once and cached. After C++ changes, re-run `uv pip install -e .` to rebuild,
 or install once with `--config-settings=editable.rebuild=true` to rebuild
 on import (slower per-import, automatic).
 
-The standalone C++ build (CLI binary, GoogleTest) is unchanged:
+The standalone C++ build (GoogleTest) is unchanged:
 
 ```
 cmake -S . -B build

@@ -25,14 +25,6 @@ target_include_directories(minispire PUBLIC src)
 # macOS/Windows).
 set_target_properties(minispire PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# CLI and tests are dev-only artifacts — skip them when scikit-build-core is
-# driving the build (wheel construction). SKBUILD is set by scikit-build-core
-# whenever it invokes CMake.
-if(NOT SKBUILD)
-  add_executable(minispire-cli src/cli.cc)
-  target_link_libraries(minispire-cli PRIVATE minispire)
-endif()
-
 # Pybind11 extension module — only when scikit-build-core invokes us.
 if(SKBUILD)
   find_package(pybind11 CONFIG REQUIRED)
