@@ -64,6 +64,11 @@ class MinispireEnv(gym.Env):
         """Return the boolean action mask. MaskablePPO calls this."""
         return self._env.action_mask()
 
+    def state_piles(self):
+        """Return pile contents (hand/draw/discard/exhaust). For the TUI /
+        inspection — not used in the training loop. See ROB-46."""
+        return self._env.state_piles()
+
     @property
     def outcome(self):
         return self._env.outcome

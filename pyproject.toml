@@ -21,6 +21,7 @@ classifiers = [
 dependencies = [
   "numpy>=2.0",
   "gymnasium>=1.3",
+  "rich>=13.0",
 ]
 
 [project.optional-dependencies]
@@ -38,6 +39,9 @@ dev = [
   "pytest>=8.0",
   "minispire[train]",
 ]
+
+[project.scripts]
+minispire-play = "minispire.play:main"
 
 [project.urls]
 Repository = "https://github.com/rob-pitkin/mini-spire"
