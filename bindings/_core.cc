@@ -96,7 +96,7 @@ PYBIND11_MODULE(_core, m) {
       "CardId.");
 
   py::class_<CombatEnv>(m, "CombatEnv")
-      .def(py::init<>())
+      .def(py::init<float>(), py::arg("hp_reward_coeff") = 0.0f)
       .def_readonly_static("OBS_SIZE", &CombatEnv::kObsSize)
       .def_readonly_static("NUM_ACTIONS", &CombatEnv::kNumActions)
       .def(

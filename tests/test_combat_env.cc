@@ -7,6 +7,7 @@
 #include "combat_state.h"
 #include "enemy.h"
 #include "status_effect.h"
+#include "test_helpers.h"
 #include "turn_loop.h"
 
 using namespace minispire;
@@ -326,4 +327,106 @@ TEST(CombatEnv, StatePilesUpdatesAfterPlayingCard) {
   EXPECT_EQ(after.hand.size(), hand_before - 1);
   EXPECT_EQ(after.discard.size(), 1u);
   EXPECT_EQ(after.discard[0], CardId::Strike);
+}
+
+// ============================================================================
+// Reward shaping (ROB-52)
+// ============================================================================
+
+namespace {
+
+// Build a CombatState set up for a one-Strike kill: enemy at `enemy_hp`,
+// character at `char_hp`/`char_max_hp`, a Strike in hand, energy to play it.
+// Strike deals 6, so enemy_hp <= 6 means the Strike wins.
+CombatState make_one_strike_kill_state(int enemy_hp, int char_hp,
+                                       int char_max_hp) {
+  CombatState s = minispire::testing::make_minimal_state(0);
+  s.enemies[0].hp = enemy_hp;
+  s.enemies[0].max_hp = std::max(enemy_hp, s.enemies[0].max_hp);
+  s.character.hp = char_hp;
+  s.character.max_hp = char_max_hp;
+  s.character.energy = 3;
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Strike});
+  return s;
+}
+
+constexpr int kStrikeAction = static_cast<int>(CardId::Strike);
+
+}  // namespace
+
+TEST(CombatEnv, DefaultCoeffWinRewardIsExactlyOne) {
+  // Strike kills the 5-HP enemy; with coeff 0 the reward is exactly 1.0
+  // regardless of character HP.
+  CombatEnv env(make_one_strike_kill_state(/*enemy_hp=*/5, /*char_hp=*/40,
+                                           /*char_max_hp=*/80));
+  ASSERT_TRUE(env.action_mask()[kStrikeAction]);
+  env.step(kStrikeAction);
+  ASSERT_EQ(env.outcome(), Outcome::Won);
+  EXPECT_FLOAT_EQ(env.reward(), 1.0f);
+}
+
+TEST(CombatEnv, ShapedWinAtFullHpIsOnePlusCoeff) {
+  // coeff 0.5, win at full HP (80/80) -> 1 + 0.5 * 1.0 = 1.5.
+  CombatEnv env(make_one_strike_kill_state(5, 80, 80), 0.5f);
+  env.step(kStrikeAction);
+  ASSERT_EQ(env.outcome(), Outcome::Won);
+  EXPECT_FLOAT_EQ(env.reward(), 1.5f);
+}
+
+TEST(CombatEnv, ShapedWinAtHalfHpIsOnePlusHalfCoeff) {
+  // coeff 0.5, win at 40/80 -> 1 + 0.5 * 0.5 = 1.25.
+  CombatEnv env(make_one_strike_kill_state(5, 40, 80), 0.5f);
+  env.step(kStrikeAction);
+  ASSERT_EQ(env.outcome(), Outcome::Won);
+  EXPECT_FLOAT_EQ(env.reward(), 1.25f);
+}
+
+TEST(CombatEnv, ShapedWinUsesFloatDivision) {
+  // 27/80 is non-integer; integer division would give 0. Expect
+  // 1 + 0.5 * (27/80) = 1.16875.
+  CombatEnv env(make_one_strike_kill_state(5, 27, 80), 0.5f);
+  env.step(kStrikeAction);
+  ASSERT_EQ(env.outcome(), Outcome::Won);
+  EXPECT_FLOAT_EQ(env.reward(), 1.0f + 0.5f * (27.0f / 80.0f));
+}
+
+TEST(CombatEnv, ShapedLossRewardIgnoresCoeff) {
+  // Character at 1 HP, no card to play -> ends turn -> Jaw Worm Chomp kills.
+  CombatState s = minispire::testing::make_minimal_state(0);
+  s.character.hp = 1;
+  s.current_hand.clear();  // nothing to play; must end turn
+  CombatEnv env(std::move(s), 0.5f);
+  ASSERT_TRUE(env.action_mask()[kEndTurnAction]);
+  env.step(kEndTurnAction);
+  ASSERT_EQ(env.outcome(), Outcome::Lost);
+  EXPECT_FLOAT_EQ(env.reward(), -1.0f);
+}
+
+TEST(CombatEnv, ShapedMidFightRewardIsZero) {
+  // A non-killing Strike against a healthy enemy leaves the fight in progress;
+  // reward is 0 regardless of coeff.
+  CombatEnv env(make_one_strike_kill_state(/*enemy_hp=*/40, 80, 80), 0.5f);
+  env.step(kStrikeAction);
+  ASSERT_EQ(env.outcome(), Outcome::InProgress);
+  EXPECT_FLOAT_EQ(env.reward(), 0.0f);
+}
+
+TEST(CombatEnv, ClonePreservesRewardCoeff) {
+  // Clone before the killing blow; the cloned env must produce the shaped
+  // reward, proving the coefficient survived the copy.
+  CombatEnv original(make_one_strike_kill_state(5, 80, 80), 0.5f);
+  CombatEnv copy = original.clone();
+  copy.step(kStrikeAction);
+  ASSERT_EQ(copy.outcome(), Outcome::Won);
+  EXPECT_FLOAT_EQ(copy.reward(), 1.5f);
+}
+
+TEST(CombatEnv, StateConstructorBuffersAreConsistent) {
+  // The CombatState constructor must compute obs/mask immediately.
+  CombatEnv env(make_one_strike_kill_state(5, 40, 80));
+  // obs slot 0 is character HP (ROB-40).
+  EXPECT_FLOAT_EQ(env.obs()[0], 40.0f);
+  // Strike is legal (in hand + affordable).
+  EXPECT_TRUE(env.action_mask()[kStrikeAction]);
 }

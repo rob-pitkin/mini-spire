@@ -24,7 +24,7 @@ class MinispireEnv(gym.Env):
     OBS_SIZE = _CombatEnv.OBS_SIZE
     NUM_ACTIONS = _CombatEnv.NUM_ACTIONS
 
-    def __init__(self, render_mode: str | None = None):
+    def __init__(self, hp_reward_coeff: float = 0.0, render_mode: str | None = None):
         super().__init__()
         if render_mode is not None and render_mode not in self.metadata["render_modes"]:
             raise ValueError(
@@ -32,7 +32,10 @@ class MinispireEnv(gym.Env):
                 f"Supported: {self.metadata['render_modes']}."
             )
         self.render_mode = render_mode
-        self._env = _CombatEnv()
+        # Reward-shaping hyperparameter (ROB-52). 0.0 = sparse +1/-1/0; >0 adds
+        # an HP-retention bonus on wins. Fixed for the env's lifetime.
+        self.hp_reward_coeff = hp_reward_coeff
+        self._env = _CombatEnv(hp_reward_coeff=hp_reward_coeff)
         self._last_obs: np.ndarray | None = None
         self._console = None  # lazily created on first human render
         self.observation_space = gym.spaces.Box(

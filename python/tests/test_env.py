@@ -52,6 +52,72 @@ def test_class_constants_match_core():
 
 
 # ---------------------------------------------------------------------------
+# Reward shaping (ROB-52)
+# ---------------------------------------------------------------------------
+
+
+def test_hp_reward_coeff_defaults_to_zero():
+    env = MinispireEnv()
+    assert env.hp_reward_coeff == 0.0
+
+
+def test_hp_reward_coeff_stored():
+    env = MinispireEnv(hp_reward_coeff=0.5)
+    assert env.hp_reward_coeff == 0.5
+
+
+def _play_to_win_with_seed(env, seed, max_steps=500):
+    """Greedy attack policy: prefer damage cards, else first legal, else end
+    turn. Returns the final reward if won, else None."""
+    damage_actions = [
+        int(minispire._core.CardId.Strike),
+        int(minispire._core.CardId.Bash),
+        int(minispire._core.CardId.StrikePlus),
+        int(minispire._core.CardId.BashPlus),
+    ]
+    end_turn = MinispireEnv.NUM_ACTIONS - 1
+    obs, _ = env.reset(seed=seed)
+    last_reward = 0.0
+    for _ in range(max_steps):
+        mask = env.action_masks()
+        action = end_turn
+        for a in damage_actions:
+            if mask[a]:
+                action = a
+                break
+        if action == end_turn:
+            legal = np.flatnonzero(mask)
+            action = int(legal[0]) if len(legal) else end_turn
+        obs, last_reward, terminated, truncated, info = env.step(action)
+        if terminated or truncated:
+            won = info["outcome"] == minispire._core.Outcome.Won
+            return last_reward if won else None
+    return None
+
+
+def test_sparse_win_reward_is_one():
+    # Default coeff: a won fight rewards exactly 1.0.
+    for seed in range(50):
+        env = MinispireEnv()
+        reward = _play_to_win_with_seed(env, seed)
+        if reward is not None:
+            assert reward == 1.0
+            return
+    pytest.skip("No win in 50 seeds for the greedy policy")
+
+
+def test_shaped_win_reward_exceeds_one():
+    # coeff 0.5: a won fight rewards in (1.0, 1.5].
+    for seed in range(50):
+        env = MinispireEnv(hp_reward_coeff=0.5)
+        reward = _play_to_win_with_seed(env, seed)
+        if reward is not None:
+            assert 1.0 < reward <= 1.5
+            return
+    pytest.skip("No win in 50 seeds for the greedy policy")
+
+
+# ---------------------------------------------------------------------------
 # reset / step
 # ---------------------------------------------------------------------------
 

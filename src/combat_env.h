@@ -45,7 +45,17 @@ class CombatEnv {
   // CARD_DATABASE.size() + 1; static_assert in the .cc enforces this.
   static constexpr int kNumActions = 7;
 
-  CombatEnv();
+  // hp_reward_coeff is a per-env reward-shaping hyperparameter, fixed for the
+  // env's lifetime. On a win the reward is 1 + coeff * (final_hp / max_hp);
+  // coeff = 0 (default) is the pure sparse +1/-1/0 signal. See ROB-52.
+  // Debug builds assert coeff >= 0 (a negative bonus is meaningless).
+  explicit CombatEnv(float hp_reward_coeff = 0.0f);
+
+  // Construct directly from an existing CombatState. Computes the obs/mask
+  // buffers from the given state so they're immediately consistent. This is
+  // the entry point for restoring a serialized state, wrapping a mid-fight
+  // state for MCTS rollouts, and building deterministic test scenarios.
+  explicit CombatEnv(CombatState state, float hp_reward_coeff = 0.0f);
 
   // Initialize from start_v1_combat(seed). Refreshes obs and mask buffers.
   void reset(uint32_t seed);
@@ -88,6 +98,7 @@ class CombatEnv {
   // exposed via the buffer protocol without copies. Sized once in the ctor.
   std::vector<uint8_t> mask_buffer_;
   float reward_ = 0.0f;
+  float hp_reward_coeff_ = 0.0f;
 
   void compute_obs();
   void compute_mask();

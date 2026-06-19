@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <stdexcept>
+#include <utility>
 
 #include "card.h"
 #include "enemy.h"
@@ -46,10 +48,24 @@ int pile_count(const std::vector<Card>& pile, CardId id) {
 
 }  // namespace
 
-CombatEnv::CombatEnv() : mask_buffer_(kNumActions, 0) {
+CombatEnv::CombatEnv(float hp_reward_coeff)
+    : mask_buffer_(kNumActions, 0), hp_reward_coeff_(hp_reward_coeff) {
   // Engine invariant: action space is num CardIds + end-turn.
   static_assert(kNumActions == 6 + 1,
                 "kNumActions must equal CARD_DATABASE size + 1 (end turn)");
+  // A negative reward bonus is meaningless; catch it in debug builds. Other
+  // values (including unusual ones) are trusted — it's a hyperparameter.
+  assert(hp_reward_coeff_ >= 0.0f && "hp_reward_coeff must be >= 0");
+}
+
+CombatEnv::CombatEnv(CombatState state, float hp_reward_coeff)
+    : state_(std::move(state)),
+      mask_buffer_(kNumActions, 0),
+      hp_reward_coeff_(hp_reward_coeff) {
+  assert(hp_reward_coeff_ >= 0.0f && "hp_reward_coeff must be >= 0");
+  // Make the buffers consistent with the injected state immediately.
+  compute_obs();
+  compute_mask();
 }
 
 void CombatEnv::reset(uint32_t seed) {
@@ -75,7 +91,16 @@ void CombatEnv::step(int action) {
   }
 
   switch (state_.outcome) {
-    case Outcome::Won:        reward_ =  1.0f; break;
+    case Outcome::Won: {
+      // Sparse +1 plus an optional HP-retention bonus (ROB-52). Read the
+      // character's (survivor's) post-step HP; float division.
+      const Character& c = state_.character;
+      float hp_frac = c.max_hp > 0
+                          ? static_cast<float>(c.hp) / static_cast<float>(c.max_hp)
+                          : 0.0f;
+      reward_ = 1.0f + hp_reward_coeff_ * hp_frac;
+      break;
+    }
     case Outcome::Lost:       reward_ = -1.0f; break;
     case Outcome::InProgress: reward_ =  0.0f; break;
   }
