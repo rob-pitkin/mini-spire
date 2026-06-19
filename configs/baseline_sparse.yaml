@@ -1,0 +1,17 @@
+# Baseline: sparse reward (+1 win / -1 loss / 0 mid-fight).
+# The "can it learn to win at all" run. Floor to beat: 52.8% random win rate.
+run_name: baseline-sparse
+wandb_project: mini-spire
+seed: 0
+
+n_envs: 8
+hp_reward_coeff: 0.0
+
+total_timesteps: 200000
+learning_rate: 0.0003
+n_steps: 2048
+batch_size: 64
+n_epochs: 10
+gamma: 0.99
+
+save_freq: 50000

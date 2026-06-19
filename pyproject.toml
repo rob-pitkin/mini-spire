@@ -29,6 +29,10 @@ train = [
   "stable-baselines3>=2.9",
   "sb3-contrib>=2.9",
   "torch>=2.12",
+  "wandb>=0.17",
+  "pydantic>=2.7",
+  "pyyaml>=6.0",
+  "tensorboard>=2.16",
 ]
 # Lightweight extra for CI: pytest only, no torch/sb3. Keeps CI install fast
 # (~10s vs ~60s with the full train extra). Local devs should use [dev].
@@ -42,6 +46,7 @@ dev = [
 
 [project.scripts]
 minispire-play = "minispire.play:main"
+minispire-train = "minispire.train:main"
 
 [project.urls]
 Repository = "https://github.com/rob-pitkin/mini-spire"

@@ -1,0 +1,18 @@
+# Headline: HP-shaped reward (+1 + 0.5 * hp_fraction on win).
+# Optimizes for *efficient* wins — block the right turns, sequence Bash->Strike
+# for Vulnerable, manage energy. The win-rate-vs-HP-retained story.
+run_name: baseline-shaped
+wandb_project: mini-spire
+seed: 0
+
+n_envs: 8
+hp_reward_coeff: 0.5
+
+total_timesteps: 200000
+learning_rate: 0.0003
+n_steps: 2048
+batch_size: 64
+n_epochs: 10
+gamma: 0.99
+
+save_freq: 50000
