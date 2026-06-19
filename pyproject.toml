@@ -34,10 +34,14 @@ train = [
   "pyyaml>=6.0",
   "tensorboard>=2.16",
 ]
-# Lightweight extra for CI: pytest only, no torch/sb3. Keeps CI install fast
-# (~10s vs ~60s with the full train extra). Local devs should use [dev].
+# Lightweight extra for CI: pytest + the deps needed by the fast,
+# dependency-light tests (TrainConfig validation needs pydantic/pyyaml).
+# Deliberately excludes torch/sb3/wandb to keep CI install fast (~12s vs
+# ~60s with the full train extra). Local devs should use [dev].
 ci = [
   "pytest>=8.0",
+  "pydantic>=2.7",
+  "pyyaml>=6.0",
 ]
 dev = [
   "pytest>=8.0",
