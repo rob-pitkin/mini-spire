@@ -95,8 +95,6 @@ def test_hp_fraction_is_float_division():
 def test_won_flag_true_on_win():
     # Greedy attack to a win; the winning step's info has won=True and a
     # consistent hp_fraction.
-    import numpy as np
-
     damage = [
         int(minispire._core.CardId.Strike),
         int(minispire._core.CardId.Bash),
@@ -119,11 +117,13 @@ def test_won_flag_true_on_win():
             if terminated or truncated:
                 if info["won"]:
                     assert info["final_hp"] > 0
-                    assert info["hp_fraction"] == info["final_hp"] / 80.0
+                    # hp_fraction is computed in float32 on the C++ side;
+                    # compare approximately against the float64 Python value.
+                    assert info["hp_fraction"] == pytest.approx(
+                        info["final_hp"] / 80.0, rel=1e-6
+                    )
                     return
                 break
-    import pytest
-
     pytest.skip("No win in 50 seeds for the greedy policy")
 
 
