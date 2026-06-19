@@ -51,6 +51,7 @@ dev = [
 [project.scripts]
 minispire-play = "minispire.play:main"
 minispire-train = "minispire.train:main"
+minispire-eval = "minispire.eval:main"
 
 [project.urls]
 Repository = "https://github.com/rob-pitkin/mini-spire"
