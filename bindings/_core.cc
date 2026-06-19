@@ -38,6 +38,22 @@ py::array_t<bool> mask_view(CombatEnv& self) {
       py::cast(&self, py::return_value_policy::reference));
 }
 
+// Build the Gym info dict — shared by reset() and step() so the keys are
+// uniform across both calls (ROB-58). Includes outcome/turn_number plus the
+// metrics a training callback aggregates: won, final_hp, hp_fraction.
+py::dict make_info(CombatEnv& self) {
+  const Character& c = self.state().character;
+  py::dict info;
+  info["outcome"] = self.outcome();
+  info["turn_number"] = self.turn_number();
+  info["won"] = (self.outcome() == Outcome::Won);
+  info["final_hp"] = c.hp;
+  info["hp_fraction"] =
+      c.max_hp > 0 ? static_cast<float>(c.hp) / static_cast<float>(c.max_hp)
+                   : 0.0f;
+  return info;
+}
+
 }  // namespace
 
 PYBIND11_MODULE(_core, m) {
@@ -103,7 +119,7 @@ PYBIND11_MODULE(_core, m) {
           "reset",
           [](CombatEnv& self, uint32_t seed) {
             self.reset(seed);
-            return py::make_tuple(obs_view(self), py::dict());
+            return py::make_tuple(obs_view(self), make_info(self));
           },
           py::arg("seed"),
           "Reset the env with the given seed. Returns (obs, info).")
@@ -111,14 +127,11 @@ PYBIND11_MODULE(_core, m) {
           "step",
           [](CombatEnv& self, int action) {
             self.step(action);
-            py::dict info;
-            info["outcome"] = self.outcome();
-            info["turn_number"] = self.turn_number();
             return py::make_tuple(obs_view(self),
                                   self.reward(),
                                   self.terminated(),
                                   self.truncated(),
-                                  info);
+                                  make_info(self));
           },
           py::arg("action"),
           "Apply an action. Returns (obs, reward, terminated, truncated, info).")

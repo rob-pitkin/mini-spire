@@ -56,6 +56,77 @@ def test_step_returns_gym_tuple():
     assert "turn_number" in info
 
 
+# ---------------------------------------------------------------------------
+# Info dict enrichment (ROB-58)
+# ---------------------------------------------------------------------------
+
+
+def test_reset_info_has_metric_keys():
+    env = minispire._core.CombatEnv()
+    _, info = env.reset(seed=0)
+    assert info["won"] is False
+    assert info["final_hp"] == 80
+    assert info["hp_fraction"] == 1.0
+
+
+def test_step_info_has_metric_keys():
+    env = minispire._core.CombatEnv()
+    env.reset(seed=0)
+    end_turn = env.NUM_ACTIONS - 1
+    _, _, _, _, info = env.step(end_turn)
+    assert "won" in info
+    assert "final_hp" in info
+    assert "hp_fraction" in info
+    assert isinstance(info["won"], bool)
+    assert isinstance(info["final_hp"], int)
+    assert isinstance(info["hp_fraction"], float)
+
+
+def test_hp_fraction_is_float_division():
+    # hp_fraction must equal final_hp / max_hp (80) with float division.
+    env = minispire._core.CombatEnv()
+    env.reset(seed=0)
+    end_turn = env.NUM_ACTIONS - 1
+    _, _, _, _, info = env.step(end_turn)
+    expected = info["final_hp"] / 80.0
+    assert abs(info["hp_fraction"] - expected) < 1e-6
+
+
+def test_won_flag_true_on_win():
+    # Greedy attack to a win; the winning step's info has won=True and a
+    # consistent hp_fraction.
+    import numpy as np
+
+    damage = [
+        int(minispire._core.CardId.Strike),
+        int(minispire._core.CardId.Bash),
+    ]
+    for seed in range(50):
+        env = minispire._core.CombatEnv()
+        env.reset(seed=seed)
+        end_turn = env.NUM_ACTIONS - 1
+        for _ in range(500):
+            mask = env.action_mask()
+            action = end_turn
+            for a in damage:
+                if mask[a]:
+                    action = a
+                    break
+            if action == end_turn:
+                legal = np.flatnonzero(mask)
+                action = int(legal[0]) if len(legal) else end_turn
+            _, _, terminated, truncated, info = env.step(action)
+            if terminated or truncated:
+                if info["won"]:
+                    assert info["final_hp"] > 0
+                    assert info["hp_fraction"] == info["final_hp"] / 80.0
+                    return
+                break
+    import pytest
+
+    pytest.skip("No win in 50 seeds for the greedy policy")
+
+
 def test_step_raises_on_invalid_action():
     env = minispire._core.CombatEnv()
     env.reset(seed=0)
