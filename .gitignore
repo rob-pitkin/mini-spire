@@ -53,3 +53,6 @@ results/
 
 # CLI trajectory logs
 logs/
+
+# Blog drafts (written independently; not committed)
+blog/

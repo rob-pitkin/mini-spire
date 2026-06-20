@@ -43,9 +43,15 @@ ci = [
   "pydantic>=2.7",
   "pyyaml>=6.0",
 ]
+# Analysis / plotting for blog artifacts (matplotlib). Separate from train so
+# headless training boxes don't pull it; dev includes it.
+analysis = [
+  "matplotlib>=3.8",
+]
 dev = [
   "pytest>=8.0",
   "minispire[train]",
+  "minispire[analysis]",
 ]
 
 [project.scripts]
@@ -63,3 +69,9 @@ wheel.packages = ["python/minispire"]
 # Only the extension target is needed for the wheel — the CLI binary and the
 # GoogleTest binary are dev-only artifacts.
 cmake.targets = ["_core"]
+
+[tool.pytest.ini_options]
+# The `analysis/` package lives at the repo root (not in the installed
+# wheel — it's research tooling, not part of the shipped package). Add the
+# root to the path so its tests can import it.
+pythonpath = ["."]
