@@ -1,0 +1,20 @@
+# Matrix arm: strong HP-shaping (+1 + 1.0*hp_fraction on win), 1M steps.
+# HP bonus (max +1.0) now equals the win signal (+1.0), so efficiency weighs as
+# heavily as winning. Tests Hypothesis B: does a stronger reward signal close
+# the gap to human-optimal (~92.5% HP) more than extra training does?
+# Run at seeds 0,1,2 via `--seed` for mean+-std.
+run_name: long-strong
+wandb_project: mini-spire
+seed: 0
+
+n_envs: 8
+hp_reward_coeff: 1.0
+
+total_timesteps: 1000000
+learning_rate: 0.0003
+n_steps: 2048
+batch_size: 64
+n_epochs: 10
+gamma: 0.99
+
+save_freq: 250000

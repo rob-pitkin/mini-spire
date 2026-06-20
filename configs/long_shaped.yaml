@@ -1,0 +1,19 @@
+# Matrix arm: HP-shaped reward (+1 + 0.5*hp_fraction on win), 1M steps.
+# Same coeff as the 200k baseline_shaped run, 5x the steps. Tests Hypothesis A:
+# is the 86.5% HP-retention a convergence plateau, or was 200k undertrained?
+# Run at seeds 0,1,2 via `--seed` for mean+-std.
+run_name: long-shaped
+wandb_project: mini-spire
+seed: 0
+
+n_envs: 8
+hp_reward_coeff: 0.5
+
+total_timesteps: 1000000
+learning_rate: 0.0003
+n_steps: 2048
+batch_size: 64
+n_epochs: 10
+gamma: 0.99
+
+save_freq: 250000

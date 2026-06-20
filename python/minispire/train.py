@@ -196,9 +196,22 @@ def main() -> None:
     parser.add_argument(
         "--config", required=True, help="Path to a training config YAML."
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help=(
+            "Override the config's seed. Appends '-s<seed>' to run_name so each "
+            "seed is a distinct W&B run and checkpoint dir (for multi-seed runs)."
+        ),
+    )
     args = parser.parse_args()
 
     config = TrainConfig.from_yaml(args.config)
+    if args.seed is not None:
+        config = config.model_copy(
+            update={"seed": args.seed, "run_name": f"{config.run_name}-s{args.seed}"}
+        )
     train(config)
 
 
