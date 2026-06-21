@@ -71,6 +71,40 @@ def _parse_seed(raw: str | None) -> int:
         return 0
 
 
+def _resolve_card_action(console, env, obs, card_id) -> int | None:
+    """Resolve a chosen card to a global action index (card x target, ROB-60).
+
+    Untargeted cards (Defend) use the canonical offset-0 slot. Targeted cards
+    auto-target when there's a single living enemy; with multiple living
+    enemies, prompt for the target slot. Returns None if the player cancels or
+    enters an invalid target (the caller re-prompts).
+    """
+    n = _core.CombatEnv.MAX_ENEMIES
+
+    if not _core.card_targets_enemy(card_id):
+        return int(card_id) * n + 0  # untargeted -> canonical slot 0
+
+    living = screen.living_enemy_slots(obs)
+    if len(living) == 1:
+        return int(card_id) * n + living[0]  # auto-target the only enemy
+
+    # Multiple living enemies — prompt for the target slot.
+    console.print(f"  target which enemy? {living}  (or 'c' to cancel)")
+    try:
+        raw = input("target> ").strip()
+    except EOFError:
+        return None
+    if raw in ("c", "C"):
+        return None
+    try:
+        target = int(raw)
+    except ValueError:
+        return None
+    if target not in living:
+        return None
+    return int(card_id) * n + target
+
+
 def run(seed: int, ascii_only: bool) -> int:
     """Run one interactive fight. Returns the process exit code."""
     console = Console()
@@ -84,10 +118,10 @@ def run(seed: int, ascii_only: bool) -> int:
         while env.outcome == _core.Outcome.InProgress:
             _log_state(log, env, obs)
 
-            screen.render_fight(console, obs, ascii_only=ascii_only)
+            screen.render_fight(console, obs, env, ascii_only=ascii_only)
             if pile_view:
                 screen.render_piles(console, env)
-                action_map: list[int] = []
+                action_map: list = []
             else:
                 action_map = screen.render_hand(console, env)
             screen.render_prompt(console, action_map, pile_view)
@@ -115,7 +149,10 @@ def run(seed: int, ascii_only: bool) -> int:
             if local == end_turn_local:
                 global_action = _core.CombatEnv.NUM_ACTIONS - 1
             elif 0 <= local < len(action_map):
-                global_action = action_map[local]
+                card_id = action_map[local]
+                global_action = _resolve_card_action(console, env, obs, card_id)
+                if global_action is None:
+                    continue  # targeting cancelled / invalid -> re-prompt
             else:
                 continue  # out of range, re-prompt
 
@@ -125,7 +162,7 @@ def run(seed: int, ascii_only: bool) -> int:
 
         # Terminal — final state + end screen.
         _log_state(log, env, obs)
-        screen.render_end_screen(console, obs, env.outcome, log_path)
+        screen.render_end_screen(console, obs, env, env.outcome, log_path)
         try:
             input()
         except EOFError:

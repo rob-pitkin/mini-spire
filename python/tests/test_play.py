@@ -106,3 +106,64 @@ def test_select_avatar_critical_below_threshold():
 def test_select_avatar_ko_at_zero():
     art = avatars.select_avatar("JAW_WORM", 0, 44)
     assert art == avatars.KO
+
+
+# ---------------------------------------------------------------------------
+# Action encoding (ROB-60/71) — the play->action->step path that the pure
+# render tests do NOT cover. This is what silently broke when the action space
+# changed from Discrete(7) to Discrete(25); guard it directly.
+# ---------------------------------------------------------------------------
+
+import numpy as np
+
+from minispire import _core
+from minispire.env import MinispireEnv
+from minispire.play import _resolve_card_action
+from minispire.render import screen
+
+
+def test_card_playable_matches_mask_for_starter_hand():
+    env = MinispireEnv()
+    env.reset(seed=0)
+    mask = env.action_masks()
+    # Strike/Bash/Defend are all in the opening hand at full energy -> playable.
+    for cid in (_core.CardId.Strike, _core.CardId.Defend, _core.CardId.Bash):
+        assert screen.card_playable(mask, cid) is True
+
+
+def test_living_enemy_slots_single_enemy():
+    env = MinispireEnv()
+    obs, _ = env.reset(seed=0)
+    # v1: exactly one living enemy in slot 0.
+    assert screen.living_enemy_slots(obs) == [0]
+
+
+def test_resolve_targeted_card_auto_targets_single_enemy():
+    """A targeted card with one living enemy encodes card*N + 0, no prompt."""
+    env = MinispireEnv()
+    obs, _ = env.reset(seed=0)
+    n = _core.CombatEnv.MAX_ENEMIES
+    action = _resolve_card_action(None, env, obs, _core.CardId.Strike)
+    assert action == int(_core.CardId.Strike) * n + 0
+    # And the engine agrees it's legal.
+    assert env.action_masks()[action]
+
+
+def test_resolve_untargeted_card_uses_offset_zero():
+    env = MinispireEnv()
+    obs, _ = env.reset(seed=0)
+    n = _core.CombatEnv.MAX_ENEMIES
+    action = _resolve_card_action(None, env, obs, _core.CardId.Defend)
+    assert action == int(_core.CardId.Defend) * n + 0
+    assert env.action_masks()[action]
+
+
+def test_resolved_action_steps_without_error():
+    """End-to-end: render_hand -> resolve -> step actually advances the env."""
+    env = MinispireEnv()
+    obs, _ = env.reset(seed=0)
+    # Play Strike via the same path the TUI uses.
+    action = _resolve_card_action(None, env, obs, _core.CardId.Strike)
+    obs2, _r, term, trunc, _info = env.step(action)
+    assert obs2.shape == (MinispireEnv.OBS_SIZE,)
+    assert not (term or trunc)  # one Strike doesn't end the fight

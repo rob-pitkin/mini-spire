@@ -204,4 +204,11 @@ StatePiles CombatEnv::state_piles() const {
   return out;
 }
 
+std::vector<int> CombatEnv::enemy_max_hps() const {
+  std::vector<int> out;
+  out.reserve(state_.enemies.size());
+  for (const Enemy& e : state_.enemies) out.push_back(e.max_hp);
+  return out;
+}
+
 }  // namespace minispire

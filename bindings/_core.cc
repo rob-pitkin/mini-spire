@@ -111,10 +111,23 @@ PYBIND11_MODULE(_core, m) {
       "Return the CardData (cost / damage / block / applies / exhaust) for a "
       "CardId.");
 
+  // Whether a card targets an enemy (ROB-60). Exposed so the TUI knows which
+  // cards need a target without reimplementing the predicate — single source of
+  // truth with the engine's masking/decode.
+  m.def(
+      "card_targets_enemy",
+      [](CardId id) { return card_targets_enemy(CARD_DATABASE.at(id)); },
+      py::arg("card_id"),
+      "True if the card acts on a chosen enemy (deals damage or applies an "
+      "enemy status); False for self/untargeted cards like Defend.");
+
   py::class_<CombatEnv>(m, "CombatEnv")
       .def(py::init<float>(), py::arg("hp_reward_coeff") = 0.0f)
       .def_readonly_static("OBS_SIZE", &CombatEnv::kObsSize)
       .def_readonly_static("NUM_ACTIONS", &CombatEnv::kNumActions)
+      // Max enemy slots — the action target stride (action = card*MAX_ENEMIES +
+      // target). Exposed so the TUI encodes targets without hardcoding N.
+      .def_readonly_static("MAX_ENEMIES", &kMaxEnemies)
       .def(
           "reset",
           [](CombatEnv& self, uint32_t seed) {
@@ -140,6 +153,9 @@ PYBIND11_MODULE(_core, m) {
       .def("state_piles", &CombatEnv::state_piles,
            "Read pile contents (hand/draw/discard/exhaust) as CardId lists. "
            "Allocates — not for use in the training loop.")
+      .def("enemy_max_hps", &CombatEnv::enemy_max_hps,
+           "Per-enemy-slot max HP, in slot order (the obs omits enemy max_hp). "
+           "Debug accessor for the TUI; not for the training loop.")
       .def("clone", &CombatEnv::clone,
            "Deep-copy clone of the env (for MCTS).")
       .def_property_readonly("outcome", &CombatEnv::outcome)

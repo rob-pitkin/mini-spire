@@ -59,12 +59,12 @@ def watch(
     obs, _info = env.reset(seed=seed)
 
     while env.outcome == _core.Outcome.InProgress:
-        screen.render_fight(console, obs, ascii_only=ascii_only)
+        screen.render_fight(console, obs, env, ascii_only=ascii_only)
         mask = env.action_masks()
         action = int(policy(obs, mask))
         obs, _reward, _terminated, _truncated, _info = env.step(action)
         if delay:
             time.sleep(delay)
 
-    screen.render_end_screen(console, obs, env.outcome, log_path=None)
+    screen.render_end_screen(console, obs, env, env.outcome, log_path=None)
     return env.outcome

@@ -103,6 +103,11 @@ class CombatEnv {
   // Pile contents — for the Python TUI pile-view. Not used during training.
   StatePiles state_piles() const;
 
+  // Per-enemy-slot max HP, in slot order. The observation intentionally omits
+  // enemy max_hp (ROB-59), but the TUI needs it to draw enemy HP bars. Debug
+  // accessor only — not used during training.
+  std::vector<int> enemy_max_hps() const;
+
  private:
   CombatState state_;
   // Fixed-size array: pointer stays stable for the env's lifetime, so the

@@ -83,7 +83,7 @@ class MinispireEnv(gym.Env):
 
         if self._console is None:
             self._console = Console()
-        screen.render_fight(self._console, self._last_obs)
+        screen.render_fight(self._console, self._last_obs, self)
         return None
 
     def action_masks(self) -> np.ndarray:
@@ -94,6 +94,11 @@ class MinispireEnv(gym.Env):
         """Return pile contents (hand/draw/discard/exhaust). For the TUI /
         inspection — not used in the training loop. See ROB-46."""
         return self._env.state_piles()
+
+    def enemy_max_hps(self):
+        """Per-enemy-slot max HP (the obs omits enemy max_hp; ROB-59). For the
+        TUI's enemy HP bars — not used in the training loop."""
+        return self._env.enemy_max_hps()
 
     @property
     def outcome(self):
