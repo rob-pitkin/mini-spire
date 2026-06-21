@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <stdexcept>
+#include <vector>
 
 #include "card.h"
 #include "enemy.h"
@@ -95,11 +97,88 @@ int find_first_in_hand(const std::vector<Card>& hand, CardId id) {
   return -1;
 }
 
+// Count living enemies (hp > 0).
+int count_living(const CombatState& state) {
+  int n = 0;
+  for (const Enemy& e : state.enemies) {
+    if (e.hp > 0) n++;
+  }
+  return n;
+}
+
+// First slot not holding a living enemy (dead corpse OR empty), or -1 if all
+// slots are occupied by the living. A split overwrites a corpse (ROB-61 rule A).
+int find_free_slot(const CombatState& state) {
+  for (int i = 0; i < static_cast<int>(state.enemies.size()); ++i) {
+    if (state.enemies[i].hp <= 0) return i;
+  }
+  // Slots beyond the current vector size are also "free" up to kMaxEnemies.
+  if (static_cast<int>(state.enemies.size()) < kMaxEnemies) {
+    return static_cast<int>(state.enemies.size());
+  }
+  return -1;
+}
+
+// Place one child into a free slot (overwriting a corpse or growing the vector
+// up to kMaxEnemies). Throws if no slot is free (the living<=N invariant should
+// make this impossible — a split is only legal with living <= N-1 beforehand).
+void place_child(CombatState& state, const Enemy& child) {
+  int slot = find_free_slot(state);
+  if (slot < 0) {
+    throw std::runtime_error(
+        "split would exceed kMaxEnemies living enemies (mis-specified "
+        "encounter: split-capable enemies must start with living <= N-1)");
+  }
+  if (slot < static_cast<int>(state.enemies.size())) {
+    state.enemies[slot] = child;  // overwrite a corpse
+  } else {
+    state.enemies.push_back(child);
+  }
+}
+
+// on_death hook: fires when an enemy reaches hp <= 0. Deferred to after the
+// player's card fully resolves (Split mutates state.enemies). `slot` is the
+// dying enemy's slot.
+void fire_on_death(CombatState& state, int slot) {
+  Enemy& dying = state.enemies[slot];
+  switch (dying.on_death) {
+    case OnDeathEffect::None:
+      break;
+    case OnDeathEffect::SporeCloud:
+      state.character.status_effects[StatusEffect::Vulnerable] +=
+          dying.spore_vulnerable;
+      break;
+    case OnDeathEffect::Split: {
+      // Invariant guard: the children must fit. After this corpse is counted as
+      // dead, living must end up <= kMaxEnemies. Copy children first (placing
+      // may overwrite this corpse's slot and invalidate `dying`).
+      std::vector<Enemy> children = dying.split_children;
+      for (const Enemy& child : children) {
+        place_child(state, child);
+      }
+      break;
+    }
+  }
+}
+
+// on_damaged hook: fires when an enemy actually loses HP. CurlUp grants block
+// once (the latch flips off).
+void fire_on_damaged(Enemy& enemy) {
+  if (enemy.on_damaged == OnDamagedEffect::CurlUp && enemy.curl_available) {
+    enemy.current_block += enemy.curl_block;
+    enemy.curl_available = false;
+  }
+}
+
 void handle_play_card(CombatState& state, CardId card_id, int target) {
   const CardData& data = CARD_DATABASE.at(card_id);
 
   // 1. Pay energy
   state.character.energy -= data.cost;
+
+  // Track an enemy that died from this card's damage so its on_death hook can
+  // fire *after* the card fully resolves (deferred — Split mutates the vector).
+  int died_slot = -1;
 
   // 2. Apply damage to the targeted enemy (ROB-60: target is the decoded enemy
   // slot). The mask guarantees `target` is a living enemy for damage/enemy-
@@ -110,9 +189,16 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   if (target >= 0 && target < static_cast<int>(state.enemies.size())) {
     Enemy& enemy = state.enemies[target];
     if (data.damage > 0) {
+      int hp_before = enemy.hp;
       int dmg = compute_attack_damage(
           data.damage, state.character.status_effects, enemy.status_effects);
       apply_damage_to_hp_block(enemy.hp, enemy.current_block, dmg);
+      if (enemy.hp < hp_before) {
+        fire_on_damaged(enemy);  // e.g. Louse Curl Up
+      }
+      if (hp_before > 0 && enemy.hp <= 0) {
+        died_slot = target;  // defer on_death until the card resolves
+      }
     }
   }
 
@@ -140,7 +226,14 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
     state.discard_pile.push_back(played);
   }
 
-  // 6. Terminal checks
+  // 6. Deferred on_death hook (ROB-62). Fires after the card fully resolves so
+  // a Split can safely mutate state.enemies. Runs before the terminal check so
+  // a split's spawned children prevent a premature "all enemies dead" win.
+  if (died_slot >= 0) {
+    fire_on_death(state, died_slot);
+  }
+
+  // 7. Terminal checks
   check_enemy_terminal(state);
   if (state.outcome != Outcome::InProgress) return;
   check_character_terminal(state);  // currently unreachable in v1

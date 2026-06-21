@@ -45,6 +45,20 @@ struct TransitionKey {
   }
 };
 
+// Enemy effect hooks (ROB-62). Plain enum tags + data fields on Enemy keep the
+// enemy a trivially-copyable value type (required for CombatState::clone() /
+// MCTS — no virtual methods, no std::function). TurnLoop dispatches on the tag.
+enum class OnDeathEffect {
+  None,
+  Split,       // spawn split_children into free enemy slots (e.g. Large Slime)
+  SporeCloud,  // apply spore_vulnerable Vulnerable to the player (Fungi Beast)
+};
+
+enum class OnDamagedEffect {
+  None,
+  CurlUp,  // on the first damage taken, gain curl_block block (Louse)
+};
+
 }  // namespace minispire
 
 namespace std {
@@ -78,6 +92,22 @@ struct Enemy {
   // primed so the agent's observation can read it immediately.
   std::optional<MoveName> last_move;
   int consecutive_count;
+
+  // --- Effect hooks (ROB-62). All default to inert. ---
+  OnDeathEffect on_death = OnDeathEffect::None;
+  OnDamagedEffect on_damaged = OnDamagedEffect::None;
+
+  // Split: the children spawned when this enemy dies. The dying enemy carries
+  // its own children as data (M3 sets them); std::vector<Enemy> is heap-backed
+  // so the recursive value type compiles and stays copyable for clone().
+  std::vector<Enemy> split_children;
+
+  // CurlUp: block-once latch. curl_available flips false after the first hit.
+  bool curl_available = false;
+  int curl_block = 0;
+
+  // SporeCloud: Vulnerable stacks applied to the player on death.
+  int spore_vulnerable = 0;
 };
 
 MoveName select_next_move(Enemy& enemy, std::mt19937& rng);

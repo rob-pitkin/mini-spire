@@ -728,3 +728,110 @@ TEST(TurnLoop, TargetingDeadEnemyIsMasked) {
   EXPECT_FALSE(mask[card_action(CardId::Strike, /*target=*/1)]);
   EXPECT_TRUE(mask[card_action(CardId::Strike, /*target=*/0)]);
 }
+
+// ============================================================================
+// Enemy effect hooks (ROB-62) — tested with synthetic enemies, not real Act 1
+// enemy data (that's M3). Only the *mechanism* is under test here.
+// ============================================================================
+
+namespace {
+// Minimal living enemy with `hp`; hooks default to inert. The card-play kill
+// path doesn't read moves/last_move, so those can stay empty.
+Enemy make_test_enemy(int hp) {
+  Enemy e;
+  e.kind = EnemyKind::JawWorm;
+  e.hp = hp;
+  e.max_hp = hp;
+  e.current_block = 0;
+  return e;
+}
+
+// A state with one synthetic enemy in slot 0, a Strike in hand, full energy.
+CombatState make_hook_test_state(Enemy enemy) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  s.enemies.push_back(std::move(enemy));
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Strike});  // Strike = 6 dmg
+  return s;
+}
+}  // namespace
+
+TEST(TurnLoop, CurlUpGrantsBlockOnceOnFirstDamage) {
+  Enemy e = make_test_enemy(50);
+  e.on_damaged = OnDamagedEffect::CurlUp;
+  e.curl_available = true;
+  e.curl_block = 9;
+  CombatState s = make_hook_test_state(std::move(e));
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+  // Curl Up fired: 9 block gained on the first hit. Strike's 6 hit the enemy
+  // *before* the curl block (damage is applied, then on_damaged fires).
+  EXPECT_EQ(s.enemies[0].current_block, 9);
+  EXPECT_EQ(s.enemies[0].hp, 44);  // 50 - 6
+  EXPECT_FALSE(s.enemies[0].curl_available);  // latch consumed
+}
+
+TEST(TurnLoop, CurlUpDoesNotFireTwice) {
+  Enemy e = make_test_enemy(50);
+  e.on_damaged = OnDamagedEffect::CurlUp;
+  e.curl_available = true;
+  e.curl_block = 9;
+  CombatState s = make_hook_test_state(std::move(e));
+  s.current_hand.push_back(Card{CardId::Strike});  // a second Strike
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));  // block 9, latch off
+  // Second Strike: 6 dmg, eats 6 of the 9 block, no new curl block.
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+  EXPECT_EQ(s.enemies[0].current_block, 3);  // 9 - 6, no re-curl
+}
+
+TEST(TurnLoop, SporeCloudAppliesVulnerableToPlayerOnDeath) {
+  Enemy e = make_test_enemy(5);  // dies to one Strike (6)
+  e.on_death = OnDeathEffect::SporeCloud;
+  e.spore_vulnerable = 2;
+  CombatState s = make_hook_test_state(std::move(e));
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+  EXPECT_EQ(s.outcome, Outcome::Won);  // only enemy died
+  EXPECT_EQ(s.character.status_effects[StatusEffect::Vulnerable], 2);
+}
+
+TEST(TurnLoop, SplitSpawnsChildrenIntoFreeSlots) {
+  Enemy parent = make_test_enemy(5);  // dies to one Strike
+  parent.on_death = OnDeathEffect::Split;
+  parent.split_children = {make_test_enemy(20), make_test_enemy(20)};
+  CombatState s = make_hook_test_state(std::move(parent));
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+
+  // Parent (slot 0) dead; two children placed. Fight NOT won (children live).
+  EXPECT_EQ(s.outcome, Outcome::InProgress);
+  // Living-enemy count is 2.
+  int living = 0;
+  for (const auto& en : s.enemies) if (en.hp > 0) living++;
+  EXPECT_EQ(living, 2);
+  // The parent's corpse slot (0) is reused by a child (rule A).
+  EXPECT_GT(s.enemies[0].hp, 0);
+}
+
+TEST(TurnLoop, SplitThrowsWhenNoFreeSlot) {
+  // Fill all 4 slots with living enemies; the slot-0 one splits into 2 -> would
+  // need a 5th living enemy. The invariant says throw.
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  Enemy splitter = make_test_enemy(5);
+  splitter.on_death = OnDeathEffect::Split;
+  splitter.split_children = {make_test_enemy(20), make_test_enemy(20)};
+  s.enemies.push_back(std::move(splitter));
+  for (int i = 0; i < kMaxEnemies - 1; ++i) {
+    s.enemies.push_back(make_test_enemy(20));  // 3 more living -> 4 total living
+  }
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Strike});
+
+  // Killing the splitter (living 4 -> parent dies -> 3 living, then +2 children
+  // = 5 living > kMaxEnemies). No free slot exists -> throw.
+  EXPECT_THROW(apply_action(s, card_action(CardId::Strike, 0)),
+               std::runtime_error);
+}
