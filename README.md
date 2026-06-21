@@ -111,24 +111,6 @@ end-turn is always legal.
 bonus (`hp_reward_coeff * current_hp / max_hp`, added on a win) rewards winning
 with more HP remaining; the default coefficient is `0` (pure sparse reward).
 
-## Results (M1)
-
-| Agent | Win rate vs. Jaw Worm (1000 seeds) |
-| --- | --- |
-| Random policy | ~52% |
-| MaskablePPO (sparse reward) | **100%** |
-
-The PPO policy is the SB3 default `MlpPolicy` — two 45→64→64 trunks plus action
-and value heads, **14,728 parameters total**. It reaches ~90% win rate by ~50k
-steps and stops losing entirely by ~80k, well within the 1M-step budget.
-
-The Jaw Worm is one of the easiest fights in the game (random play already wins
-half the time), so v1 is a clean, fast, *correct* environment to build on rather
-than a hard benchmark. The interesting comparisons come with harder fights — see
-the [roadmap](roadmap.md).
-
-![Throughput on an M1 MacBook Pro](assets/throughput.png)
-
 ## Architecture
 
 ```
