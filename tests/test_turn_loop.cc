@@ -655,3 +655,76 @@ TEST(StartV1Combat, StarterDeckCompositionInDrawAndHand) {
   EXPECT_EQ(defend, 4);
   EXPECT_EQ(bash, 1);
 }
+
+// ============================================================================
+// Multi-enemy resolution (ROB-61)
+// ============================================================================
+
+// Build a state with two fresh Jaw Worms (both prime Chomp = 11 as their
+// first-turn move). Hand/piles start empty; caller adds cards as needed.
+namespace {
+CombatState make_two_jaw_worm_state(uint32_t seed) {
+  CombatState s = make_minimal_state(seed);  // already has one Jaw Worm
+  s.enemies.push_back(make_jaw_worm(s.rng));
+  return s;
+}
+}  // namespace
+
+TEST(TurnLoop, EndTurnAllLivingEnemiesAct) {
+  CombatState s = make_two_jaw_worm_state(0);
+  const int hp_before = s.character.hp;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  // Both Jaw Worms Chomp for 11 on turn 1 -> player takes 22 (no block).
+  EXPECT_EQ(s.character.hp, hp_before - 22);
+}
+
+TEST(TurnLoop, DeadEnemySkippedOnEnemyTurn) {
+  CombatState s = make_two_jaw_worm_state(0);
+  s.enemies[0].hp = 0;  // enemy 0 dead; only enemy 1 should act
+  const int hp_before = s.character.hp;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  // Only the living enemy Chomps -> 11 damage, not 22.
+  EXPECT_EQ(s.character.hp, hp_before - 11);
+}
+
+TEST(TurnLoop, StrikeHitsTargetedEnemyNotSlotZero) {
+  CombatState s = make_two_jaw_worm_state(0);
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Strike});
+  const int e0_hp = s.enemies[0].hp;
+  const int e1_hp = s.enemies[1].hp;
+
+  // Play Strike targeting enemy slot 1.
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, /*target=*/1)));
+
+  EXPECT_EQ(s.enemies[0].hp, e0_hp);       // untouched
+  EXPECT_EQ(s.enemies[1].hp, e1_hp - 6);   // Strike = 6
+}
+
+TEST(TurnLoop, BashAppliesVulnerableToTargetedEnemy) {
+  CombatState s = make_two_jaw_worm_state(0);
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Bash});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bash, /*target=*/1)));
+
+  // Bash applies Vulnerable(2) to the targeted enemy only.
+  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Vulnerable], 0);
+  EXPECT_EQ(s.enemies[1].status_effects[StatusEffect::Vulnerable], 2);
+}
+
+TEST(TurnLoop, TargetingDeadEnemyIsMasked) {
+  CombatState s = make_two_jaw_worm_state(0);
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.enemies[1].hp = 0;  // slot 1 dead
+
+  auto mask = valid_actions(s);
+  // Strike @ slot 1 must be illegal; Strike @ slot 0 (living) legal.
+  EXPECT_FALSE(mask[card_action(CardId::Strike, /*target=*/1)]);
+  EXPECT_TRUE(mask[card_action(CardId::Strike, /*target=*/0)]);
+}

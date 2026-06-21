@@ -149,8 +149,14 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
 // LIMITATION (multi-enemy): this assumes a single attacking enemy at
 // state.enemies[0]. With multiple enemies, each enemy's intent fires in turn
 // order and references its own status_effects.
-void apply_move_to_state(CombatState& state, const Move& move) {
-  Enemy& enemy = state.enemies[0];
+// Resolve one enemy's move. `actor_slot` is the acting enemy's slot index — the
+// move's damage uses that enemy's status, its block lands on that enemy, and a
+// Target::Enemy status is that enemy's self-buff (e.g. Cultist Incantation ->
+// own Strength).
+// LIMITATION (cross-enemy buffs): a move that buffs a *different* enemy (none in
+// the current roster) would need a target field on Move; revisit in M3.
+void apply_move_to_state(CombatState& state, const Move& move, int actor_slot) {
+  Enemy& enemy = state.enemies[actor_slot];
 
   if (move.damage > 0) {
     int dmg = compute_attack_damage(move.damage, enemy.status_effects,
@@ -161,24 +167,15 @@ void apply_move_to_state(CombatState& state, const Move& move) {
   if (move.block > 0) {
     enemy.current_block += move.block;
   }
-  // STS limitation: STS cards/moves with multi-hit attacks (Twin Strike,
-  // Pommel Strike) deal Strength bonus per-hit. Our Move model is one hit
-  // per cast; multi-hit will need a `hits` field on Move.
-  // A Target::Enemy status on an enemy move is a self-buff (e.g. Cultist
-  // Incantation -> own Strength), so it routes to the acting enemy's slot.
-  // LIMITATION (multi-enemy): acting enemy is enemies[0] here; ROB-61
-  // parameterizes which enemy acts and passes its slot index.
+  // STS limitation: multi-hit attacks (Twin Strike, Pommel Strike) deal Strength
+  // bonus per-hit. Our Move model is one hit per cast; multi-hit needs a `hits`
+  // field on Move.
   for (const auto& app : move.applies) {
-    apply_status(state, app, /*enemy_target=*/0);
+    apply_status(state, app, /*enemy_target=*/actor_slot);
   }
 }
 
-// LIMITATION (multi-enemy): single enemy assumed. Multi-enemy needs to iterate
-// state.enemies in turn order and let each act sequentially, with intermediate
-// terminal checks.
 void handle_end_turn(CombatState& state) {
-  Enemy& enemy = state.enemies[0];
-
   // 1. End of player turn
   // 1a. Discard hand
   for (const Card& c : state.current_hand) {
@@ -190,27 +187,34 @@ void handle_end_turn(CombatState& state) {
   // 1c. Discard leftover energy
   state.character.energy = 0;
 
-  // 2. Enemy turn
+  // 2. Enemy turn — each living enemy acts in slot order. Enemies never die or
+  // spawn during their own turn (they attack the player or buff themselves), so
+  // a straight index loop is safe (no mid-loop vector mutation). The only death
+  // that can occur is the player's, which we check for after each enemy acts.
   state.character_turn = false;
-  // 2a. Reset enemy block
-  enemy.current_block = 0;
-  // 2b. Apply the intent that was set during start_v1_combat (turn 1) or the
-  // prior enemy turn (step 2e). enemy.last_move always stores the upcoming
-  // intent, so the agent's observation sees the next move between turns.
-  assert(enemy.last_move.has_value() &&
-         "enemy.last_move must be primed by start_v1_combat or prior turn");
-  MoveName current_intent = *enemy.last_move;
-  apply_move_to_state(state, enemy.moves.at(current_intent));
+  for (std::size_t slot = 0; slot < state.enemies.size(); ++slot) {
+    Enemy& enemy = state.enemies[slot];
+    if (enemy.hp <= 0) continue;  // dead slot: skip
 
-  // 2c. Terminal check
-  check_character_terminal(state);
-  if (state.outcome != Outcome::InProgress) return;
+    // 2a. Reset block
+    enemy.current_block = 0;
+    // 2b. Apply the primed intent (set at combat start or the prior enemy turn).
+    // last_move always stores the upcoming intent so the obs shows it.
+    assert(enemy.last_move.has_value() &&
+           "enemy.last_move must be primed by start_v1_combat or prior turn");
+    apply_move_to_state(state, enemy.moves.at(*enemy.last_move),
+                        static_cast<int>(slot));
 
-  // 2d. Tick enemy statuses
-  tick_status_effects(enemy.status_effects);
+    // 2c. Terminal check — an enemy attack may have killed the player.
+    check_character_terminal(state);
+    if (state.outcome != Outcome::InProgress) return;
 
-  // 2e. Advance Markov chain to set next intent (visible on next obs)
-  select_next_move(enemy, state.rng);
+    // 2d. Tick this enemy's statuses.
+    tick_status_effects(enemy.status_effects);
+
+    // 2e. Advance this enemy's Markov chain to set its next intent.
+    select_next_move(enemy, state.rng);
+  }
 
   // 3. Start new player turn
   state.character.current_block = 0;
