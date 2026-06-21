@@ -37,13 +37,27 @@ struct StatePiles {
 // Lifecycle: default-construct, then call reset(seed) before any step().
 class CombatEnv {
  public:
-  // The 45-float observation layout is defined in ROB-40.
-  static constexpr int kObsSize = 45;
+  // Observation layout (ROB-40 + ROB-59 multi-enemy). Flat float32 vector:
+  //   player        [0:5]   hp, max_hp, block, energy, energy_per_turn
+  //   player status [5:9]   Vulnerable, Weak, Strength, Dexterity
+  //   enemies       [9 : 9 + kMaxEnemies*kEnemyObsStride]  kMaxEnemies blocks
+  //   piles         [.. : .. + 24]  hand/draw/discard/exhaust x 6 card types
+  //   turn          [last]
+  // Each enemy block (kEnemyObsStride floats): is_alive, hp, block,
+  // status(4: V/W/S/D), intent(4: is_attacking, atk_dmg, is_blocking,
+  // is_buffing). NOTE: enemies intentionally omit max_hp (redundant for the
+  // policy — current hp gives lethality, intent gives threat; ROB-59). The
+  // player keeps max_hp (fixed run-level anchor + HP-shaping reward).
+  static constexpr int kEnemyObsStride = 11;
+  static constexpr int kObsSize =
+      5 + 4 + kMaxEnemies * kEnemyObsStride + 24 + 1;  // = 78 at N=4
 
-  // Action space: [0, num CardIds) play card by id; index num_card_ids ends
-  // the turn. Currently 6 cards + end-turn = 7. Must match
-  // CARD_DATABASE.size() + 1; static_assert in the .cc enforces this.
-  static constexpr int kNumActions = 7;
+  // Action space: (card x target) cross-product + end-turn (ROB-60).
+  //   action = card_idx * kMaxEnemies + enemy_idx   for card_idx in [0,6)
+  //   end_turn = num_card_ids * kMaxEnemies          (last index)
+  // num_card_ids * kMaxEnemies + 1. Currently 6*4 + 1 = 25. Enforced by
+  // static_assert in the .cc against CARD_DATABASE.size().
+  static constexpr int kNumActions = 6 * kMaxEnemies + 1;
 
   // hp_reward_coeff is a per-env reward-shaping hyperparameter, fixed for the
   // env's lifetime. On a win the reward is 1 + coeff * (final_hp / max_hp);

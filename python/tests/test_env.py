@@ -36,14 +36,14 @@ def test_render_mode_unknown_raises():
 
 def test_observation_space_shape_and_dtype():
     env = MinispireEnv()
-    assert env.observation_space.shape == (45,)
+    assert env.observation_space.shape == (MinispireEnv.OBS_SIZE,)
     assert env.observation_space.dtype == np.float32
 
 
 def test_action_space_size():
     env = MinispireEnv()
     assert isinstance(env.action_space, gym.spaces.Discrete)
-    assert env.action_space.n == 7
+    assert env.action_space.n == MinispireEnv.NUM_ACTIONS
 
 
 def test_class_constants_match_core():
@@ -126,7 +126,7 @@ def test_reset_returns_obs_and_info():
     env = MinispireEnv()
     obs, info = env.reset(seed=42)
     assert isinstance(obs, np.ndarray)
-    assert obs.shape == (45,)
+    assert obs.shape == (MinispireEnv.OBS_SIZE,)
     assert obs.dtype == np.float32
     assert isinstance(info, dict)
 
@@ -134,7 +134,7 @@ def test_reset_returns_obs_and_info():
 def test_reset_with_no_seed_works():
     env = MinispireEnv()
     obs, info = env.reset()
-    assert obs.shape == (45,)
+    assert obs.shape == (MinispireEnv.OBS_SIZE,)
 
 
 def test_reset_seed_passes_through_to_cpp():
@@ -152,7 +152,8 @@ def test_reset_different_seeds_produce_different_trajectories():
     for s in [0, 1, 2, 3, 4, 5]:
         env = MinispireEnv()
         obs, _ = env.reset(seed=s)
-        obs_seeds.append(obs[9])  # enemy HP
+        # Enemy 0 block: [is_alive=9, hp=10, ...]; HP is slot 10 (ROB-59).
+        obs_seeds.append(obs[10])  # enemy 0 HP
     # At least some seeds give different HPs (HP roll is in [40, 44]).
     assert len(set(obs_seeds)) > 1
 
@@ -184,7 +185,7 @@ def test_step_returns_5_tuple():
     result = env.step(end_turn)
     assert len(result) == 5
     obs, reward, terminated, truncated, info = result
-    assert obs.shape == (45,)
+    assert obs.shape == (MinispireEnv.OBS_SIZE,)
     assert obs.dtype == np.float32
     assert isinstance(reward, float)
     assert isinstance(terminated, bool)
@@ -199,7 +200,7 @@ def test_step_accepts_numpy_int():
     env.reset(seed=0)
     end_turn = np.int64(MinispireEnv.NUM_ACTIONS - 1)
     obs, _, _, _, _ = env.step(end_turn)
-    assert obs.shape == (45,)
+    assert obs.shape == (MinispireEnv.OBS_SIZE,)
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +213,7 @@ def test_action_masks_returns_bool_array():
     env.reset(seed=0)
     mask = env.action_masks()
     assert isinstance(mask, np.ndarray)
-    assert mask.shape == (7,)
+    assert mask.shape == (MinispireEnv.NUM_ACTIONS,)
     assert mask.dtype == np.bool_
 
 
@@ -245,7 +246,7 @@ def test_gym_make_works():
     env = gym.make("Minispire-v0")
     obs, _ = env.reset(seed=0)
     # gym.make wraps in OrderEnforcing/TimeLimit etc., but obs comes through.
-    assert obs.shape == (45,)
+    assert obs.shape == (MinispireEnv.OBS_SIZE,)
 
 
 # ---------------------------------------------------------------------------

@@ -37,7 +37,7 @@ TEST(CombatEnv, ObsBufferIsKObsSize) {
   CombatEnv env;
   env.reset(0);
   EXPECT_EQ(env.obs().size(), static_cast<std::size_t>(CombatEnv::kObsSize));
-  EXPECT_EQ(env.obs().size(), 45u);
+  EXPECT_EQ(env.obs().size(), 78u);  // 5 + 4 + 4*11 + 24 + 1 (ROB-59)
 }
 
 TEST(CombatEnv, ActionMaskIsKNumActions) {
@@ -45,7 +45,7 @@ TEST(CombatEnv, ActionMaskIsKNumActions) {
   env.reset(0);
   EXPECT_EQ(env.action_mask().size(),
             static_cast<std::size_t>(CombatEnv::kNumActions));
-  EXPECT_EQ(env.action_mask().size(), 7u);
+  EXPECT_EQ(env.action_mask().size(), 25u);  // 6 cards * 4 enemies + end-turn
 }
 
 TEST(CombatEnv, EndTurnAlwaysLegalAfterReset) {
@@ -88,27 +88,47 @@ TEST(CombatEnv, ObsCharacterStatsAfterReset) {
   }
 }
 
+// Enemy obs layout (ROB-59): slot 0 starts at index 9, stride 11.
+//   +0 is_alive, +1 hp, +2 block, +3..6 status, +7 intent_attacking,
+//   +8 atk_dmg, +9 intent_block, +10 intent_buff
+constexpr int kEnemy0Base = 9;
+// Pile base = 9 + kMaxEnemies*stride.
+constexpr int kPileBase = 9 + minispire::kMaxEnemies * CombatEnv::kEnemyObsStride;
+
 TEST(CombatEnv, ObsEnemyStatsAfterReset) {
   CombatEnv env;
   env.reset(0);
 
-  // Enemy HP rolled in [40, 44]; max_hp matches.
-  EXPECT_GE(env.obs()[9], 40.0f);
-  EXPECT_LE(env.obs()[9], 44.0f);
-  EXPECT_FLOAT_EQ(env.obs()[9], env.obs()[10]);
-  EXPECT_FLOAT_EQ(env.obs()[11], 0.0f);  // enemy block
+  // Enemy 0 alive; HP rolled in [40, 44]; no block. Enemy obs has NO max_hp
+  // (ROB-59) — is_alive replaces it.
+  EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + 0], 1.0f);  // is_alive
+  EXPECT_GE(env.obs()[kEnemy0Base + 1], 40.0f);       // hp
+  EXPECT_LE(env.obs()[kEnemy0Base + 1], 44.0f);
+  EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + 2], 0.0f);  // block
 }
 
 TEST(CombatEnv, ObsIntentFirstTurnIsChompAttack) {
   CombatEnv env;
   env.reset(0);
 
-  // Slot 16: is_attacking. Slot 17: attack_damage. Slots 18-19: block / buff.
   // Jaw Worm turn 1 is always Chomp = 11 damage, no block, no buff.
-  EXPECT_FLOAT_EQ(env.obs()[16], 1.0f);
-  EXPECT_FLOAT_EQ(env.obs()[17], 11.0f);
-  EXPECT_FLOAT_EQ(env.obs()[18], 0.0f);
-  EXPECT_FLOAT_EQ(env.obs()[19], 0.0f);
+  EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + 7], 1.0f);   // is_attacking
+  EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + 8], 11.0f);  // atk_dmg
+  EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + 9], 0.0f);   // intent_block
+  EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + 10], 0.0f);  // intent_buff
+}
+
+TEST(CombatEnv, ObsDeadEnemySlotsAreZero) {
+  CombatEnv env;
+  env.reset(0);
+  // v1 has one enemy; slots 1..N-1 are empty -> all zero (incl. is_alive).
+  for (int slot = 1; slot < minispire::kMaxEnemies; ++slot) {
+    const int base = 9 + slot * CombatEnv::kEnemyObsStride;
+    for (int i = 0; i < CombatEnv::kEnemyObsStride; ++i) {
+      EXPECT_FLOAT_EQ(env.obs()[base + i], 0.0f)
+          << "enemy slot " << slot << " field " << i;
+    }
+  }
 }
 
 TEST(CombatEnv, ObsHandCountsMatchDeckDraw) {
@@ -117,23 +137,24 @@ TEST(CombatEnv, ObsHandCountsMatchDeckDraw) {
 
   // After start_v1_combat, hand has 5 cards from the 10-card starter deck.
   // hand + draw counts together = 10 total of {Strike, Defend, Bash}.
-  int strike = static_cast<int>(env.obs()[20] + env.obs()[26]);
-  int defend = static_cast<int>(env.obs()[21] + env.obs()[27]);
-  int bash   = static_cast<int>(env.obs()[22] + env.obs()[28]);
+  // Pile layout: hand [base+0..5], draw [base+6..11].
+  int strike = static_cast<int>(env.obs()[kPileBase + 0] + env.obs()[kPileBase + 6]);
+  int defend = static_cast<int>(env.obs()[kPileBase + 1] + env.obs()[kPileBase + 7]);
+  int bash   = static_cast<int>(env.obs()[kPileBase + 2] + env.obs()[kPileBase + 8]);
   EXPECT_EQ(strike, 5);
   EXPECT_EQ(defend, 4);
   EXPECT_EQ(bash, 1);
 
-  // Discard + exhaust are empty at start.
-  for (int i = 32; i <= 43; ++i) {
-    EXPECT_FLOAT_EQ(env.obs()[i], 0.0f) << "discard/exhaust slot " << i;
+  // Discard [base+12..17] + exhaust [base+18..23] are empty at start.
+  for (int i = 12; i <= 23; ++i) {
+    EXPECT_FLOAT_EQ(env.obs()[kPileBase + i], 0.0f) << "discard/exhaust slot " << i;
   }
 }
 
 TEST(CombatEnv, ObsTurnNumberAfterReset) {
   CombatEnv env;
   env.reset(0);
-  EXPECT_FLOAT_EQ(env.obs()[44], 1.0f);
+  EXPECT_FLOAT_EQ(env.obs()[CombatEnv::kObsSize - 1], 1.0f);
 }
 
 TEST(CombatEnv, IntentDamageReflectsEnemyStrength) {
@@ -171,7 +192,7 @@ TEST(CombatEnv, IntentDamageReflectsEnemyStrength) {
     if (m.damage > 0) {
       int expected = compute_attack_damage(
           m.damage, e.status_effects, env.state().character.status_effects);
-      EXPECT_FLOAT_EQ(env.obs()[17], static_cast<float>(expected));
+      EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + 8], static_cast<float>(expected));
     }
   }
 }

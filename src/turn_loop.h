@@ -31,9 +31,27 @@ int compute_attack_damage(int base,
 // 5 cards drawn, first enemy intent selected.
 CombatState start_v1_combat(uint32_t seed);
 
-// Action layout: indices [0, num_card_ids) play a card by CardId
-// (first-occurrence rule for duplicates); index num_card_ids ends the turn.
-// Mask size is num_card_ids + 1.
+// Action layout (ROB-60): (card x target) cross-product plus end-turn.
+//   action = card_idx * kMaxEnemies + target_idx   for card_idx in [0, num_cards)
+//   end_turn = num_card_ids * kMaxEnemies            (last index)
+// card_idx is the integer value of a CardId; target_idx is an enemy slot.
+// Untargeted cards (Defend) use the canonical target_idx 0; their other slots
+// are permanently masked (see valid_actions). Mask size is
+// num_card_ids * kMaxEnemies + 1.
+struct DecodedAction {
+  bool is_end_turn;
+  CardId card;     // valid only if !is_end_turn
+  int target;      // enemy slot index; valid only if !is_end_turn
+};
+
+// Pure arithmetic decode of an action index — no state, so the mask and the
+// apply path share one source of truth (decode never disagrees with itself).
+DecodedAction decode_action(int action);
+
+// Validity mask over the full action space. An action is legal iff the card is
+// in hand AND affordable, AND — if the card targets an enemy — that target slot
+// holds a living enemy; if it does not target an enemy (Defend), only the
+// canonical target slot 0 is legal. End-turn is always legal while in progress.
 std::vector<bool> valid_actions(const CombatState& state);
 
 // Apply a player action. Returns false (silently, no exception) if the

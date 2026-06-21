@@ -43,4 +43,23 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     {CardId::BashPlus,   {2, 10, 0, {StatusApplication{StatusEffect::Vulnerable, 3, StatusApplication::Target::Enemy}}}},
 };
 
+// Whether a card acts on a chosen enemy (vs. the player / self). Derived, not a
+// stored field: a card is enemy-targeting iff it deals damage or applies a
+// status to an enemy. This drives the (card x target) action space (ROB-60) —
+// targeted cards get a target index and are masked on the target being alive;
+// untargeted cards (Defend) use the canonical offset-0 slot.
+//
+// FUTURE (AoE): a card that hits *all* enemies (Cleave, Whirlwind) is still
+// "targeting an enemy" by this predicate, but it does not *pick* one. When such
+// cards land, "targets an enemy" and "needs a specific target index" diverge —
+// AoE cards should resolve over all living enemies and not consume a target
+// index. Revisit the masking/decoding fork then.
+inline bool card_targets_enemy(const CardData& data) {
+  if (data.damage > 0) return true;
+  for (const StatusApplication& app : data.applies) {
+    if (app.target == StatusApplication::Target::Enemy) return true;
+  }
+  return false;
+}
+
 }  // namespace minispire

@@ -19,7 +19,7 @@ def test_combat_env_constructs_and_resets():
     env = minispire._core.CombatEnv()
     obs, info = env.reset(seed=0)
     assert obs.shape == (env.OBS_SIZE,)
-    assert obs.shape == (45,)
+    assert obs.shape == (minispire._core.CombatEnv.OBS_SIZE,)
     assert obs.dtype == np.float32
     assert isinstance(info, dict)
 
@@ -29,7 +29,7 @@ def test_action_mask_shape_and_dtype():
     env.reset(seed=0)
     mask = env.action_mask()
     assert mask.shape == (env.NUM_ACTIONS,)
-    assert mask.shape == (7,)
+    assert mask.shape == (minispire._core.CombatEnv.NUM_ACTIONS,)
     assert mask.dtype == np.bool_
 
 
@@ -47,7 +47,7 @@ def test_step_returns_gym_tuple():
     result = env.step(end_turn)
     assert len(result) == 5
     obs, reward, terminated, truncated, info = result
-    assert obs.shape == (45,)
+    assert obs.shape == (minispire._core.CombatEnv.OBS_SIZE,)
     assert obs.dtype == np.float32
     assert isinstance(reward, float)
     assert isinstance(terminated, bool)

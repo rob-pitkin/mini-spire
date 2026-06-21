@@ -15,14 +15,15 @@ using minispire::testing::make_minimal_state;
 
 namespace {
 
-// Convenience: action index for ending the turn.
+// Convenience: end-turn action index (ROB-60 cross-product layout).
 int end_turn_action() {
-  return static_cast<int>(CARD_DATABASE.size());
+  return static_cast<int>(CARD_DATABASE.size()) * minispire::kMaxEnemies;
 }
 
-// Convenience: action index for playing a given CardId.
-int card_action(CardId id) {
-  return static_cast<int>(id);
+// Convenience: action index for playing a given CardId at an enemy slot.
+// Defaults to target 0 (the single-enemy / canonical-untargeted slot).
+int card_action(CardId id, int target = 0) {
+  return static_cast<int>(id) * minispire::kMaxEnemies + target;
 }
 
 }  // namespace
@@ -519,10 +520,10 @@ TEST(TurnLoop, DeadEnemyDoesNotAct) {
 // Action validation
 // ============================================================================
 
-TEST(TurnLoop, MaskSizeIsNumCardIdsPlusOne) {
+TEST(TurnLoop, MaskSizeIsCardsTimesEnemiesPlusOne) {
   CombatState s = make_minimal_state(0);
   auto mask = valid_actions(s);
-  EXPECT_EQ(mask.size(), CARD_DATABASE.size() + 1);
+  EXPECT_EQ(mask.size(), CARD_DATABASE.size() * minispire::kMaxEnemies + 1);
 }
 
 TEST(TurnLoop, EndTurnAlwaysLegalWhileInProgress) {

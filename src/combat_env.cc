@@ -50,9 +50,10 @@ int pile_count(const std::vector<Card>& pile, CardId id) {
 
 CombatEnv::CombatEnv(float hp_reward_coeff)
     : mask_buffer_(kNumActions, 0), hp_reward_coeff_(hp_reward_coeff) {
-  // Engine invariant: action space is num CardIds + end-turn.
-  static_assert(kNumActions == 6 + 1,
-                "kNumActions must equal CARD_DATABASE size + 1 (end turn)");
+  // Engine invariant: action space is the (card x target) cross-product plus
+  // a single end-turn action (ROB-60). 6 card types here.
+  static_assert(kNumActions == 6 * kMaxEnemies + 1,
+                "kNumActions must equal CARD_DATABASE size * kMaxEnemies + 1");
   // A negative reward bonus is meaningless; catch it in debug builds. Other
   // values (including unusual ones) are trusted — it's a hyperparameter.
   assert(hp_reward_coeff_ >= 0.0f && "hp_reward_coeff must be >= 0");
@@ -110,65 +111,75 @@ void CombatEnv::step(int action) {
 }
 
 void CombatEnv::compute_obs() {
-  // Layout per ROB-40 section 7. Indices are documented in the design doc.
-  // All values are raw — downstream consumers can normalize.
+  // Layout per ROB-40 + ROB-59 (multi-enemy). All values are raw — downstream
+  // consumers can normalize. Section offsets are derived from constants so the
+  // layout has no hand-maintained magic numbers (the off-by-one risk).
   std::array<float, kObsSize>& o = obs_buffer_;
   std::fill(o.begin(), o.end(), 0.0f);
 
   const Character& c = state_.character;
-  const Enemy& e = state_.enemies[0];
 
-  // Character (slots 0..8)
+  // --- Player (slots 0..4) ---
   o[0] = static_cast<float>(c.hp);
-  o[1] = static_cast<float>(c.max_hp);
+  o[1] = static_cast<float>(c.max_hp);  // player keeps max_hp; enemies do not
   o[2] = static_cast<float>(c.current_block);
   o[3] = static_cast<float>(c.energy);
   o[4] = static_cast<float>(c.energy_per_turn);
+
+  // --- Player status (slots 5..8) ---
   for (std::size_t i = 0; i < kObsStatusOrder.size(); ++i) {
     o[5 + i] = status_stacks(c.status_effects, kObsStatusOrder[i]);
   }
 
-  // Enemy (slots 9..15)
-  o[9]  = static_cast<float>(e.hp);
-  o[10] = static_cast<float>(e.max_hp);
-  o[11] = static_cast<float>(e.current_block);
-  for (std::size_t i = 0; i < kObsStatusOrder.size(); ++i) {
-    o[12 + i] = status_stacks(e.status_effects, kObsStatusOrder[i]);
-  }
+  // --- Enemies: kMaxEnemies blocks of kEnemyObsStride floats each ---
+  // Per block: [0] is_alive, [1] hp, [2] block, [3..6] status (V/W/S/D),
+  // [7..10] intent (is_attacking, atk_dmg, is_blocking, is_buffing).
+  // Dead/empty slots stay all-zero (the std::fill above); is_alive = hp > 0.
+  constexpr int kEnemyBase = 9;
+  for (std::size_t slot = 0; slot < kMaxEnemies; ++slot) {
+    const int base = kEnemyBase + static_cast<int>(slot) * kEnemyObsStride;
+    if (slot >= state_.enemies.size()) continue;  // empty slot: leave zeros
+    const Enemy& e = state_.enemies[slot];
+    if (e.hp <= 0) continue;  // dead: leave zeros (is_alive stays 0)
 
-  // Enemy intent (slots 16..19). last_move always primed by make_jaw_worm
-  // and by handle_end_turn — but guard defensively.
-  if (e.last_move.has_value()) {
-    auto move_it = e.moves.find(*e.last_move);
-    if (move_it != e.moves.end()) {
-      const Move& m = move_it->second;
-      bool is_attacking = m.damage > 0;
-      bool is_blocking  = m.block  > 0;
-      bool is_buffing   = !m.applies.empty();
-      o[16] = is_attacking ? 1.0f : 0.0f;
-      // Displayed attack damage (Strength/Weak on enemy, Vulnerable on
-      // character all factored in) — matches what the CLI shows.
-      o[17] = is_attacking
-                  ? static_cast<float>(compute_attack_damage(
-                        m.damage, e.status_effects, c.status_effects))
-                  : 0.0f;
-      o[18] = is_blocking ? 1.0f : 0.0f;
-      o[19] = is_buffing  ? 1.0f : 0.0f;
+    o[base + 0] = 1.0f;  // is_alive
+    o[base + 1] = static_cast<float>(e.hp);
+    o[base + 2] = static_cast<float>(e.current_block);
+    for (std::size_t i = 0; i < kObsStatusOrder.size(); ++i) {
+      o[base + 3 + i] = status_stacks(e.status_effects, kObsStatusOrder[i]);
+    }
+    // Intent. last_move is primed at combat start and each enemy turn, but
+    // guard defensively (a freshly-spawned split child may not be primed yet).
+    if (e.last_move.has_value()) {
+      auto move_it = e.moves.find(*e.last_move);
+      if (move_it != e.moves.end()) {
+        const Move& m = move_it->second;
+        const bool is_attacking = m.damage > 0;
+        o[base + 7] = is_attacking ? 1.0f : 0.0f;
+        // Displayed attack damage (enemy Strength/Weak + player Vulnerable
+        // factored in) — matches what the TUI shows.
+        o[base + 8] = is_attacking
+                          ? static_cast<float>(compute_attack_damage(
+                                m.damage, e.status_effects, c.status_effects))
+                          : 0.0f;
+        o[base + 9]  = m.block > 0 ? 1.0f : 0.0f;
+        o[base + 10] = !m.applies.empty() ? 1.0f : 0.0f;
+      }
     }
   }
 
-  // Pile counts per CardId (slots 20..43).
-  // Layout: hand (20..25), draw (26..31), discard (32..37), exhaust (38..43)
+  // --- Pile counts per CardId (24 slots: hand/draw/discard/exhaust x 6) ---
+  constexpr int kPileBase = kEnemyBase + kMaxEnemies * kEnemyObsStride;
   for (std::size_t i = 0; i < kObsCardOrder.size(); ++i) {
     CardId id = kObsCardOrder[i];
-    o[20 + i] = static_cast<float>(pile_count(state_.current_hand, id));
-    o[26 + i] = static_cast<float>(pile_count(state_.draw_pile, id));
-    o[32 + i] = static_cast<float>(pile_count(state_.discard_pile, id));
-    o[38 + i] = static_cast<float>(pile_count(state_.exhaust_pile, id));
+    o[kPileBase + 0 + i]  = static_cast<float>(pile_count(state_.current_hand, id));
+    o[kPileBase + 6 + i]  = static_cast<float>(pile_count(state_.draw_pile, id));
+    o[kPileBase + 12 + i] = static_cast<float>(pile_count(state_.discard_pile, id));
+    o[kPileBase + 18 + i] = static_cast<float>(pile_count(state_.exhaust_pile, id));
   }
 
-  // Turn number (slot 44).
-  o[44] = static_cast<float>(state_.turn_number);
+  // --- Turn number (last slot) ---
+  o[kObsSize - 1] = static_cast<float>(state_.turn_number);
 }
 
 void CombatEnv::compute_mask() {

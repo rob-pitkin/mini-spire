@@ -31,15 +31,19 @@ void apply_damage_to_hp_block(int& hp, int& block, int amount) {
   if (hp < 0) hp = 0;
 }
 
-// LIMITATION (multi-enemy): Target::Enemy currently means "enemies[0]". With
-// multiple enemies this should know the source's index and which enemies are
-// targeted (Target::AllEnemies, Target::EnemyIndex(n), etc.). See ROB-34
-// design doc note on multi-enemy target semantics.
-void apply_status(CombatState& state, const StatusApplication& app) {
-  auto& target_status = (app.target == StatusApplication::Target::Character)
-                            ? state.character.status_effects
-                            : state.enemies[0].status_effects;
-  target_status[app.effect] += app.amount;
+// Apply a status to either the character or a specific enemy slot. `enemy_target`
+// is the decoded target slot (ROB-60) for Target::Enemy applications; ignored for
+// Target::Character. AoE status (apply to all enemies) is not yet modeled —
+// revisit when AoE cards land.
+void apply_status(CombatState& state, const StatusApplication& app,
+                  int enemy_target) {
+  if (app.target == StatusApplication::Target::Character) {
+    state.character.status_effects[app.effect] += app.amount;
+    return;
+  }
+  if (enemy_target >= 0 && enemy_target < static_cast<int>(state.enemies.size())) {
+    state.enemies[enemy_target].status_effects[app.effect] += app.amount;
+  }
 }
 
 // Decrement Vulnerable/Weak by 1; remove if at 0. Strength/Dexterity persist.
@@ -91,20 +95,25 @@ int find_first_in_hand(const std::vector<Card>& hand, CardId id) {
   return -1;
 }
 
-void handle_play_card(CombatState& state, CardId card_id) {
+void handle_play_card(CombatState& state, CardId card_id, int target) {
   const CardData& data = CARD_DATABASE.at(card_id);
 
   // 1. Pay energy
   state.character.energy -= data.cost;
 
-  // 2. Apply damage to the (single) enemy.
-  // LIMITATION (multi-enemy): v1 has one enemy; cards that target all enemies
-  // (Cleave, Whirlwind) will need a target field on CardData and iteration here.
-  Enemy& enemy = state.enemies[0];
-  if (data.damage > 0) {
-    int dmg = compute_attack_damage(data.damage, state.character.status_effects,
-                                    enemy.status_effects);
-    apply_damage_to_hp_block(enemy.hp, enemy.current_block, dmg);
+  // 2. Apply damage to the targeted enemy (ROB-60: target is the decoded enemy
+  // slot). The mask guarantees `target` is a living enemy for damage/enemy-
+  // status cards; guard defensively anyway.
+  // LIMITATION (multi-enemy): cards that hit *all* enemies (Cleave, Whirlwind)
+  // will iterate all living enemies instead of a single target — revisit when
+  // AoE cards land (ROB-60 FUTURE note in card.h).
+  if (target >= 0 && target < static_cast<int>(state.enemies.size())) {
+    Enemy& enemy = state.enemies[target];
+    if (data.damage > 0) {
+      int dmg = compute_attack_damage(
+          data.damage, state.character.status_effects, enemy.status_effects);
+      apply_damage_to_hp_block(enemy.hp, enemy.current_block, dmg);
+    }
   }
 
   // 3. Apply block (with Dexterity)
@@ -115,9 +124,9 @@ void handle_play_card(CombatState& state, CardId card_id) {
     state.character.current_block += block_gained;
   }
 
-  // 4. Apply status effects
+  // 4. Apply status effects to the chosen target (enemy-targeted) or self.
   for (const auto& app : data.applies) {
-    apply_status(state, app);
+    apply_status(state, app, target);
   }
 
   // 5. Move card from hand to discard or exhaust
@@ -155,8 +164,12 @@ void apply_move_to_state(CombatState& state, const Move& move) {
   // STS limitation: STS cards/moves with multi-hit attacks (Twin Strike,
   // Pommel Strike) deal Strength bonus per-hit. Our Move model is one hit
   // per cast; multi-hit will need a `hits` field on Move.
+  // A Target::Enemy status on an enemy move is a self-buff (e.g. Cultist
+  // Incantation -> own Strength), so it routes to the acting enemy's slot.
+  // LIMITATION (multi-enemy): acting enemy is enemies[0] here; ROB-61
+  // parameterizes which enemy acts and passes its slot index.
   for (const auto& app : move.applies) {
-    apply_status(state, app);
+    apply_status(state, app, /*enemy_target=*/0);
   }
 }
 
@@ -258,29 +271,53 @@ CombatState start_v1_combat(uint32_t seed) {
   return state;
 }
 
-std::vector<bool> valid_actions(const CombatState& state) {
-  // Action layout: [0, num_card_ids) play card by id; last index = end turn.
-  // Use the size of CARD_DATABASE — every CardId has an entry.
+DecodedAction decode_action(int action) {
   const int num_card_ids = static_cast<int>(CARD_DATABASE.size());
-  std::vector<bool> mask(num_card_ids + 1, false);
+  const int end_turn_idx = num_card_ids * kMaxEnemies;
+  if (action == end_turn_idx) {
+    return DecodedAction{/*is_end_turn=*/true, CardId::Strike, 0};
+  }
+  // action = card_idx * kMaxEnemies + target_idx
+  const int card_idx = action / kMaxEnemies;
+  const int target = action % kMaxEnemies;
+  return DecodedAction{/*is_end_turn=*/false, static_cast<CardId>(card_idx),
+                       target};
+}
+
+std::vector<bool> valid_actions(const CombatState& state) {
+  const int num_card_ids = static_cast<int>(CARD_DATABASE.size());
+  const int num_actions = num_card_ids * kMaxEnemies + 1;
+  std::vector<bool> mask(num_actions, false);
 
   if (state.outcome != Outcome::InProgress) {
     return mask;  // all false
   }
 
-  // Per-card-id validity. Iterates CARD_DATABASE — invariant: every CardId
-  // has an entry, so any CardId without one would leave mask[idx] = false
-  // and the action would be rejected.
-  for (const auto& [card_id, data] : CARD_DATABASE) {
-    int idx = static_cast<int>(card_id);
-    if (idx < 0 || idx >= num_card_ids) continue;
-    bool in_hand = find_first_in_hand(state.current_hand, card_id) >= 0;
-    bool affordable = state.character.energy >= data.cost;
-    mask[idx] = in_hand && affordable;
+  for (int action = 0; action < num_actions - 1; ++action) {
+    const DecodedAction d = decode_action(action);
+    const int card_idx = static_cast<int>(d.card);
+    if (card_idx < 0 || card_idx >= num_card_ids) continue;
+
+    const CardData& data = CARD_DATABASE.at(d.card);
+    const bool in_hand = find_first_in_hand(state.current_hand, d.card) >= 0;
+    const bool affordable = state.character.energy >= data.cost;
+    if (!in_hand || !affordable) continue;
+
+    // Target legality fork (shares card_targets_enemy with apply_action, so
+    // the mask and the apply path never disagree).
+    if (card_targets_enemy(data)) {
+      // Targeted: the chosen enemy slot must hold a living enemy.
+      const bool alive = d.target < static_cast<int>(state.enemies.size()) &&
+                         state.enemies[d.target].hp > 0;
+      mask[action] = alive;
+    } else {
+      // Untargeted (Defend): only the canonical slot 0 is legal.
+      mask[action] = (d.target == 0);
+    }
   }
 
   // End turn is always legal while in progress.
-  mask[num_card_ids] = true;
+  mask[num_actions - 1] = true;
   return mask;
 }
 
@@ -292,11 +329,11 @@ bool apply_action(CombatState& state, int action) {
     return false;
   }
 
-  const int end_turn_idx = static_cast<int>(mask.size()) - 1;
-  if (action == end_turn_idx) {
+  const DecodedAction d = decode_action(action);
+  if (d.is_end_turn) {
     handle_end_turn(state);
   } else {
-    handle_play_card(state, static_cast<CardId>(action));
+    handle_play_card(state, d.card, d.target);
   }
   return true;
 }
