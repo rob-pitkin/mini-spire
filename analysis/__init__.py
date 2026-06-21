@@ -1,1 +1,1 @@
-"""Analysis tooling for Mini-Spire: trajectory replay, behavioral stats, plots."""
+"""Analysis tooling for Mini-Spire: blog/explainer figure generation."""
