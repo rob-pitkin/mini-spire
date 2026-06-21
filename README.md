@@ -12,7 +12,7 @@ and exposed to Python via zero-copy pybind11 bindings, so you can train an agent
 with [Stable-Baselines3](https://github.com/DLR-RM/stable-baselines3) and friends
 using a standard Gymnasium interface — action masking included.
 
-![Playing a fight in the terminal](assets/demo.gif)
+![Playing a fight in the terminal](assets/gameplay.gif)
 
 > **Read the intro write-up:** [Mini-spire: a fast Slay the Spire RL environment
 > in C++](https://rhp.bearblog.dev) — the story, the design choices, and the M1

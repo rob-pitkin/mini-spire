@@ -1,6 +1,6 @@
 # vhs tape for the mini-spire terminal-play demo GIF.
 #   brew install vhs   (https://github.com/charmbracelet/vhs)
-#   vhs assets/demo.tape   ->   writes assets/demo.gif
+#   vhs assets/demo.tape   ->   writes assets/gameplay.gif
 #
 # Replays a complete winning fight on seed 0 (5 turns, ends at 65/80 HP). The
 # keystrokes below are the local action indices the TUI prompts for, transcribed
@@ -11,7 +11,7 @@
 # Per-turn the local indices shift as the hand changes — they are not a simple
 # pattern; see the per-line comments.
 
-Output assets/demo.gif
+Output assets/gameplay.gif
 
 # Terminal look — sized to fit the TUI panels; tweak Theme to taste.
 Set FontSize 16
@@ -23,83 +23,83 @@ Set Theme "Catppuccin Mocha"
 # Launch the TUI on a fixed seed. (Run vhs from the repo root so `uv` resolves.)
 Type "uv run minispire-play 0"
 Enter
-Sleep 2.5s
+Sleep 1.5s
 
 # --- Turn 1: Bash (Vulnerable) + Defend, then end turn ---
 Type "3"
-Sleep 400ms
+Sleep 250ms
 Enter
-Sleep 1.4s
+Sleep 700ms
 Type "2"
-Sleep 400ms
+Sleep 250ms
 Enter
-Sleep 1.4s
+Sleep 700ms
 Type "0"
-Sleep 400ms
+Sleep 250ms
 Enter
-Sleep 2s
+Sleep 1.2s
 
 # --- Turn 2: Strike, Strike, Defend, end turn ---
 Type "2"
-Sleep 400ms
+Sleep 250ms
 Enter
-Sleep 1.2s
+Sleep 600ms
 Type "2"
-Sleep 400ms
+Sleep 250ms
+Enter
+Sleep 600ms
+Type "0"
+Sleep 250ms
+Enter
+Sleep 600ms
+Type "0"
+Sleep 250ms
 Enter
 Sleep 1.2s
-Type "0"
-Sleep 400ms
-Enter
-Sleep 1.2s
-Type "0"
-Sleep 400ms
-Enter
-Sleep 2s
 
 # --- Turn 3: Defend, Defend, Strike, end turn ---
 Type "2"
-Sleep 400ms
+Sleep 250ms
 Enter
-Sleep 1.2s
+Sleep 600ms
 Type "2"
-Sleep 400ms
+Sleep 250ms
+Enter
+Sleep 600ms
+Type "0"
+Sleep 250ms
+Enter
+Sleep 600ms
+Type "0"
+Sleep 250ms
 Enter
 Sleep 1.2s
-Type "0"
-Sleep 400ms
-Enter
-Sleep 1.2s
-Type "0"
-Sleep 400ms
-Enter
-Sleep 2s
 
 # --- Turn 4: Bash, Defend, end turn ---
 Type "0"
-Sleep 400ms
+Sleep 250ms
 Enter
-Sleep 1.4s
+Sleep 700ms
 Type "0"
-Sleep 400ms
+Sleep 250ms
 Enter
-Sleep 1.4s
+Sleep 700ms
 Type "0"
-Sleep 400ms
+Sleep 250ms
 Enter
-Sleep 2s
+Sleep 1.2s
 
 # --- Turn 5: Strike, Bash -> lethal, fight won ---
 Type "1"
-Sleep 400ms
+Sleep 250ms
 Enter
-Sleep 1.4s
+Sleep 700ms
 Type "3"
-Sleep 400ms
+Sleep 250ms
 Enter
-Sleep 3s
+Sleep 2s
 
 # End screen, then quit.
 Type "q"
 Enter
-Sleep 1s
+Sleep 800ms
