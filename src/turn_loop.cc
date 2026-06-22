@@ -273,6 +273,14 @@ void apply_move_to_state(CombatState& state, const Move& move, int actor_slot) {
   for (CardId card : move.adds_to_discard) {
     state.discard_pile.push_back(Card{card});
   }
+  // Escape (ROB-74): the acting enemy flees by setting its own hp to 0. It
+  // leaves the fight — everything keys on hp>0, so it's no longer
+  // targetable/acting and its slot frees. This is NOT a death: on_death hooks
+  // are not fired (a fleeing enemy doesn't split/spore). check_enemy_terminal
+  // (run after the enemy turn) treats it as gone -> Won if it was the last one.
+  if (move.escapes) {
+    enemy.hp = 0;
+  }
 }
 
 void handle_end_turn(CombatState& state) {
@@ -287,10 +295,12 @@ void handle_end_turn(CombatState& state) {
   // 1c. Discard leftover energy
   state.character.energy = 0;
 
-  // 2. Enemy turn — each living enemy acts in slot order. Enemies never die or
-  // spawn during their own turn (they attack the player or buff themselves), so
-  // a straight index loop is safe (no mid-loop vector mutation). The only death
-  // that can occur is the player's, which we check for after each enemy acts.
+  // 2. Enemy turn — each living enemy acts in slot order. Enemies don't spawn
+  // during their own turn (no mid-loop vector growth), so a straight index loop
+  // is safe. An enemy CAN leave its slot via escape (ROB-74: hp->0), but that
+  // only frees a slot — it never invalidates the iteration. Two terminal cases
+  // are checked: the player dying (per enemy, below) and all enemies being gone
+  // (after the loop — an escape can clear the last enemy).
   state.character_turn = false;
   for (std::size_t slot = 0; slot < state.enemies.size(); ++slot) {
     Enemy& enemy = state.enemies[slot];
@@ -324,6 +334,11 @@ void handle_end_turn(CombatState& state) {
     // 2e. Advance this enemy's Markov chain to set its next intent.
     select_next_move(enemy, state.rng);
   }
+
+  // 2f. All enemies gone? An escape (ROB-74) can clear the last living enemy,
+  // which ends the fight as a Win even though nothing was killed this turn.
+  check_enemy_terminal(state);
+  if (state.outcome != Outcome::InProgress) return;
 
   // 3. Start new player turn
   state.character.current_block = 0;

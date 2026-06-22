@@ -34,6 +34,11 @@ struct Move {
   // slime's spit adding Slimed. Applied at end of the acting enemy's turn.
   // General (not Slimed-specific) so Dazed/Wound/Burn reuse it.
   std::vector<CardId> adds_to_discard;
+  // The acting enemy flees when this move resolves (ROB-74), e.g. the Looter's
+  // Escape. Modeled as the enemy setting its own hp to 0 — it leaves the fight
+  // (no longer targetable/acting; its slot frees). Escape counts as a win if it
+  // was the last enemy; it does NOT trigger on_death hooks (escape != death).
+  bool escapes = false;
 };
 
 struct MoveTransition {

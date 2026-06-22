@@ -972,3 +972,72 @@ TEST(TurnLoop, RitualGainsStrengthAtStartOfEnemyTurnAndRamps) {
   EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Strength], 6);
   EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Ritual], 3);
 }
+
+// ============================================================================
+// Escape (ROB-74)
+// ============================================================================
+
+namespace {
+// An enemy whose move flees (escapes=true). Repeats the escape move so the
+// Markov advance after escaping has a valid transition.
+Enemy make_escaper(int hp = 40) {
+  Enemy e;
+  e.kind = EnemyKind::JawWorm;
+  e.hp = hp;
+  e.max_hp = hp;
+  e.current_block = 0;
+  Move flee{MoveName::Chomp, 0, 0, {}};
+  flee.escapes = true;
+  e.moves = {{MoveName::Chomp, flee}};
+  e.first_turn_move = MoveName::Chomp;
+  e.last_move = MoveName::Chomp;
+  e.transitions = {{{MoveName::Chomp, 1}, {{MoveName::Chomp, 1.0f}}}};
+  e.consecutive_count = 1;
+  return e;
+}
+}  // namespace
+
+TEST(TurnLoop, LastEnemyEscapingEndsCombatAsWin) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  s.enemies.push_back(make_escaper());
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  // The lone enemy fled -> no living enemies -> Won. Escape counts as a win.
+  EXPECT_EQ(s.enemies[0].hp, 0);
+  EXPECT_EQ(s.outcome, Outcome::Won);
+}
+
+TEST(TurnLoop, OneEnemyEscapingLeavesOthersActive) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  s.enemies.push_back(make_escaper());           // slot 0 flees
+  s.enemies.push_back(make_minimal_state(0).enemies[0]);  // slot 1: a Jaw Worm
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  // Slot 0 fled (gone); slot 1 still alive -> fight continues.
+  EXPECT_EQ(s.enemies[0].hp, 0);
+  EXPECT_GT(s.enemies[1].hp, 0);
+  EXPECT_EQ(s.outcome, Outcome::InProgress);
+}
+
+TEST(TurnLoop, EscapeDoesNotTriggerOnDeathHook) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  Enemy e = make_escaper();
+  // Give it a Split on_death hook; escaping must NOT spawn children.
+  e.on_death = OnDeathEffect::Split;
+  e.split_children = {make_test_enemy(20), make_test_enemy(20)};
+  s.enemies.push_back(std::move(e));
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  // It fled, did not "die" -> no split children. Only the (now hp=0) escaper
+  // occupies the vector; no living enemy -> Won.
+  int living = 0;
+  for (const auto& en : s.enemies) if (en.hp > 0) ++living;
+  EXPECT_EQ(living, 0);
+  EXPECT_EQ(s.outcome, Outcome::Won);
+}
