@@ -72,7 +72,8 @@ PYBIND11_MODULE(_core, m) {
       .value("Bash", CardId::Bash)
       .value("StrikePlus", CardId::StrikePlus)
       .value("DefendPlus", CardId::DefendPlus)
-      .value("BashPlus", CardId::BashPlus);
+      .value("BashPlus", CardId::BashPlus)
+      .value("Slimed", CardId::Slimed);
 
   py::class_<StatePiles>(m, "StatePiles")
       .def_readonly("hand", &StatePiles::hand)

@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "card.h"
 #include "status_effect.h"
 
 namespace minispire {
@@ -29,6 +30,10 @@ struct Move {
   int damage;
   int block;
   std::vector<StatusApplication> applies;
+  // Status cards this move adds to the player's discard pile (ROB-72), e.g. a
+  // slime's spit adding Slimed. Applied at end of the acting enemy's turn.
+  // General (not Slimed-specific) so Dazed/Wound/Burn reuse it.
+  std::vector<CardId> adds_to_discard;
 };
 
 struct MoveTransition {

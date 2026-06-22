@@ -15,12 +15,15 @@ namespace minispire {
 
 namespace {
 
-// CardId ordering for the obs layout (per ROB-40 section 7).
-// Matches CardId declaration order in card.h.
-constexpr std::array<CardId, 6> kObsCardOrder = {
+// CardId ordering for the obs pile-count layout. Must list every CardId and
+// match kNumCardTypes (static_assert below).
+constexpr std::array<CardId, kNumCardTypes> kObsCardOrder = {
     CardId::Strike,     CardId::Defend,     CardId::Bash,
     CardId::StrikePlus, CardId::DefendPlus, CardId::BashPlus,
+    CardId::Slimed,
 };
+static_assert(kObsCardOrder.size() == kNumCardTypes,
+              "kObsCardOrder must list every card type");
 
 // StatusEffect ordering for the obs layout.
 // Matches StatusEffect declaration order in status_effect.h.
@@ -51,9 +54,12 @@ int pile_count(const std::vector<Card>& pile, CardId id) {
 CombatEnv::CombatEnv(float hp_reward_coeff)
     : mask_buffer_(kNumActions, 0), hp_reward_coeff_(hp_reward_coeff) {
   // Engine invariant: action space is the (card x target) cross-product plus
-  // a single end-turn action (ROB-60). 6 card types here.
-  static_assert(kNumActions == 6 * kMaxEnemies + 1,
-                "kNumActions must equal CARD_DATABASE size * kMaxEnemies + 1");
+  // a single end-turn action (ROB-60), sized from kNumCardTypes.
+  static_assert(kNumActions == kNumCardTypes * kMaxEnemies + 1,
+                "kNumActions must equal kNumCardTypes * kMaxEnemies + 1");
+  // And kNumCardTypes must match the actual card database.
+  assert(static_cast<int>(CARD_DATABASE.size()) == kNumCardTypes &&
+         "kNumCardTypes out of sync with CARD_DATABASE");
   // A negative reward bonus is meaningless; catch it in debug builds. Other
   // values (including unusual ones) are trusted — it's a hyperparameter.
   assert(hp_reward_coeff_ >= 0.0f && "hp_reward_coeff must be >= 0");
@@ -168,14 +174,17 @@ void CombatEnv::compute_obs() {
     }
   }
 
-  // --- Pile counts per CardId (24 slots: hand/draw/discard/exhaust x 6) ---
+  // --- Pile counts per CardId: hand/draw/discard/exhaust, each a
+  // kNumCardTypes-long count vector. Stride derives from kNumCardTypes so
+  // adding a card type can't drift the per-pile offsets. ---
   constexpr int kPileBase = kEnemyBase + kMaxEnemies * kEnemyObsStride;
+  constexpr int kStride = kNumCardTypes;
   for (std::size_t i = 0; i < kObsCardOrder.size(); ++i) {
     CardId id = kObsCardOrder[i];
-    o[kPileBase + 0 + i]  = static_cast<float>(pile_count(state_.current_hand, id));
-    o[kPileBase + 6 + i]  = static_cast<float>(pile_count(state_.draw_pile, id));
-    o[kPileBase + 12 + i] = static_cast<float>(pile_count(state_.discard_pile, id));
-    o[kPileBase + 18 + i] = static_cast<float>(pile_count(state_.exhaust_pile, id));
+    o[kPileBase + 0 * kStride + i] = static_cast<float>(pile_count(state_.current_hand, id));
+    o[kPileBase + 1 * kStride + i] = static_cast<float>(pile_count(state_.draw_pile, id));
+    o[kPileBase + 2 * kStride + i] = static_cast<float>(pile_count(state_.discard_pile, id));
+    o[kPileBase + 3 * kStride + i] = static_cast<float>(pile_count(state_.exhaust_pile, id));
   }
 
   // --- Turn number (last slot) ---

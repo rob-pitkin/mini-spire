@@ -239,9 +239,6 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   check_character_terminal(state);  // currently unreachable in v1
 }
 
-// LIMITATION (multi-enemy): this assumes a single attacking enemy at
-// state.enemies[0]. With multiple enemies, each enemy's intent fires in turn
-// order and references its own status_effects.
 // Resolve one enemy's move. `actor_slot` is the acting enemy's slot index — the
 // move's damage uses that enemy's status, its block lands on that enemy, and a
 // Target::Enemy status is that enemy's self-buff (e.g. Cultist Incantation ->
@@ -265,6 +262,11 @@ void apply_move_to_state(CombatState& state, const Move& move, int actor_slot) {
   // field on Move.
   for (const auto& app : move.applies) {
     apply_status(state, app, /*enemy_target=*/actor_slot);
+  }
+  // Status cards the move adds to the player's discard (ROB-72), e.g. a slime
+  // spit adding Slimed. Resolves with the move (end of this enemy's action).
+  for (CardId card : move.adds_to_discard) {
+    state.discard_pile.push_back(Card{card});
   }
 }
 

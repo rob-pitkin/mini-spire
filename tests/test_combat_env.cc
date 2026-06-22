@@ -37,7 +37,11 @@ TEST(CombatEnv, ObsBufferIsKObsSize) {
   CombatEnv env;
   env.reset(0);
   EXPECT_EQ(env.obs().size(), static_cast<std::size_t>(CombatEnv::kObsSize));
-  EXPECT_EQ(env.obs().size(), 78u);  // 5 + 4 + 4*11 + 24 + 1 (ROB-59)
+  // Compute the layout from constants so this never goes stale as the obs grows:
+  // player(5) + player status(4) + enemies + piles + turn(1).
+  const int expected = 5 + 4 + minispire::kMaxEnemies * CombatEnv::kEnemyObsStride +
+                       CombatEnv::kPileObsSize + 1;
+  EXPECT_EQ(env.obs().size(), static_cast<std::size_t>(expected));
 }
 
 TEST(CombatEnv, ActionMaskIsKNumActions) {
@@ -45,7 +49,9 @@ TEST(CombatEnv, ActionMaskIsKNumActions) {
   env.reset(0);
   EXPECT_EQ(env.action_mask().size(),
             static_cast<std::size_t>(CombatEnv::kNumActions));
-  EXPECT_EQ(env.action_mask().size(), 25u);  // 6 cards * 4 enemies + end-turn
+  // card types x enemies + end-turn — from constants, never stale.
+  EXPECT_EQ(env.action_mask().size(),
+            static_cast<std::size_t>(minispire::kNumCardTypes * minispire::kMaxEnemies + 1));
 }
 
 TEST(CombatEnv, EndTurnAlwaysLegalAfterReset) {
@@ -137,16 +143,18 @@ TEST(CombatEnv, ObsHandCountsMatchDeckDraw) {
 
   // After start_v1_combat, hand has 5 cards from the 10-card starter deck.
   // hand + draw counts together = 10 total of {Strike, Defend, Bash}.
-  // Pile layout: hand [base+0..5], draw [base+6..11].
-  int strike = static_cast<int>(env.obs()[kPileBase + 0] + env.obs()[kPileBase + 6]);
-  int defend = static_cast<int>(env.obs()[kPileBase + 1] + env.obs()[kPileBase + 7]);
-  int bash   = static_cast<int>(env.obs()[kPileBase + 2] + env.obs()[kPileBase + 8]);
+  // Pile stride = kNumCardTypes: hand [0..S), draw [S..2S), discard [2S..3S),
+  // exhaust [3S..4S). Card order: Strike=0, Defend=1, Bash=2 (kObsCardOrder).
+  constexpr int S = minispire::kNumCardTypes;
+  int strike = static_cast<int>(env.obs()[kPileBase + 0] + env.obs()[kPileBase + S + 0]);
+  int defend = static_cast<int>(env.obs()[kPileBase + 1] + env.obs()[kPileBase + S + 1]);
+  int bash   = static_cast<int>(env.obs()[kPileBase + 2] + env.obs()[kPileBase + S + 2]);
   EXPECT_EQ(strike, 5);
   EXPECT_EQ(defend, 4);
   EXPECT_EQ(bash, 1);
 
-  // Discard [base+12..17] + exhaust [base+18..23] are empty at start.
-  for (int i = 12; i <= 23; ++i) {
+  // Discard [2S..3S) + exhaust [3S..4S) are empty at start.
+  for (int i = 2 * S; i < 4 * S; ++i) {
     EXPECT_FLOAT_EQ(env.obs()[kPileBase + i], 0.0f) << "discard/exhaust slot " << i;
   }
 }

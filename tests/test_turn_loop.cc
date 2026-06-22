@@ -835,3 +835,74 @@ TEST(TurnLoop, SplitThrowsWhenNoFreeSlot) {
   EXPECT_THROW(apply_action(s, card_action(CardId::Strike, 0)),
                std::runtime_error);
 }
+
+// ============================================================================
+// Slimed / exhaust cards (ROB-72)
+// ============================================================================
+
+TEST(TurnLoop, PlayingSlimedExhaustsItNotDiscards) {
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Slimed});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Slimed, 0)));
+
+  // Slimed has exhaust=true -> goes to exhaust pile, not discard.
+  EXPECT_EQ(s.exhaust_pile.size(), 1u);
+  EXPECT_EQ(s.exhaust_pile[0].card_id, CardId::Slimed);
+  EXPECT_TRUE(s.discard_pile.empty());
+  // It cost 1 energy and did no damage / block.
+  EXPECT_EQ(s.character.energy, 2);
+}
+
+TEST(TurnLoop, SlimedIsPlayableWhenInHandAndAffordable) {
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Slimed});
+
+  auto mask = valid_actions(s);
+  // Slimed is untargeted -> legal only at offset 0.
+  EXPECT_TRUE(mask[card_action(CardId::Slimed, 0)]);
+  // Its other target slots are masked (untargeted card).
+  for (int t = 1; t < kMaxEnemies; ++t) {
+    EXPECT_FALSE(mask[card_action(CardId::Slimed, t)]);
+  }
+}
+
+TEST(TurnLoop, EnemyMoveAddsSlimedToDiscard) {
+  // Synthetic enemy whose only move spits 2 Slimed into the player's discard.
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  Enemy spitter;
+  spitter.kind = EnemyKind::JawWorm;
+  spitter.hp = 30;
+  spitter.max_hp = 30;
+  spitter.current_block = 0;
+  spitter.moves = {
+      {MoveName::Chomp, {MoveName::Chomp, 0, 0, {}, {CardId::Slimed, CardId::Slimed}}},
+  };
+  spitter.first_turn_move = MoveName::Chomp;
+  spitter.last_move = MoveName::Chomp;  // primed (the move that fires this turn)
+  // Markov table: Chomp always repeats (so select_next_move at end of turn has
+  // a valid transition to sample).
+  spitter.transitions = {
+      {{MoveName::Chomp, 1}, {{MoveName::Chomp, 1.0f}}},
+  };
+  spitter.consecutive_count = 1;
+  s.enemies.push_back(std::move(spitter));
+
+  ASSERT_TRUE(s.discard_pile.empty());
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  // The spit added 2 Slimed cards. They land in discard, but the new player
+  // turn draws 5 (reshuffling discard->draw if needed), so the Slimed may have
+  // moved into draw/hand. Count across all piles to prove they were added.
+  int slimed = 0;
+  for (const auto* pile : {&s.current_hand, &s.draw_pile, &s.discard_pile,
+                           &s.exhaust_pile}) {
+    for (const Card& c : *pile) {
+      if (c.card_id == CardId::Slimed) ++slimed;
+    }
+  }
+  EXPECT_EQ(slimed, 2);
+}

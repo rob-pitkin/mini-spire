@@ -41,7 +41,7 @@ class CombatEnv {
   //   player        [0:5]   hp, max_hp, block, energy, energy_per_turn
   //   player status [5:9]   Vulnerable, Weak, Strength, Dexterity
   //   enemies       [9 : 9 + kMaxEnemies*kEnemyObsStride]  kMaxEnemies blocks
-  //   piles         [.. : .. + 24]  hand/draw/discard/exhaust x 6 card types
+  //   piles         [.. : .. + 4*kNumCardTypes]  hand/draw/discard/exhaust
   //   turn          [last]
   // Each enemy block (kEnemyObsStride floats): is_alive, hp, block,
   // status(4: V/W/S/D), intent(4: is_attacking, atk_dmg, is_blocking,
@@ -49,15 +49,17 @@ class CombatEnv {
   // policy — current hp gives lethality, intent gives threat; ROB-59). The
   // player keeps max_hp (fixed run-level anchor + HP-shaping reward).
   static constexpr int kEnemyObsStride = 11;
+  // 4 piles (hand/draw/discard/exhaust), each a per-card-type count vector.
+  static constexpr int kPileObsSize = 4 * kNumCardTypes;
   static constexpr int kObsSize =
-      5 + 4 + kMaxEnemies * kEnemyObsStride + 24 + 1;  // = 78 at N=4
+      5 + 4 + kMaxEnemies * kEnemyObsStride + kPileObsSize + 1;  // 82 at N=4,7
 
   // Action space: (card x target) cross-product + end-turn (ROB-60).
-  //   action = card_idx * kMaxEnemies + enemy_idx   for card_idx in [0,6)
-  //   end_turn = num_card_ids * kMaxEnemies          (last index)
-  // num_card_ids * kMaxEnemies + 1. Currently 6*4 + 1 = 25. Enforced by
-  // static_assert in the .cc against CARD_DATABASE.size().
-  static constexpr int kNumActions = 6 * kMaxEnemies + 1;
+  //   action = card_idx * kMaxEnemies + enemy_idx   for card_idx in card types
+  //   end_turn = kNumCardTypes * kMaxEnemies          (last index)
+  // Currently 7*4 + 1 = 29. Enforced by a static_assert in the .cc against
+  // CARD_DATABASE.size().
+  static constexpr int kNumActions = kNumCardTypes * kMaxEnemies + 1;
 
   // hp_reward_coeff is a per-env reward-shaping hyperparameter, fixed for the
   // env's lifetime. On a win the reward is 1 + coeff * (final_hp / max_hp);
