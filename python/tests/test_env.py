@@ -148,12 +148,14 @@ def test_reset_seed_passes_through_to_cpp():
 
 def test_reset_different_seeds_produce_different_trajectories():
     """Different seeds produce different enemy HP rolls (most of the time)."""
+    # Enemy 0 HP = player block + is_alive(1). Derive from constants so this
+    # tracks obs layout changes (ROB-59/72/73).
+    enemy0_hp = minispire._core.CombatEnv.PLAYER_OBS_SIZE + 1
     obs_seeds = []
     for s in [0, 1, 2, 3, 4, 5]:
         env = MinispireEnv()
         obs, _ = env.reset(seed=s)
-        # Enemy 0 block: [is_alive=9, hp=10, ...]; HP is slot 10 (ROB-59).
-        obs_seeds.append(obs[10])  # enemy 0 HP
+        obs_seeds.append(obs[enemy0_hp])
     # At least some seeds give different HPs (HP roll is in [40, 44]).
     assert len(set(obs_seeds)) > 1
 

@@ -23,21 +23,26 @@ CHAR_MAX_HP = 1
 CHAR_BLOCK = 2
 CHAR_ENERGY = 3
 CHAR_ENERGY_PER_TURN = 4
-CHAR_STATUS = slice(5, 9)  # Vulnerable, Weak, Strength, Dexterity
-
-# Enemy blocks start at ENEMY_BASE; each is ENEMY_STRIDE floats:
-#   +0 is_alive, +1 hp, +2 block, +3..6 status, +7..10 intent
-ENEMY_BASE = 9
-ENEMY_STRIDE = 11
+# Layout sizes are read from the engine (single source of truth) so they track
+# obs changes as statuses/cards are added — never hardcode the stride.
+_NUM_STATUS = _core.CombatEnv.NUM_STATUS_EFFECTS
 MAX_ENEMIES = _core.CombatEnv.MAX_ENEMIES
+
+CHAR_STATUS = slice(5, 5 + _NUM_STATUS)  # per-status stacks (V/W/S/D/Frail/Ritual)
+
+# Enemy blocks start after the player block; each is ENEMY_STRIDE floats:
+#   +0 is_alive, +1 hp, +2 block, then status(_NUM_STATUS), then intent(4).
+ENEMY_BASE = _core.CombatEnv.PLAYER_OBS_SIZE
+ENEMY_STRIDE = _core.CombatEnv.ENEMY_OBS_STRIDE
 ENEMY_OFF_IS_ALIVE = 0
 ENEMY_OFF_HP = 1
 ENEMY_OFF_BLOCK = 2
-ENEMY_OFF_STATUS = slice(3, 7)
-ENEMY_OFF_INTENT_IS_ATTACKING = 7
-ENEMY_OFF_INTENT_ATTACK_DAMAGE = 8
-ENEMY_OFF_INTENT_IS_BLOCKING = 9
-ENEMY_OFF_INTENT_IS_BUFFING = 10
+ENEMY_OFF_STATUS = slice(3, 3 + _NUM_STATUS)
+_INTENT = 3 + _NUM_STATUS  # intent block start
+ENEMY_OFF_INTENT_IS_ATTACKING = _INTENT + 0
+ENEMY_OFF_INTENT_ATTACK_DAMAGE = _INTENT + 1
+ENEMY_OFF_INTENT_IS_BLOCKING = _INTENT + 2
+ENEMY_OFF_INTENT_IS_BUFFING = _INTENT + 3
 
 # Turn number is the last obs slot.
 TURN_NUMBER = _core.CombatEnv.OBS_SIZE - 1

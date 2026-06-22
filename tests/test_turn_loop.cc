@@ -142,6 +142,33 @@ TEST(TurnLoop, DefendWithDexterityGivesSeven) {
   EXPECT_EQ(s.character.current_block, 7);
 }
 
+TEST(TurnLoop, FrailReducesBlockByQuarterFloored) {
+  CombatState s = make_minimal_state(0);
+  s.character.status_effects[StatusEffect::Frail] = 1;
+  s.current_hand.push_back(Card{CardId::Defend});  // 5 block
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
+  EXPECT_EQ(s.character.current_block, 3);  // floor(5 * 0.75) = 3
+}
+
+TEST(TurnLoop, FrailAppliesToDexterityAdjustedBlock) {
+  CombatState s = make_minimal_state(0);
+  s.character.status_effects[StatusEffect::Dexterity] = 2;
+  s.character.status_effects[StatusEffect::Frail] = 1;
+  s.current_hand.push_back(Card{CardId::Defend});  // 5 + Dex 2 = 7, then Frail
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
+  EXPECT_EQ(s.character.current_block, 5);  // floor((5+2) * 0.75) = floor(5.25)
+}
+
+TEST(TurnLoop, FrailTicksDownOnEndTurn) {
+  CombatState s = make_minimal_state(0);
+  s.character.status_effects[StatusEffect::Frail] = 2;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  EXPECT_EQ(s.character.status_effects[StatusEffect::Frail], 1);  // ticked 2->1
+}
+
 TEST(TurnLoop, BlockAbsorbsDamageOneForOne) {
   CombatState s = make_minimal_state(0);
   s.enemies[0].current_block = 6;
@@ -905,4 +932,43 @@ TEST(TurnLoop, EnemyMoveAddsSlimedToDiscard) {
     }
   }
   EXPECT_EQ(slimed, 2);
+}
+
+// ============================================================================
+// Ritual (ROB-73)
+// ============================================================================
+
+namespace {
+// A self-buffing enemy with one repeating move (Chomp, 0 damage). Used to test
+// start-of-turn powers without the move killing the player.
+Enemy make_ritual_dummy(int ritual_stacks) {
+  Enemy e;
+  e.kind = EnemyKind::JawWorm;
+  e.hp = 50;
+  e.max_hp = 50;
+  e.current_block = 0;
+  e.moves = {{MoveName::Chomp, {MoveName::Chomp, 0, 0, {}}}};
+  e.first_turn_move = MoveName::Chomp;
+  e.last_move = MoveName::Chomp;
+  e.transitions = {{{MoveName::Chomp, 1}, {{MoveName::Chomp, 1.0f}}}};
+  e.consecutive_count = 1;
+  e.status_effects[StatusEffect::Ritual] = ritual_stacks;
+  return e;
+}
+}  // namespace
+
+TEST(TurnLoop, RitualGainsStrengthAtStartOfEnemyTurnAndRamps) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  s.enemies.push_back(make_ritual_dummy(3));
+
+  // Going into the enemy turn the Cultist already has Ritual 3 -> start-of-turn
+  // grants +3 Strength (this models a "subsequent" turn).
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Strength], 3);
+
+  // Next enemy turn: +3 more -> 6. Ritual itself stays at 3 (does not tick).
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Strength], 6);
+  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Ritual], 3);
 }

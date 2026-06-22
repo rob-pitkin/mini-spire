@@ -39,20 +39,23 @@ class CombatEnv {
  public:
   // Observation layout (ROB-40 + ROB-59 multi-enemy). Flat float32 vector:
   //   player        [0:5]   hp, max_hp, block, energy, energy_per_turn
-  //   player status [5:9]   Vulnerable, Weak, Strength, Dexterity
-  //   enemies       [9 : 9 + kMaxEnemies*kEnemyObsStride]  kMaxEnemies blocks
+  //   player status [5 : 5 + kNumStatusEffects]   per-status stacks
+  //   enemies       [.. : .. + kMaxEnemies*kEnemyObsStride]  kMaxEnemies blocks
   //   piles         [.. : .. + 4*kNumCardTypes]  hand/draw/discard/exhaust
   //   turn          [last]
   // Each enemy block (kEnemyObsStride floats): is_alive, hp, block,
-  // status(4: V/W/S/D), intent(4: is_attacking, atk_dmg, is_blocking,
+  // status(kNumStatusEffects), intent(4: is_attacking, atk_dmg, is_blocking,
   // is_buffing). NOTE: enemies intentionally omit max_hp (redundant for the
   // policy — current hp gives lethality, intent gives threat; ROB-59). The
   // player keeps max_hp (fixed run-level anchor + HP-shaping reward).
-  static constexpr int kEnemyObsStride = 11;
+  static constexpr int kPlayerObsSize = 5 + kNumStatusEffects;
+  static constexpr int kEnemyIntentSize = 4;
+  static constexpr int kEnemyObsStride =
+      3 + kNumStatusEffects + kEnemyIntentSize;  // is_alive,hp,block + status + intent
   // 4 piles (hand/draw/discard/exhaust), each a per-card-type count vector.
   static constexpr int kPileObsSize = 4 * kNumCardTypes;
   static constexpr int kObsSize =
-      5 + 4 + kMaxEnemies * kEnemyObsStride + kPileObsSize + 1;  // 82 at N=4,7
+      kPlayerObsSize + kMaxEnemies * kEnemyObsStride + kPileObsSize + 1;
 
   // Action space: (card x target) cross-product + end-turn (ROB-60).
   //   action = card_idx * kMaxEnemies + enemy_idx   for card_idx in card types

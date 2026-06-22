@@ -38,8 +38,9 @@ TEST(CombatEnv, ObsBufferIsKObsSize) {
   env.reset(0);
   EXPECT_EQ(env.obs().size(), static_cast<std::size_t>(CombatEnv::kObsSize));
   // Compute the layout from constants so this never goes stale as the obs grows:
-  // player(5) + player status(4) + enemies + piles + turn(1).
-  const int expected = 5 + 4 + minispire::kMaxEnemies * CombatEnv::kEnemyObsStride +
+  // player + enemies + piles + turn(1).
+  const int expected = CombatEnv::kPlayerObsSize +
+                       minispire::kMaxEnemies * CombatEnv::kEnemyObsStride +
                        CombatEnv::kPileObsSize + 1;
   EXPECT_EQ(env.obs().size(), static_cast<std::size_t>(expected));
 }
@@ -94,12 +95,14 @@ TEST(CombatEnv, ObsCharacterStatsAfterReset) {
   }
 }
 
-// Enemy obs layout (ROB-59): slot 0 starts at index 9, stride 11.
-//   +0 is_alive, +1 hp, +2 block, +3..6 status, +7 intent_attacking,
-//   +8 atk_dmg, +9 intent_block, +10 intent_buff
-constexpr int kEnemy0Base = 9;
-// Pile base = 9 + kMaxEnemies*stride.
-constexpr int kPileBase = 9 + minispire::kMaxEnemies * CombatEnv::kEnemyObsStride;
+// Enemy obs layout (ROB-59/73), all derived from constants so it tracks the
+// status-block width: enemies start after the player block; each enemy block is
+//   +0 is_alive, +1 hp, +2 block, then status(kNumStatusEffects), then
+//   intent(4: attacking, atk_dmg, block, buff).
+constexpr int kEnemy0Base = CombatEnv::kPlayerObsSize;
+constexpr int kIntentOff = 3 + minispire::kNumStatusEffects;  // start of intent
+constexpr int kPileBase =
+    CombatEnv::kPlayerObsSize + minispire::kMaxEnemies * CombatEnv::kEnemyObsStride;
 
 TEST(CombatEnv, ObsEnemyStatsAfterReset) {
   CombatEnv env;
@@ -118,10 +121,10 @@ TEST(CombatEnv, ObsIntentFirstTurnIsChompAttack) {
   env.reset(0);
 
   // Jaw Worm turn 1 is always Chomp = 11 damage, no block, no buff.
-  EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + 7], 1.0f);   // is_attacking
-  EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + 8], 11.0f);  // atk_dmg
-  EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + 9], 0.0f);   // intent_block
-  EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + 10], 0.0f);  // intent_buff
+  EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + kIntentOff + 0], 1.0f);   // is_attacking
+  EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + kIntentOff + 1], 11.0f);  // atk_dmg
+  EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + kIntentOff + 2], 0.0f);   // intent_block
+  EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + kIntentOff + 3], 0.0f);   // intent_buff
 }
 
 TEST(CombatEnv, ObsDeadEnemySlotsAreZero) {
@@ -200,7 +203,8 @@ TEST(CombatEnv, IntentDamageReflectsEnemyStrength) {
     if (m.damage > 0) {
       int expected = compute_attack_damage(
           m.damage, e.status_effects, env.state().character.status_effects);
-      EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + 8], static_cast<float>(expected));
+      EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + kIntentOff + 1],
+                      static_cast<float>(expected));
     }
   }
 }

@@ -25,14 +25,18 @@ constexpr std::array<CardId, kNumCardTypes> kObsCardOrder = {
 static_assert(kObsCardOrder.size() == kNumCardTypes,
               "kObsCardOrder must list every card type");
 
-// StatusEffect ordering for the obs layout.
-// Matches StatusEffect declaration order in status_effect.h.
-constexpr std::array<StatusEffect, 4> kObsStatusOrder = {
+// StatusEffect ordering for the obs layout. Must list every StatusEffect and
+// match kNumStatusEffects (static_assert below).
+constexpr std::array<StatusEffect, kNumStatusEffects> kObsStatusOrder = {
     StatusEffect::Vulnerable,
     StatusEffect::Weak,
     StatusEffect::Strength,
     StatusEffect::Dexterity,
+    StatusEffect::Frail,
+    StatusEffect::Ritual,
 };
+static_assert(kObsStatusOrder.size() == kNumStatusEffects,
+              "kObsStatusOrder must list every status effect");
 
 float status_stacks(const std::unordered_map<StatusEffect, int>& effects,
                     StatusEffect e) {
@@ -132,16 +136,18 @@ void CombatEnv::compute_obs() {
   o[3] = static_cast<float>(c.energy);
   o[4] = static_cast<float>(c.energy_per_turn);
 
-  // --- Player status (slots 5..8) ---
+  // --- Player status (slots 5 .. 5+kNumStatusEffects) ---
   for (std::size_t i = 0; i < kObsStatusOrder.size(); ++i) {
     o[5 + i] = status_stacks(c.status_effects, kObsStatusOrder[i]);
   }
 
   // --- Enemies: kMaxEnemies blocks of kEnemyObsStride floats each ---
-  // Per block: [0] is_alive, [1] hp, [2] block, [3..6] status (V/W/S/D),
-  // [7..10] intent (is_attacking, atk_dmg, is_blocking, is_buffing).
-  // Dead/empty slots stay all-zero (the std::fill above); is_alive = hp > 0.
-  constexpr int kEnemyBase = 9;
+  // Per block: [0] is_alive, [1] hp, [2] block, then status (kNumStatusEffects),
+  // then intent (4: is_attacking, atk_dmg, is_blocking, is_buffing). Offsets are
+  // derived from constants so adding a status can't drift the layout.
+  constexpr int kEnemyBase = kPlayerObsSize;
+  constexpr int kStatusOff = 3;
+  constexpr int kIntentOff = kStatusOff + kNumStatusEffects;
   for (std::size_t slot = 0; slot < kMaxEnemies; ++slot) {
     const int base = kEnemyBase + static_cast<int>(slot) * kEnemyObsStride;
     if (slot >= state_.enemies.size()) continue;  // empty slot: leave zeros
@@ -152,7 +158,7 @@ void CombatEnv::compute_obs() {
     o[base + 1] = static_cast<float>(e.hp);
     o[base + 2] = static_cast<float>(e.current_block);
     for (std::size_t i = 0; i < kObsStatusOrder.size(); ++i) {
-      o[base + 3 + i] = status_stacks(e.status_effects, kObsStatusOrder[i]);
+      o[base + kStatusOff + i] = status_stacks(e.status_effects, kObsStatusOrder[i]);
     }
     // Intent. last_move is primed at combat start and each enemy turn, but
     // guard defensively (a freshly-spawned split child may not be primed yet).
@@ -161,15 +167,15 @@ void CombatEnv::compute_obs() {
       if (move_it != e.moves.end()) {
         const Move& m = move_it->second;
         const bool is_attacking = m.damage > 0;
-        o[base + 7] = is_attacking ? 1.0f : 0.0f;
+        o[base + kIntentOff + 0] = is_attacking ? 1.0f : 0.0f;
         // Displayed attack damage (enemy Strength/Weak + player Vulnerable
         // factored in) — matches what the TUI shows.
-        o[base + 8] = is_attacking
+        o[base + kIntentOff + 1] = is_attacking
                           ? static_cast<float>(compute_attack_damage(
                                 m.damage, e.status_effects, c.status_effects))
                           : 0.0f;
-        o[base + 9]  = m.block > 0 ? 1.0f : 0.0f;
-        o[base + 10] = !m.applies.empty() ? 1.0f : 0.0f;
+        o[base + kIntentOff + 2] = m.block > 0 ? 1.0f : 0.0f;
+        o[base + kIntentOff + 3] = !m.applies.empty() ? 1.0f : 0.0f;
       }
     }
   }

@@ -52,7 +52,8 @@ void apply_status(CombatState& state, const StatusApplication& app,
 void tick_status_effects(std::unordered_map<StatusEffect, int>& effects) {
   for (auto it = effects.begin(); it != effects.end();) {
     bool decrements = (it->first == StatusEffect::Vulnerable ||
-                       it->first == StatusEffect::Weak);
+                       it->first == StatusEffect::Weak ||
+                       it->first == StatusEffect::Frail);
     if (decrements) {
       it->second -= 1;
       if (it->second <= 0) {
@@ -202,12 +203,16 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
     }
   }
 
-  // 3. Apply block (with Dexterity)
+  // 3. Apply block (Dexterity adds, then Frail reduces 25%, floored — StS order).
   if (data.block > 0) {
     int block_gained =
         data.block + get_status(state.character.status_effects,
                                 StatusEffect::Dexterity);
-    state.character.current_block += block_gained;
+    if (get_status(state.character.status_effects, StatusEffect::Frail) > 0) {
+      block_gained =
+          static_cast<int>(std::floor(static_cast<float>(block_gained) * 0.75f));
+    }
+    if (block_gained > 0) state.character.current_block += block_gained;
   }
 
   // 4. Apply status effects to the chosen target (enemy-targeted) or self.
@@ -290,6 +295,15 @@ void handle_end_turn(CombatState& state) {
   for (std::size_t slot = 0; slot < state.enemies.size(); ++slot) {
     Enemy& enemy = state.enemies[slot];
     if (enemy.hp <= 0) continue;  // dead slot: skip
+
+    // 2a-pre. Start-of-turn powers. Ritual: gain Strength = Ritual stacks
+    // (Cultist). It does NOT tick down. Because Ritual is applied mid-turn when
+    // Incantation resolves (after this trigger point), it first fires the turn
+    // *after* it's gained — matching StS (ROB-73).
+    int ritual = get_status(enemy.status_effects, StatusEffect::Ritual);
+    if (ritual > 0) {
+      enemy.status_effects[StatusEffect::Strength] += ritual;
+    }
 
     // 2a. Reset block
     enemy.current_block = 0;

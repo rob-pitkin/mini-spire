@@ -86,7 +86,9 @@ PYBIND11_MODULE(_core, m) {
       .value("Vulnerable", StatusEffect::Vulnerable)
       .value("Weak", StatusEffect::Weak)
       .value("Strength", StatusEffect::Strength)
-      .value("Dexterity", StatusEffect::Dexterity);
+      .value("Dexterity", StatusEffect::Dexterity)
+      .value("Frail", StatusEffect::Frail)
+      .value("Ritual", StatusEffect::Ritual);
 
   py::class_<StatusApplication> status_application(m, "StatusApplication");
   py::enum_<StatusApplication::Target>(status_application, "Target")
@@ -129,6 +131,13 @@ PYBIND11_MODULE(_core, m) {
       // Max enemy slots — the action target stride (action = card*MAX_ENEMIES +
       // target). Exposed so the TUI encodes targets without hardcoding N.
       .def_readonly_static("MAX_ENEMIES", &kMaxEnemies)
+      // Obs-layout constants so the TUI derives slot offsets instead of
+      // hardcoding them (they drift as statuses/cards are added). Single source
+      // of truth across the C++/Python boundary.
+      .def_readonly_static("PLAYER_OBS_SIZE", &CombatEnv::kPlayerObsSize)
+      .def_readonly_static("ENEMY_OBS_STRIDE", &CombatEnv::kEnemyObsStride)
+      .def_readonly_static("NUM_STATUS_EFFECTS", &kNumStatusEffects)
+      .def_readonly_static("NUM_CARD_TYPES", &kNumCardTypes)
       .def(
           "reset",
           [](CombatEnv& self, uint32_t seed) {
