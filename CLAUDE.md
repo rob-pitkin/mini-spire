@@ -35,6 +35,26 @@ Target venue: CoG (Conference on Games) workshop paper, or arXiv preprint.
 
 This section is the most important one. Read it before every session.
 
+### Non-negotiable rules
+
+1. **Always prefer the dedicated tools over Bash/CLI for reading and searching
+   code.** Use Read, Edit, Write, Glob ("Find"), and Grep ("Search") — NOT
+   `cat`, `sed`, `grep`, `head`, `tail`, `echo`, or heredocs (`cat >> file`).
+   The dedicated tools are more reliable (no shell-quoting/escaping bugs),
+   reviewable (clean diffs), and harness-tracked. Bash is ONLY for things that
+   are genuinely commands: builds (`cmake`/`ctest`), tests (`uv run pytest`),
+   git, and running scripts. If a dedicated tool can do it, use the tool.
+
+2. **Stay faithful to actual Slay the Spire — full parity, no simplifications
+   for implementation convenience.** This is an RL *research* environment; the
+   whole point is that agents train against the real game's mechanics. A
+   logic simplification "to make implementation easier" defeats the purpose and
+   is never acceptable. When the real game's behavior is more complex than the
+   current model (e.g. a random turn-1 move, a constrained AI distribution, a
+   start-of-turn power trigger), extend the engine to match it — do not
+   approximate. If parity requires an engine change, that's the correct path.
+   When unsure of the exact StS behavior, ask rather than guess.
+
 ### The interaction model
 
 Claude is used in three modes only:
