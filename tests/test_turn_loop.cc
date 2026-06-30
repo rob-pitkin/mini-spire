@@ -1104,3 +1104,85 @@ TEST(TurnLoop, EscapeDoesNotTriggerOnDeathHook) {
   EXPECT_EQ(living, 0);
   EXPECT_EQ(s.outcome, Outcome::Won);
 }
+
+// ============================================================================
+// Slimes (ROB-63)
+// ============================================================================
+
+TEST(TurnLoop, AcidSlimeMCorrosiveSpitDealsDamageAndAddsSlimed) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy slime = make_acid_slime_m(rng);
+  slime.last_move = MoveName::CorrosiveSpit;  // force the spit this turn
+  slime.consecutive_count = 1;
+  s.enemies.push_back(std::move(slime));
+  const int hp0 = s.character.hp;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_EQ(s.character.hp, hp0 - 7);  // Corrosive Spit deals 7
+  // One Slimed added to the deck (may have been drawn into hand by the new turn).
+  int slimed = 0;
+  for (const auto* pile : {&s.current_hand, &s.draw_pile, &s.discard_pile,
+                           &s.exhaust_pile}) {
+    for (const Card& c : *pile) if (c.card_id == CardId::Slimed) ++slimed;
+  }
+  EXPECT_EQ(slimed, 1);
+}
+
+TEST(TurnLoop, SpikeSlimeMLickAppliesFrail) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy slime = make_spike_slime_m(rng);
+  slime.last_move = MoveName::Lick;  // force Lick
+  slime.consecutive_count = 1;
+  s.enemies.push_back(std::move(slime));
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  EXPECT_EQ(s.character.status_effects[StatusEffect::Frail], 1);
+}
+
+TEST(TurnLoop, SpikeSlimeMFlameTackleDealsEightAndAddsSlimed) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy slime = make_spike_slime_m(rng);
+  slime.last_move = MoveName::FlameTackle;  // force Flame Tackle
+  slime.consecutive_count = 1;
+  s.enemies.push_back(std::move(slime));
+  const int hp0 = s.character.hp;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_EQ(s.character.hp, hp0 - 8);
+  int slimed = 0;
+  for (const auto* pile : {&s.current_hand, &s.draw_pile, &s.discard_pile,
+                           &s.exhaust_pile}) {
+    for (const Card& c : *pile) if (c.card_id == CardId::Slimed) ++slimed;
+  }
+  EXPECT_EQ(slimed, 1);
+}
+
+// ============================================================================
+// Fungi Beast (ROB-63)
+// ============================================================================
+
+TEST(TurnLoop, FungiBeastSporeCloudVulnerableOnDeath) {
+  // Killing a Fungi Beast triggers Spore Cloud -> player gains 2 Vulnerable.
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy fungi = make_fungi_beast(rng);
+  fungi.hp = 5;  // dies to one Strike (6)
+  fungi.max_hp = 5;
+  s.enemies.push_back(std::move(fungi));
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+
+  EXPECT_EQ(s.outcome, Outcome::Won);
+  EXPECT_EQ(s.character.status_effects[StatusEffect::Vulnerable], 2);
+}

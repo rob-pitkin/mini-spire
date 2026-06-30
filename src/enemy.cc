@@ -247,4 +247,206 @@ Enemy make_green_louse(std::mt19937& rng) {
   return make_louse(rng, EnemyKind::GreenLouse, 11, 17, MoveName::SpitWeb, spit);
 }
 
+namespace {
+
+// Assert every transition row sums to 1.0 (within epsilon). Called by the slime
+// factories below.
+void validate_transitions(const Enemy& e) {
+  for (const auto& [key, dist] : e.transitions) {
+    float sum = 0.0f;
+    for (const auto& t : dist) sum += t.probability;
+    (void)sum;
+    assert(std::abs(sum - 1.0f) < 1e-4f &&
+           "Transition probabilities must sum to 1.0");
+  }
+}
+
+}  // namespace
+
+Enemy make_acid_slime_s(std::mt19937& rng) {
+  // Acid Slime (S): Tackle (3 dmg) / Lick (1 Weak). AI: turn 1 is a 50/50 roll,
+  // then strict alternation (never repeat a move).
+  Enemy e;
+  e.kind = EnemyKind::AcidSlimeS;
+  std::uniform_int_distribution<int> hp_roll(8, 12);
+  e.max_hp = hp_roll(rng);
+  e.hp = e.max_hp;
+  e.current_block = 0;
+
+  e.moves = {
+      {MoveName::Tackle, {MoveName::Tackle, 3, 0, {}}},
+      {MoveName::Lick,
+       {MoveName::Lick, 0, 0,
+        {{StatusEffect::Weak, 1, StatusApplication::Target::Character}}}},
+  };
+
+  // Strict alternation: each move forces the other next.
+  e.transitions = {
+      {{MoveName::Tackle, 1}, {{MoveName::Lick, 1.0f}}},
+      {{MoveName::Lick, 1}, {{MoveName::Tackle, 1.0f}}},
+  };
+
+  // Turn 1: base 50/50 roll (no fixed opener).
+  const std::vector<MoveTransition> first{{MoveName::Tackle, 0.5f},
+                                          {MoveName::Lick, 0.5f}};
+  e.first_turn_move = std::nullopt;
+  e.last_move = sample_from_distribution(first, rng);
+  e.consecutive_count = 1;
+
+  validate_transitions(e);
+  return e;
+}
+
+Enemy make_acid_slime_m(std::mt19937& rng) {
+  // Acid Slime (M): Tackle (10) / Lick (1 Weak) / Corrosive Spit (7 + 1 Slimed).
+  // Base 40/30/30. Tackle and Lick can't repeat (banned after 1); Corrosive
+  // Spit can't be used 3x (banned after 2). Banned-move probability is
+  // redistributed over the legal moves (renormalized).
+  Enemy e;
+  e.kind = EnemyKind::AcidSlimeM;
+  std::uniform_int_distribution<int> hp_roll(28, 32);
+  e.max_hp = hp_roll(rng);
+  e.hp = e.max_hp;
+  e.current_block = 0;
+
+  e.moves = {
+      {MoveName::Tackle, {MoveName::Tackle, 10, 0, {}}},
+      {MoveName::Lick,
+       {MoveName::Lick, 0, 0,
+        {{StatusEffect::Weak, 1, StatusApplication::Target::Character}}}},
+      {MoveName::CorrosiveSpit,
+       {MoveName::CorrosiveSpit, 7, 0, {}, {CardId::Slimed}}},
+  };
+
+  // Renormalized distributions per (last, consecutive). Fractions written as
+  // n/d so each row sums to exactly 1.0.
+  e.transitions = {
+      // After Tackle (banned): redistribute T's 0.40 over Lick/Spit (each 0.30
+      // of the remaining 0.60) -> 0.5 / 0.5.
+      {{MoveName::Tackle, 1}, {{MoveName::Lick, 0.5f}, {MoveName::CorrosiveSpit, 0.5f}}},
+      // After Lick (banned): Tackle/Spit over remaining 0.70 -> 4/7, 3/7.
+      {{MoveName::Lick, 1},
+       {{MoveName::Tackle, 4.0f / 7.0f}, {MoveName::CorrosiveSpit, 3.0f / 7.0f}}},
+      // After Spit once (still legal): full base 40/30/30.
+      {{MoveName::CorrosiveSpit, 1},
+       {{MoveName::Tackle, 0.4f}, {MoveName::Lick, 0.3f},
+        {MoveName::CorrosiveSpit, 0.3f}}},
+      // After Spit twice (banned): Tackle/Lick over remaining 0.70 -> 4/7, 3/7.
+      {{MoveName::CorrosiveSpit, 2},
+       {{MoveName::Tackle, 4.0f / 7.0f}, {MoveName::Lick, 3.0f / 7.0f}}},
+  };
+
+  // Turn 1: full base 40/30/30 roll.
+  const std::vector<MoveTransition> first{{MoveName::Tackle, 0.4f},
+                                          {MoveName::Lick, 0.3f},
+                                          {MoveName::CorrosiveSpit, 0.3f}};
+  e.first_turn_move = std::nullopt;
+  e.last_move = sample_from_distribution(first, rng);
+  e.consecutive_count = 1;
+
+  validate_transitions(e);
+  return e;
+}
+
+Enemy make_spike_slime_s(std::mt19937& rng) {
+  // Spike Slime (S): Tackle (5 dmg), 100% of the time. Deterministic.
+  Enemy e;
+  e.kind = EnemyKind::SpikeSlimeS;
+  std::uniform_int_distribution<int> hp_roll(10, 14);
+  e.max_hp = hp_roll(rng);
+  e.hp = e.max_hp;
+  e.current_block = 0;
+
+  e.moves = {{MoveName::Tackle, {MoveName::Tackle, 5, 0, {}}}};
+
+  // One move, always repeats. (Tackle, 1) covers all consecutive counts via the
+  // clamp in select_next_move.
+  e.transitions = {{{MoveName::Tackle, 1}, {{MoveName::Tackle, 1.0f}}}};
+
+  e.first_turn_move = MoveName::Tackle;  // deterministic opener
+  e.last_move = std::nullopt;
+  e.consecutive_count = 0;
+
+  validate_transitions(e);
+  select_next_move(e, rng);  // prime via the fixed first_turn_move
+  return e;
+}
+
+Enemy make_spike_slime_m(std::mt19937& rng) {
+  // Spike Slime (M): Flame Tackle (8 + 1 Slimed) / Lick (1 Frail). Base 30/70,
+  // no same move 3x in a row (forced switch at consecutive 2).
+  Enemy e;
+  e.kind = EnemyKind::SpikeSlimeM;
+  std::uniform_int_distribution<int> hp_roll(28, 32);
+  e.max_hp = hp_roll(rng);
+  e.hp = e.max_hp;
+  e.current_block = 0;
+
+  e.moves = {
+      {MoveName::FlameTackle,
+       {MoveName::FlameTackle, 8, 0, {}, {CardId::Slimed}}},
+      {MoveName::Lick,
+       {MoveName::Lick, 0, 0,
+        {{StatusEffect::Frail, 1, StatusApplication::Target::Character}}}},
+  };
+
+  const std::vector<MoveTransition> base{{MoveName::FlameTackle, 0.3f},
+                                         {MoveName::Lick, 0.7f}};
+  e.transitions = {
+      {{MoveName::FlameTackle, 1}, base},
+      {{MoveName::FlameTackle, 2}, {{MoveName::Lick, 1.0f}}},
+      {{MoveName::Lick, 1}, base},
+      {{MoveName::Lick, 2}, {{MoveName::FlameTackle, 1.0f}}},
+  };
+
+  // Turn 1: base 30/70 roll.
+  e.first_turn_move = std::nullopt;
+  e.last_move = sample_from_distribution(base, rng);
+  e.consecutive_count = 1;
+
+  validate_transitions(e);
+  return e;
+}
+
+Enemy make_fungi_beast(std::mt19937& rng) {
+  // Fungi Beast: Bite (6 dmg) / Grow (+3 Strength self), reusing the shared
+  // MoveName tags (move data is per-enemy). Base 60/40. Asymmetric no-repeat:
+  // Bite can't go 3x in a row (banned after 2); Grow can't go 2x (banned after
+  // 1). Spore Cloud 2: on death, apply 2 Vulnerable to the player (ROB-62 hook).
+  Enemy e;
+  e.kind = EnemyKind::FungiBeast;
+  std::uniform_int_distribution<int> hp_roll(22, 28);
+  e.max_hp = hp_roll(rng);
+  e.hp = e.max_hp;
+  e.current_block = 0;
+
+  e.moves = {
+      {MoveName::Bite, {MoveName::Bite, 6, 0, {}}},
+      {MoveName::Grow,
+       {MoveName::Grow, 0, 0,
+        {{StatusEffect::Strength, 3, StatusApplication::Target::Enemy}}}},
+  };
+
+  const std::vector<MoveTransition> base{{MoveName::Bite, 0.6f},
+                                         {MoveName::Grow, 0.4f}};
+  e.transitions = {
+      {{MoveName::Bite, 1}, base},                        // Bite legal again
+      {{MoveName::Bite, 2}, {{MoveName::Grow, 1.0f}}},     // no 3rd Bite
+      {{MoveName::Grow, 1}, {{MoveName::Bite, 1.0f}}},     // no 2nd Grow
+      // No (Grow, 2): Grow can never reach two in a row.
+  };
+
+  // On-death: Spore Cloud applies Vulnerable to the player.
+  e.on_death = OnDeathEffect::SporeCloud;
+  e.spore_vulnerable = 2;
+
+  // Turn 1: base 60/40 roll.
+  e.first_turn_move = std::nullopt;
+  e.last_move = sample_from_distribution(base, rng);
+  e.consecutive_count = 1;
+
+  validate_transitions(e);
+  return e;
+}
+
 }  // namespace minispire

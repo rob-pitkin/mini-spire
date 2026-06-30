@@ -302,3 +302,145 @@ TEST(Enemy, LouseNeverRepeatsMoveThreeTimes) {
     have_two = true;
   }
 }
+
+// ============================================================================
+// Slimes (Acid S/M, Spike S/M) (ROB-63)
+// ============================================================================
+
+TEST(Enemy, SlimeHpRanges) {
+  for (uint32_t seed = 0; seed < 50; ++seed) {
+    std::mt19937 r1(seed), r2(seed), r3(seed), r4(seed);
+    Enemy as = make_acid_slime_s(r1);
+    EXPECT_GE(as.hp, 8);  EXPECT_LE(as.hp, 12);
+    Enemy am = make_acid_slime_m(r2);
+    EXPECT_GE(am.hp, 28); EXPECT_LE(am.hp, 32);
+    Enemy ss = make_spike_slime_s(r3);
+    EXPECT_GE(ss.hp, 10); EXPECT_LE(ss.hp, 14);
+    Enemy sm = make_spike_slime_m(r4);
+    EXPECT_GE(sm.hp, 28); EXPECT_LE(sm.hp, 32);
+  }
+}
+
+TEST(Enemy, AcidSlimeMMoves) {
+  std::mt19937 rng(0);
+  Enemy e = make_acid_slime_m(rng);
+  EXPECT_EQ(e.moves.at(MoveName::Tackle).damage, 10);
+  EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).effect, StatusEffect::Weak);
+  EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).amount, 1);
+  const Move& spit = e.moves.at(MoveName::CorrosiveSpit);
+  EXPECT_EQ(spit.damage, 7);
+  ASSERT_EQ(spit.adds_to_discard.size(), 1u);
+  EXPECT_EQ(spit.adds_to_discard[0], CardId::Slimed);
+}
+
+TEST(Enemy, SpikeSlimeMMoves) {
+  std::mt19937 rng(0);
+  Enemy e = make_spike_slime_m(rng);
+  const Move& flame = e.moves.at(MoveName::FlameTackle);
+  EXPECT_EQ(flame.damage, 8);
+  ASSERT_EQ(flame.adds_to_discard.size(), 1u);
+  EXPECT_EQ(flame.adds_to_discard[0], CardId::Slimed);
+  EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).effect, StatusEffect::Frail);
+  EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).amount, 1);
+}
+
+TEST(Enemy, SpikeSlimeSAlwaysTackles) {
+  std::mt19937 rng(0);
+  Enemy e = make_spike_slime_s(rng);
+  EXPECT_EQ(e.moves.at(MoveName::Tackle).damage, 5);
+  ASSERT_EQ(*e.last_move, MoveName::Tackle);
+  for (int i = 0; i < 20; ++i) {
+    EXPECT_EQ(select_next_move(e, rng), MoveName::Tackle);
+  }
+}
+
+TEST(Enemy, AcidSlimeSStrictlyAlternates) {
+  // After turn 1, Tackle and Lick must strictly alternate.
+  std::mt19937 rng(0);
+  Enemy e = make_acid_slime_s(rng);
+  MoveName prev = *e.last_move;
+  for (int i = 0; i < 50; ++i) {
+    MoveName next = select_next_move(e, rng);
+    EXPECT_NE(next, prev) << "Acid Slime (S) repeated a move";
+    prev = next;
+  }
+}
+
+TEST(Enemy, AcidSlimeMNeverRepeatsTackleOrLick) {
+  // Tackle and Lick can't appear twice in a row; Corrosive Spit can (up to 2).
+  std::mt19937 rng(0);
+  Enemy e = make_acid_slime_m(rng);
+  MoveName prev = *e.last_move;
+  for (int i = 0; i < 1000; ++i) {
+    MoveName next = select_next_move(e, rng);
+    if (next == MoveName::Tackle || next == MoveName::Lick) {
+      EXPECT_NE(next, prev) << "Tackle/Lick repeated";
+    }
+    prev = next;
+  }
+}
+
+TEST(Enemy, AcidSlimeMNeverSpitsThreeInARow) {
+  std::mt19937 rng(0);
+  Enemy e = make_acid_slime_m(rng);
+  MoveName p1 = *e.last_move, p2 = MoveName::Chomp;
+  bool two = false;
+  for (int i = 0; i < 1000; ++i) {
+    MoveName next = select_next_move(e, rng);
+    if (two && next == MoveName::CorrosiveSpit) {
+      EXPECT_FALSE(p1 == MoveName::CorrosiveSpit && p2 == MoveName::CorrosiveSpit)
+          << "Corrosive Spit three times in a row";
+    }
+    p2 = p1; p1 = next; two = true;
+  }
+}
+
+// ============================================================================
+// Fungi Beast (ROB-63)
+// ============================================================================
+
+TEST(Enemy, FungiBeastHpInRange) {
+  for (uint32_t seed = 0; seed < 50; ++seed) {
+    std::mt19937 rng(seed);
+    Enemy e = make_fungi_beast(rng);
+    EXPECT_GE(e.hp, 22);
+    EXPECT_LE(e.hp, 28);
+    EXPECT_EQ(e.hp, e.max_hp);
+  }
+}
+
+TEST(Enemy, FungiBeastMoves) {
+  std::mt19937 rng(0);
+  Enemy e = make_fungi_beast(rng);
+  EXPECT_EQ(e.moves.at(MoveName::Bite).damage, 6);
+  const Move& grow = e.moves.at(MoveName::Grow);
+  ASSERT_EQ(grow.applies.size(), 1u);
+  EXPECT_EQ(grow.applies[0].effect, StatusEffect::Strength);
+  EXPECT_EQ(grow.applies[0].amount, 3);
+  EXPECT_EQ(grow.applies[0].target, StatusApplication::Target::Enemy);
+}
+
+TEST(Enemy, FungiBeastSporeCloudConfigured) {
+  std::mt19937 rng(0);
+  Enemy e = make_fungi_beast(rng);
+  EXPECT_EQ(e.on_death, OnDeathEffect::SporeCloud);
+  EXPECT_EQ(e.spore_vulnerable, 2);
+}
+
+TEST(Enemy, FungiBeastAsymmetricNoRepeat) {
+  // Bite may appear at most twice in a row; Grow at most once. Drive the chain
+  // a long time and assert both bounds hold.
+  std::mt19937 rng(0);
+  Enemy e = make_fungi_beast(rng);
+  MoveName p1 = *e.last_move, p2 = MoveName::Chomp;  // sentinel
+  bool two = false;
+  for (int i = 0; i < 1000; ++i) {
+    MoveName next = select_next_move(e, rng);
+    if (next == MoveName::Grow) EXPECT_NE(p1, MoveName::Grow) << "Grow repeated";
+    if (two && next == MoveName::Bite) {
+      EXPECT_FALSE(p1 == MoveName::Bite && p2 == MoveName::Bite)
+          << "Bite three times in a row";
+    }
+    p2 = p1; p1 = next; two = true;
+  }
+}

@@ -18,6 +18,11 @@ enum class EnemyKind {
   Cultist,
   RedLouse,
   GreenLouse,
+  AcidSlimeS,
+  AcidSlimeM,
+  SpikeSlimeS,
+  SpikeSlimeM,
+  FungiBeast,
 };
 
 enum class MoveName {
@@ -31,6 +36,11 @@ enum class MoveName {
   Bite,     // deal D damage (D rolled 5-7 per fight)
   Grow,     // Red Louse: gain 3 Strength
   SpitWeb,  // Green Louse: apply 2 Weak to the player
+  // Slimes
+  Tackle,         // deal damage (amount varies by slime)
+  Lick,           // apply 1 Weak (Acid) or 1 Frail (Spike) to the player
+  CorrosiveSpit,  // Acid M: deal 7, add 1 Slimed to discard
+  FlameTackle,    // Spike M: deal 8, add 1 Slimed to discard
 };
 
 // FUTURE: multi-hit moves (Lagavulin's attacks, Hexaghost) need a `hits`
@@ -136,5 +146,10 @@ Enemy make_jaw_worm(std::mt19937& rng);
 Enemy make_cultist(std::mt19937& rng);
 Enemy make_red_louse(std::mt19937& rng);
 Enemy make_green_louse(std::mt19937& rng);
+Enemy make_acid_slime_s(std::mt19937& rng);
+Enemy make_acid_slime_m(std::mt19937& rng);
+Enemy make_spike_slime_s(std::mt19937& rng);
+Enemy make_spike_slime_m(std::mt19937& rng);
+Enemy make_fungi_beast(std::mt19937& rng);
 
 }  // namespace minispire
