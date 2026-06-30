@@ -973,6 +973,69 @@ TEST(TurnLoop, RitualGainsStrengthAtStartOfEnemyTurnAndRamps) {
   EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Ritual], 3);
 }
 
+TEST(TurnLoop, CultistIncantationThenRampingDarkStrike) {
+  // Full-fight behavior: turn 1 Incantation (no attack, Ritual 3), turn 2
+  // Dark Strike for 6 + 3 (Ritual Strength) = 9, turn 3 for 6 + 6 = 12.
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  s.enemies.push_back(make_cultist(rng));
+  const int hp0 = s.character.hp;
+
+  // Turn 1: Incantation. No damage; gains Ritual 3. (Strength stays 0 this turn
+  // — Ritual was set after the start-of-turn trigger.)
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  EXPECT_EQ(s.character.hp, hp0);  // Incantation does no damage
+  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Ritual], 3);
+  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Strength], 0);
+
+  // Turn 2: start-of-turn +3 Strength, then Dark Strike for 6 + 3 = 9.
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  EXPECT_EQ(s.character.hp, hp0 - 9);
+  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Strength], 3);
+
+  // Turn 3: +3 more (Strength 6), Dark Strike for 6 + 6 = 12.
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  EXPECT_EQ(s.character.hp, hp0 - 9 - 12);
+  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Strength], 6);
+}
+
+TEST(TurnLoop, LouseCurlUpFiresOnPlayerStrike) {
+  // A Strike on a fresh Louse: it takes 6 damage AND Curl Up grants its block
+  // once (ROB-62). Pin curl_block for a deterministic assertion.
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy louse = make_red_louse(rng);
+  louse.hp = 15;
+  louse.max_hp = 15;
+  louse.curl_block = 4;  // pin
+  s.enemies.push_back(std::move(louse));
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Strike});  // 6 damage
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+
+  // Damage applied first (15 - 6 = 9), then Curl Up grants 4 block, latch off.
+  EXPECT_EQ(s.enemies[0].hp, 9);
+  EXPECT_EQ(s.enemies[0].current_block, 4);
+  EXPECT_FALSE(s.enemies[0].curl_available);
+}
+
+TEST(TurnLoop, GreenLouseSpitWebWeakensPlayer) {
+  // Force a SpitWeb on the enemy turn and verify the player gets Weak 2.
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy louse = make_green_louse(rng);
+  louse.last_move = MoveName::SpitWeb;  // queue SpitWeb as the turn's intent
+  louse.consecutive_count = 1;
+  s.enemies.push_back(std::move(louse));
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  EXPECT_EQ(s.character.status_effects[StatusEffect::Weak], 2);
+}
+
 // ============================================================================
 // Escape (ROB-74)
 // ============================================================================

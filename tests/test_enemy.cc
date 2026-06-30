@@ -152,3 +152,153 @@ TEST(Enemy, ConsecutiveCountIncrements) {
   }
   EXPECT_TRUE(saw_repeat) << "Never saw Thrash -> Thrash in 200 seeds";
 }
+
+// ============================================================================
+// Cultist (ROB-63)
+// ============================================================================
+
+TEST(Enemy, CultistHpInRange) {
+  for (uint32_t seed = 0; seed < 50; ++seed) {
+    std::mt19937 rng(seed);
+    Enemy e = make_cultist(rng);
+    EXPECT_GE(e.hp, 48);
+    EXPECT_LE(e.hp, 54);
+    EXPECT_EQ(e.hp, e.max_hp);
+  }
+}
+
+TEST(Enemy, CultistFirstTurnIsIncantation) {
+  std::mt19937 rng(0);
+  Enemy e = make_cultist(rng);
+  ASSERT_TRUE(e.first_turn_move.has_value());
+  EXPECT_EQ(*e.first_turn_move, MoveName::Incantation);
+}
+
+TEST(Enemy, IncantationAppliesRitualThreeToSelf) {
+  std::mt19937 rng(0);
+  Enemy e = make_cultist(rng);
+  const Move& inc = e.moves.at(MoveName::Incantation);
+  EXPECT_EQ(inc.damage, 0);
+  ASSERT_EQ(inc.applies.size(), 1u);
+  EXPECT_EQ(inc.applies[0].effect, StatusEffect::Ritual);
+  EXPECT_EQ(inc.applies[0].amount, 3);
+  EXPECT_EQ(inc.applies[0].target, StatusApplication::Target::Enemy);
+}
+
+TEST(Enemy, DarkStrikeDealsSixBase) {
+  std::mt19937 rng(0);
+  Enemy e = make_cultist(rng);
+  EXPECT_EQ(e.moves.at(MoveName::DarkStrike).damage, 6);
+}
+
+TEST(Enemy, CultistAlwaysDarkStrikesAfterIncantation) {
+  // Deterministic AI: Incantation (turn 1) then Dark Strike forever. Drive the
+  // Markov chain by hand for many steps; it must never leave Dark Strike.
+  std::mt19937 rng(0);
+  Enemy e = make_cultist(rng);
+  // After the factory primes, last_move == Incantation (the turn-1 intent).
+  ASSERT_EQ(*e.last_move, MoveName::Incantation);
+
+  MoveName next = select_next_move(e, rng);  // resolves the turn-1 intent fork
+  EXPECT_EQ(next, MoveName::DarkStrike);
+  for (int i = 0; i < 20; ++i) {
+    next = select_next_move(e, rng);
+    EXPECT_EQ(next, MoveName::DarkStrike);
+  }
+}
+
+// ============================================================================
+// Louse (Red + Green) (ROB-63)
+// ============================================================================
+
+TEST(Enemy, RedLouseHpInRange) {
+  for (uint32_t seed = 0; seed < 50; ++seed) {
+    std::mt19937 rng(seed);
+    Enemy e = make_red_louse(rng);
+    EXPECT_GE(e.hp, 10);
+    EXPECT_LE(e.hp, 15);
+    EXPECT_EQ(e.hp, e.max_hp);
+  }
+}
+
+TEST(Enemy, GreenLouseHpInRange) {
+  for (uint32_t seed = 0; seed < 50; ++seed) {
+    std::mt19937 rng(seed);
+    Enemy e = make_green_louse(rng);
+    EXPECT_GE(e.hp, 11);
+    EXPECT_LE(e.hp, 17);
+    EXPECT_EQ(e.hp, e.max_hp);
+  }
+}
+
+TEST(Enemy, LouseBiteDamageRolledInRange) {
+  for (uint32_t seed = 0; seed < 50; ++seed) {
+    std::mt19937 rng(seed);
+    Enemy e = make_red_louse(rng);
+    int dmg = e.moves.at(MoveName::Bite).damage;
+    EXPECT_GE(dmg, 5);
+    EXPECT_LE(dmg, 7);
+  }
+}
+
+TEST(Enemy, LouseCurlUpConfigured) {
+  for (uint32_t seed = 0; seed < 50; ++seed) {
+    std::mt19937 rng(seed);
+    Enemy e = make_green_louse(rng);
+    EXPECT_EQ(e.on_damaged, OnDamagedEffect::CurlUp);
+    EXPECT_TRUE(e.curl_available);
+    EXPECT_GE(e.curl_block, 3);
+    EXPECT_LE(e.curl_block, 7);
+  }
+}
+
+TEST(Enemy, RedLouseGrowGivesThreeStrengthToSelf) {
+  std::mt19937 rng(0);
+  Enemy e = make_red_louse(rng);
+  const Move& grow = e.moves.at(MoveName::Grow);
+  ASSERT_EQ(grow.applies.size(), 1u);
+  EXPECT_EQ(grow.applies[0].effect, StatusEffect::Strength);
+  EXPECT_EQ(grow.applies[0].amount, 3);
+  EXPECT_EQ(grow.applies[0].target, StatusApplication::Target::Enemy);
+}
+
+TEST(Enemy, GreenLouseSpitWebAppliesTwoWeakToPlayer) {
+  std::mt19937 rng(0);
+  Enemy e = make_green_louse(rng);
+  const Move& spit = e.moves.at(MoveName::SpitWeb);
+  ASSERT_EQ(spit.applies.size(), 1u);
+  EXPECT_EQ(spit.applies[0].effect, StatusEffect::Weak);
+  EXPECT_EQ(spit.applies[0].amount, 2);
+  EXPECT_EQ(spit.applies[0].target, StatusApplication::Target::Character);
+}
+
+TEST(Enemy, LouseFirstMoveIsBiteOrOther) {
+  // Turn 1 is the base 75/25 roll -> always one of the two moves, never unset.
+  for (uint32_t seed = 0; seed < 50; ++seed) {
+    std::mt19937 rng(seed);
+    Enemy e = make_red_louse(rng);
+    ASSERT_TRUE(e.last_move.has_value());
+    EXPECT_TRUE(*e.last_move == MoveName::Bite || *e.last_move == MoveName::Grow);
+    EXPECT_FALSE(e.first_turn_move.has_value());  // no fixed opener
+  }
+}
+
+TEST(Enemy, LouseNeverRepeatsMoveThreeTimes) {
+  // Drive the chain over a long run; the same move must never appear 3x in a
+  // row (consecutive_count caps at 2, then forces a switch).
+  std::mt19937 rng(0);
+  Enemy e = make_red_louse(rng);
+  MoveName prev1 = *e.last_move;
+  MoveName prev2 = MoveName::Chomp;  // sentinel, can't match a Louse move
+  bool have_two = false;
+  for (int i = 0; i < 500; ++i) {
+    MoveName next = select_next_move(e, rng);
+    if (have_two) {
+      EXPECT_FALSE(next == prev1 && prev1 == prev2)
+          << "saw the same move three times in a row";
+    }
+    prev2 = prev1;
+    prev1 = next;
+    have_two = true;
+  }
+}

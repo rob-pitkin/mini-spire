@@ -15,12 +15,22 @@ namespace minispire {
 
 enum class EnemyKind {
   JawWorm,
+  Cultist,
+  RedLouse,
+  GreenLouse,
 };
 
 enum class MoveName {
   Chomp,
   Thrash,
   Bellow,
+  // Cultist
+  Incantation,  // gain Ritual 3 (turn 1 only)
+  DarkStrike,   // deal 6 damage
+  // Louse
+  Bite,     // deal D damage (D rolled 5-7 per fight)
+  Grow,     // Red Louse: gain 3 Strength
+  SpitWeb,  // Green Louse: apply 2 Weak to the player
 };
 
 // FUTURE: multi-hit moves (Lagavulin's attacks, Hexaghost) need a `hits`
@@ -123,5 +133,8 @@ struct Enemy {
 MoveName select_next_move(Enemy& enemy, std::mt19937& rng);
 
 Enemy make_jaw_worm(std::mt19937& rng);
+Enemy make_cultist(std::mt19937& rng);
+Enemy make_red_louse(std::mt19937& rng);
+Enemy make_green_louse(std::mt19937& rng);
 
 }  // namespace minispire
