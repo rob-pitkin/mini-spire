@@ -1186,3 +1186,23 @@ TEST(TurnLoop, FungiBeastSporeCloudVulnerableOnDeath) {
   EXPECT_EQ(s.outcome, Outcome::Won);
   EXPECT_EQ(s.character.status_effects[StatusEffect::Vulnerable], 2);
 }
+
+// ============================================================================
+// Blue Slaver (ROB-63)
+// ============================================================================
+
+TEST(TurnLoop, BlueSlaverRakeDealsSevenAndWeakens) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy slaver = make_blue_slaver(rng);
+  slaver.last_move = MoveName::Rake;  // force Rake this turn
+  slaver.consecutive_count = 1;
+  s.enemies.push_back(std::move(slaver));
+  const int hp0 = s.character.hp;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_EQ(s.character.hp, hp0 - 7);  // Rake deals 7
+  EXPECT_EQ(s.character.status_effects[StatusEffect::Weak], 1);
+}

@@ -449,4 +449,39 @@ Enemy make_fungi_beast(std::mt19937& rng) {
   return e;
 }
 
+Enemy make_blue_slaver(std::mt19937& rng) {
+  // Blue Slaver: Stab (12 dmg) / Rake (7 dmg + 1 Weak). Base 60/40, no move 3x
+  // in a row. Turn 1 is the base roll (no fixed opener).
+  Enemy e;
+  e.kind = EnemyKind::BlueSlaver;
+  std::uniform_int_distribution<int> hp_roll(46, 50);
+  e.max_hp = hp_roll(rng);
+  e.hp = e.max_hp;
+  e.current_block = 0;
+
+  e.moves = {
+      {MoveName::Stab, {MoveName::Stab, 12, 0, {}}},
+      {MoveName::Rake,
+       {MoveName::Rake, 7, 0,
+        {{StatusEffect::Weak, 1, StatusApplication::Target::Character}}}},
+  };
+
+  const std::vector<MoveTransition> base{{MoveName::Stab, 0.6f},
+                                         {MoveName::Rake, 0.4f}};
+  e.transitions = {
+      {{MoveName::Stab, 1}, base},
+      {{MoveName::Stab, 2}, {{MoveName::Rake, 1.0f}}},
+      {{MoveName::Rake, 1}, base},
+      {{MoveName::Rake, 2}, {{MoveName::Stab, 1.0f}}},
+  };
+
+  // Turn 1: base 60/40 roll.
+  e.first_turn_move = std::nullopt;
+  e.last_move = sample_from_distribution(base, rng);
+  e.consecutive_count = 1;
+
+  validate_transitions(e);
+  return e;
+}
+
 }  // namespace minispire

@@ -444,3 +444,43 @@ TEST(Enemy, FungiBeastAsymmetricNoRepeat) {
     p2 = p1; p1 = next; two = true;
   }
 }
+
+// ============================================================================
+// Blue Slaver (ROB-63). Red Slaver deferred to ROB-76 (phased AI + Entangle).
+// ============================================================================
+
+TEST(Enemy, BlueSlaverHpInRange) {
+  for (uint32_t seed = 0; seed < 50; ++seed) {
+    std::mt19937 rng(seed);
+    Enemy e = make_blue_slaver(rng);
+    EXPECT_GE(e.hp, 46);
+    EXPECT_LE(e.hp, 50);
+    EXPECT_EQ(e.hp, e.max_hp);
+  }
+}
+
+TEST(Enemy, BlueSlaverMoves) {
+  std::mt19937 rng(0);
+  Enemy e = make_blue_slaver(rng);
+  EXPECT_EQ(e.moves.at(MoveName::Stab).damage, 12);
+  const Move& rake = e.moves.at(MoveName::Rake);
+  EXPECT_EQ(rake.damage, 7);
+  ASSERT_EQ(rake.applies.size(), 1u);
+  EXPECT_EQ(rake.applies[0].effect, StatusEffect::Weak);
+  EXPECT_EQ(rake.applies[0].amount, 1);
+  EXPECT_EQ(rake.applies[0].target, StatusApplication::Target::Character);
+}
+
+TEST(Enemy, BlueSlaverNeverRepeatsMoveThreeTimes) {
+  std::mt19937 rng(0);
+  Enemy e = make_blue_slaver(rng);
+  MoveName p1 = *e.last_move, p2 = MoveName::Chomp;  // sentinel
+  bool two = false;
+  for (int i = 0; i < 500; ++i) {
+    MoveName next = select_next_move(e, rng);
+    if (two) {
+      EXPECT_FALSE(next == p1 && p1 == p2) << "same move three times in a row";
+    }
+    p2 = p1; p1 = next; two = true;
+  }
+}

@@ -23,6 +23,7 @@ enum class EnemyKind {
   SpikeSlimeS,
   SpikeSlimeM,
   FungiBeast,
+  BlueSlaver,
 };
 
 enum class MoveName {
@@ -41,6 +42,9 @@ enum class MoveName {
   Lick,           // apply 1 Weak (Acid) or 1 Frail (Spike) to the player
   CorrosiveSpit,  // Acid M: deal 7, add 1 Slimed to discard
   FlameTackle,    // Spike M: deal 8, add 1 Slimed to discard
+  // Slaver
+  Stab,  // deal damage (12 Blue / 13 Red)
+  Rake,  // Blue Slaver: deal 7, apply 1 Weak
 };
 
 // FUTURE: multi-hit moves (Lagavulin's attacks, Hexaghost) need a `hits`
@@ -151,5 +155,6 @@ Enemy make_acid_slime_m(std::mt19937& rng);
 Enemy make_spike_slime_s(std::mt19937& rng);
 Enemy make_spike_slime_m(std::mt19937& rng);
 Enemy make_fungi_beast(std::mt19937& rng);
+Enemy make_blue_slaver(std::mt19937& rng);
 
 }  // namespace minispire
