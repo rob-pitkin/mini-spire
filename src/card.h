@@ -72,4 +72,9 @@ inline bool card_targets_enemy(const CardData& data) {
   return false;
 }
 
+// Whether a card is an *attack* (deals damage). Used by Entangle (ROB-75),
+// which masks out all attack cards for one turn. Defend and other 0-damage
+// cards are not attacks.
+inline bool is_attack(const CardData& data) { return data.damage > 0; }
+
 }  // namespace minispire

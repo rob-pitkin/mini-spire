@@ -132,7 +132,7 @@ TEST(CombatEnv, ObsDeadEnemySlotsAreZero) {
   env.reset(0);
   // v1 has one enemy; slots 1..N-1 are empty -> all zero (incl. is_alive).
   for (int slot = 1; slot < minispire::kMaxEnemies; ++slot) {
-    const int base = 9 + slot * CombatEnv::kEnemyObsStride;
+    const int base = CombatEnv::kPlayerObsSize + slot * CombatEnv::kEnemyObsStride;
     for (int i = 0; i < CombatEnv::kEnemyObsStride; ++i) {
       EXPECT_FLOAT_EQ(env.obs()[base + i], 0.0f)
           << "enemy slot " << slot << " field " << i;

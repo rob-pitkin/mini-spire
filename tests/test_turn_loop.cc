@@ -1206,3 +1206,71 @@ TEST(TurnLoop, BlueSlaverRakeDealsSevenAndWeakens) {
   EXPECT_EQ(s.character.hp, hp0 - 7);  // Rake deals 7
   EXPECT_EQ(s.character.status_effects[StatusEffect::Weak], 1);
 }
+
+// ============================================================================
+// Entangle (ROB-75)
+// ============================================================================
+
+TEST(TurnLoop, EntangleMasksAttackCardsButNotDefend) {
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  s.character.status_effects[StatusEffect::Entangle] = 1;
+  s.current_hand.push_back(Card{CardId::Strike});  // attack
+  s.current_hand.push_back(Card{CardId::Bash});    // attack
+  s.current_hand.push_back(Card{CardId::Defend});  // not an attack
+
+  auto mask = valid_actions(s);
+  EXPECT_FALSE(mask[card_action(CardId::Strike, 0)]);  // attacks blocked
+  EXPECT_FALSE(mask[card_action(CardId::Bash, 0)]);
+  EXPECT_TRUE(mask[card_action(CardId::Defend, 0)]);   // Defend still legal
+  EXPECT_TRUE(mask[end_turn_action()]);                // end turn always legal
+}
+
+TEST(TurnLoop, EntangledAttackActionRejectedByApply) {
+  // Mask/apply agreement: an attack masked by Entangle must also be rejected by
+  // apply_action (no way to sneak an attack through).
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  s.character.status_effects[StatusEffect::Entangle] = 1;
+  s.current_hand.push_back(Card{CardId::Strike});
+
+  EXPECT_FALSE(apply_action(s, card_action(CardId::Strike, 0)));
+}
+
+TEST(TurnLoop, EntangleTicksOffAfterOneTurn) {
+  CombatState s = make_minimal_state(0);
+  s.character.status_effects[StatusEffect::Entangle] = 1;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  // Ticked 1 -> 0 -> removed. Attacks legal again next turn.
+  EXPECT_EQ(s.character.status_effects.count(StatusEffect::Entangle), 0u);
+}
+
+TEST(TurnLoop, EntangleDoesNotStack) {
+  // Two enemies each apply Entangle in the same enemy turn -> the player ends up
+  // with Entangle 1, not 2 (non-stacking). Exercised through the public loop.
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  auto make_entangler = []() {
+    Enemy e;
+    e.kind = EnemyKind::JawWorm;
+    e.hp = 30;
+    e.max_hp = 30;
+    e.current_block = 0;
+    Move web{MoveName::Chomp, 0, 0,
+             {{StatusEffect::Entangle, 1, StatusApplication::Target::Character}}};
+    e.moves = {{MoveName::Chomp, web}};
+    e.first_turn_move = MoveName::Chomp;
+    e.last_move = MoveName::Chomp;
+    e.transitions = {{{MoveName::Chomp, 1}, {{MoveName::Chomp, 1.0f}}}};
+    e.consecutive_count = 1;
+    return e;
+  };
+  s.enemies.push_back(make_entangler());
+  s.enemies.push_back(make_entangler());
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  // Both applied Entangle this turn; non-stacking -> exactly 1.
+  EXPECT_EQ(s.character.status_effects[StatusEffect::Entangle], 1);
+}

@@ -37,14 +37,28 @@ void apply_damage_to_hp_block(int& hp, int& block, int amount) {
 // is the decoded target slot (ROB-60) for Target::Enemy applications; ignored for
 // Target::Character. AoE status (apply to all enemies) is not yet modeled —
 // revisit when AoE cards land.
+// Non-stacking statuses are SET to the applied amount rather than accumulated —
+// applying twice doesn't build up. Entangle is 1-turn and boolean (ROB-75);
+// stacking it to 2 would wrongly make it last two turns.
+bool is_non_stacking(StatusEffect e) { return e == StatusEffect::Entangle; }
+
+void apply_one_status(std::unordered_map<StatusEffect, int>& effects,
+                      const StatusApplication& app) {
+  if (is_non_stacking(app.effect)) {
+    effects[app.effect] = app.amount;
+  } else {
+    effects[app.effect] += app.amount;
+  }
+}
+
 void apply_status(CombatState& state, const StatusApplication& app,
                   int enemy_target) {
   if (app.target == StatusApplication::Target::Character) {
-    state.character.status_effects[app.effect] += app.amount;
+    apply_one_status(state.character.status_effects, app);
     return;
   }
   if (enemy_target >= 0 && enemy_target < static_cast<int>(state.enemies.size())) {
-    state.enemies[enemy_target].status_effects[app.effect] += app.amount;
+    apply_one_status(state.enemies[enemy_target].status_effects, app);
   }
 }
 
@@ -53,7 +67,8 @@ void tick_status_effects(std::unordered_map<StatusEffect, int>& effects) {
   for (auto it = effects.begin(); it != effects.end();) {
     bool decrements = (it->first == StatusEffect::Vulnerable ||
                        it->first == StatusEffect::Weak ||
-                       it->first == StatusEffect::Frail);
+                       it->first == StatusEffect::Frail ||
+                       it->first == StatusEffect::Entangle);
     if (decrements) {
       it->second -= 1;
       if (it->second <= 0) {
@@ -421,6 +436,10 @@ std::vector<bool> valid_actions(const CombatState& state) {
     return mask;  // all false
   }
 
+  // Entangle (ROB-75): while entangled, the player can't play attack cards.
+  const bool entangled =
+      get_status(state.character.status_effects, StatusEffect::Entangle) > 0;
+
   for (int action = 0; action < num_actions - 1; ++action) {
     const DecodedAction d = decode_action(action);
     const int card_idx = static_cast<int>(d.card);
@@ -430,6 +449,7 @@ std::vector<bool> valid_actions(const CombatState& state) {
     const bool in_hand = find_first_in_hand(state.current_hand, d.card) >= 0;
     const bool affordable = state.character.energy >= data.cost;
     if (!in_hand || !affordable) continue;
+    if (entangled && is_attack(data)) continue;  // attacks blocked while entangled
 
     // Target legality fork (shares card_targets_enemy with apply_action, so
     // the mask and the apply path never disagree).
