@@ -343,6 +343,11 @@ void handle_end_turn(CombatState& state) {
     check_character_terminal(state);
     if (state.outcome != Outcome::InProgress) return;
 
+    // If this enemy left the fight via its move (escape, ROB-74; hp -> 0), it
+    // has no next intent — skip status tick + Markov advance. Its transition
+    // table need not contain an entry for a terminal move like Escape.
+    if (enemy.hp <= 0) continue;
+
     // 2d. Tick this enemy's statuses.
     tick_status_effects(enemy.status_effects);
 

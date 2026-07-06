@@ -484,3 +484,95 @@ TEST(Enemy, BlueSlaverNeverRepeatsMoveThreeTimes) {
     p2 = p1; p1 = next; two = true;
   }
 }
+
+// ============================================================================
+// Looter / Mugger (ROB-76, enriched-state AI). Thievery/gold deferred to M4/M5.
+// ============================================================================
+
+TEST(Enemy, ThiefHpAndMoveDamage) {
+  std::mt19937 r1(0), r2(0);
+  Enemy looter = make_looter(r1);
+  EXPECT_GE(looter.hp, 44); EXPECT_LE(looter.hp, 48);
+  EXPECT_EQ(looter.moves.at(MoveName::Mug).damage, 10);
+  EXPECT_EQ(looter.moves.at(MoveName::Lunge).damage, 12);
+  EXPECT_EQ(looter.moves.at(MoveName::SmokeBomb).block, 6);
+  EXPECT_TRUE(looter.moves.at(MoveName::Escape).escapes);
+
+  Enemy mugger = make_mugger(r2);
+  EXPECT_GE(mugger.hp, 48); EXPECT_LE(mugger.hp, 52);
+  EXPECT_EQ(mugger.moves.at(MoveName::Lunge).damage, 16);
+  EXPECT_EQ(mugger.moves.at(MoveName::SmokeBomb).block, 11);
+}
+
+TEST(Enemy, ThiefPseudoStatesShareMugData) {
+  std::mt19937 rng(0);
+  Enemy e = make_looter(rng);
+  // Mug1/Mug2 are enriched states that share Mug's damage.
+  EXPECT_EQ(e.moves.at(MoveName::Mug1).damage, 10);
+  EXPECT_EQ(e.moves.at(MoveName::Mug2).damage, 10);
+}
+
+TEST(Enemy, ThiefScriptMugsThenBranchesThenEscapes) {
+  // Every run: Mug1, Mug2, then {Lunge->Smoke->Escape} or {Smoke->Escape}.
+  for (uint32_t seed = 0; seed < 40; ++seed) {
+    std::mt19937 rng(seed);
+    Enemy e = make_looter(rng);
+    ASSERT_EQ(*e.first_turn_move, MoveName::Mug1);
+    ASSERT_EQ(*e.last_move, MoveName::Mug1);          // turn 1
+    EXPECT_EQ(select_next_move(e, rng), MoveName::Mug2);  // turn 2
+    MoveName t3 = select_next_move(e, rng);              // turn 3 branch
+    ASSERT_TRUE(t3 == MoveName::Lunge || t3 == MoveName::SmokeBomb);
+    if (t3 == MoveName::Lunge) {
+      EXPECT_EQ(select_next_move(e, rng), MoveName::SmokeBomb);
+    }
+    EXPECT_EQ(select_next_move(e, rng), MoveName::Escape);  // always ends here
+  }
+}
+
+// ============================================================================
+// Red Slaver (ROB-76). Needs Entangle (ROB-75).
+// ============================================================================
+
+TEST(Enemy, RedSlaverHpAndMoves) {
+  std::mt19937 rng(0);
+  Enemy e = make_red_slaver(rng);
+  EXPECT_GE(e.hp, 46); EXPECT_LE(e.hp, 50);
+  EXPECT_EQ(e.moves.at(MoveName::Stab).damage, 13);
+  EXPECT_EQ(e.moves.at(MoveName::Scrape).damage, 8);
+  EXPECT_EQ(e.moves.at(MoveName::Scrape).applies.at(0).effect, StatusEffect::Weak);
+  EXPECT_EQ(e.moves.at(MoveName::Entangle).applies.at(0).effect, StatusEffect::Entangle);
+  // Pseudo-states share data.
+  EXPECT_EQ(e.moves.at(MoveName::OpenerStab).damage, 13);
+  EXPECT_EQ(e.moves.at(MoveName::CycleStab).damage, 13);
+  EXPECT_EQ(e.moves.at(MoveName::CycleScrape1).damage, 8);
+}
+
+TEST(Enemy, RedSlaverOpensWithStabThenEntanglesEventually) {
+  for (uint32_t seed = 0; seed < 40; ++seed) {
+    std::mt19937 rng(seed);
+    Enemy e = make_red_slaver(rng);
+    ASSERT_EQ(*e.last_move, MoveName::OpenerStab);  // turn 1 fixed
+    // Within a bounded number of turns, Entangle must fire (25%/turn).
+    bool entangled = false;
+    for (int i = 0; i < 200 && !entangled; ++i) {
+      if (select_next_move(e, rng) == MoveName::Entangle) entangled = true;
+    }
+    EXPECT_TRUE(entangled) << "Entangle never fired (seed " << seed << ")";
+  }
+}
+
+TEST(Enemy, RedSlaverPostEntangleNoThreeInARow) {
+  // Drive well past the first Entangle; post-phase Stab/Scrape must never repeat
+  // three times in a row.
+  std::mt19937 rng(0);
+  Enemy e = make_red_slaver(rng);
+  // Advance until Entangle has fired.
+  while (select_next_move(e, rng) != MoveName::Entangle) { /* spin */ }
+  MoveName p1 = MoveName::Entangle, p2 = MoveName::Chomp;
+  bool two = false;
+  for (int i = 0; i < 1000; ++i) {
+    MoveName next = select_next_move(e, rng);
+    if (two) EXPECT_FALSE(next == p1 && p1 == p2) << "three in a row post-Entangle";
+    p2 = p1; p1 = next; two = true;
+  }
+}

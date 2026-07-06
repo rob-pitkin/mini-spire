@@ -24,6 +24,9 @@ enum class EnemyKind {
   SpikeSlimeM,
   FungiBeast,
   BlueSlaver,
+  RedSlaver,
+  Looter,
+  Mugger,
 };
 
 enum class MoveName {
@@ -43,8 +46,25 @@ enum class MoveName {
   CorrosiveSpit,  // Acid M: deal 7, add 1 Slimed to discard
   FlameTackle,    // Spike M: deal 8, add 1 Slimed to discard
   // Slaver
-  Stab,  // deal damage (12 Blue / 13 Red)
-  Rake,  // Blue Slaver: deal 7, apply 1 Weak
+  Stab,    // deal damage (12 Blue / 13 Red)
+  Rake,    // Blue Slaver: deal 7, apply 1 Weak
+  Scrape,  // Red Slaver: deal 8, apply 1 Weak (post-Entangle Markov state)
+  Entangle,  // Red Slaver: apply Entangle to the player
+  // --- Enriched pseudo-move-states (ROB-76): encode turn/phase/cycle position
+  // as distinct names sharing another move's data. select_next_move keys on
+  // these; apply_move_to_state uses the (identical) Move data mapped to them.
+  // Red Slaver pre-Entangle cycle:
+  OpenerStab,    // = Stab (turn 1)
+  CycleScrape1,  // = Scrape (cycle pos 1)
+  CycleScrape2,  // = Scrape (cycle pos 2)
+  CycleStab,     // = Stab   (cycle pos 3)
+  // Looter / Mugger script:
+  Mug,        // deal 10
+  Mug1,       // = Mug (turn 1)
+  Mug2,       // = Mug (turn 2)
+  Lunge,      // deal 12 (Looter) / 16 (Mugger)
+  SmokeBomb,  // gain 6 (Looter) / 11 (Mugger) block
+  Escape,     // leave the fight (ROB-74)
 };
 
 // FUTURE: multi-hit moves (Lagavulin's attacks, Hexaghost) need a `hits`
@@ -156,5 +176,8 @@ Enemy make_spike_slime_s(std::mt19937& rng);
 Enemy make_spike_slime_m(std::mt19937& rng);
 Enemy make_fungi_beast(std::mt19937& rng);
 Enemy make_blue_slaver(std::mt19937& rng);
+Enemy make_red_slaver(std::mt19937& rng);
+Enemy make_looter(std::mt19937& rng);
+Enemy make_mugger(std::mt19937& rng);
 
 }  // namespace minispire

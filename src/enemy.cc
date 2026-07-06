@@ -484,4 +484,109 @@ Enemy make_blue_slaver(std::mt19937& rng) {
   return e;
 }
 
+Enemy make_red_slaver(std::mt19937& rng) {
+  // Red Slaver (HP 46-50). Enriched-state AI (ROB-76):
+  //   Turn 1: OpenerStab (= Stab 13).
+  //   Pre-Entangle cycle Scrape, Scrape, Stab, ... with a per-turn 25% Entangle
+  //   interrupt. The first Entangle permanently enters the post-phase Markov
+  //   table (55% Scrape / 45% Stab, no Stab-or-Scrape 3x in a row).
+  Enemy e;
+  e.kind = EnemyKind::RedSlaver;
+  std::uniform_int_distribution<int> hp_roll(46, 50);
+  e.max_hp = hp_roll(rng);
+  e.hp = e.max_hp;
+  e.current_block = 0;
+
+  // Shared move data. Pseudo-states (OpenerStab, CycleScrape1/2, CycleStab) map
+  // to the same Stab/Scrape data; only their transition role differs.
+  const Move stab{MoveName::Stab, 13, 0, {}};
+  const Move scrape{MoveName::Scrape, 8, 0,
+                    {{StatusEffect::Weak, 1, StatusApplication::Target::Character}}};
+  const Move entangle{MoveName::Entangle, 0, 0,
+                      {{StatusEffect::Entangle, 1,
+                        StatusApplication::Target::Character}}};
+  e.moves = {
+      {MoveName::Stab, stab},          {MoveName::Scrape, scrape},
+      {MoveName::Entangle, entangle},  {MoveName::OpenerStab, stab},
+      {MoveName::CycleScrape1, scrape}, {MoveName::CycleScrape2, scrape},
+      {MoveName::CycleStab, stab},
+  };
+
+  const std::vector<MoveTransition> post{{MoveName::Scrape, 0.55f},
+                                         {MoveName::Stab, 0.45f}};
+  e.transitions = {
+      // Pre-Entangle cycle with a 25% Entangle interrupt each turn.
+      {{MoveName::OpenerStab, 1},   {{MoveName::CycleScrape1, 0.75f}, {MoveName::Entangle, 0.25f}}},
+      {{MoveName::CycleScrape1, 1}, {{MoveName::CycleScrape2, 0.75f}, {MoveName::Entangle, 0.25f}}},
+      {{MoveName::CycleScrape2, 1}, {{MoveName::CycleStab, 0.75f},    {MoveName::Entangle, 0.25f}}},
+      {{MoveName::CycleStab, 1},    {{MoveName::CycleScrape1, 0.75f}, {MoveName::Entangle, 0.25f}}},
+      // First Entangle -> permanent post-phase Markov (no route back to cycle).
+      {{MoveName::Entangle, 1}, post},
+      {{MoveName::Scrape, 1}, post},
+      {{MoveName::Scrape, 2}, {{MoveName::Stab, 1.0f}}},
+      {{MoveName::Stab, 1}, post},
+      {{MoveName::Stab, 2}, {{MoveName::Scrape, 1.0f}}},
+  };
+
+  e.first_turn_move = MoveName::OpenerStab;  // fixed turn-1 Stab
+  e.last_move = std::nullopt;
+  e.consecutive_count = 0;
+
+  validate_transitions(e);
+  select_next_move(e, rng);  // prime via first_turn_move
+  return e;
+}
+
+namespace {
+
+// Shared Looter/Mugger factory (ROB-76). Identical scripted AI; they differ
+// only in HP, Lunge damage, and Smoke Bomb block. Thievery/gold DEFERRED to
+// M4/M5 — the escape is modeled, the gold-steal is not.
+//   Turn 1-2: Mug (Mug1 -> Mug2). Turn 3: 50% Lunge / 50% Smoke Bomb.
+//   Lunge -> Smoke Bomb -> Escape; Smoke Bomb -> Escape.
+Enemy make_thief(std::mt19937& rng, EnemyKind kind, int hp_lo, int hp_hi,
+                 int lunge_dmg, int smoke_block) {
+  Enemy e;
+  e.kind = kind;
+  std::uniform_int_distribution<int> hp_roll(hp_lo, hp_hi);
+  e.max_hp = hp_roll(rng);
+  e.hp = e.max_hp;
+  e.current_block = 0;
+
+  const Move mug{MoveName::Mug, 10, 0, {}};
+  e.moves = {
+      {MoveName::Mug, mug},   {MoveName::Mug1, mug}, {MoveName::Mug2, mug},
+      {MoveName::Lunge, {MoveName::Lunge, lunge_dmg, 0, {}}},
+      {MoveName::SmokeBomb, {MoveName::SmokeBomb, 0, smoke_block, {}}},
+      // Escape leaves the fight (ROB-74). No damage/block.
+      {MoveName::Escape, [] { Move m{MoveName::Escape, 0, 0, {}}; m.escapes = true; return m; }()},
+  };
+
+  e.transitions = {
+      {{MoveName::Mug1, 1}, {{MoveName::Mug2, 1.0f}}},
+      {{MoveName::Mug2, 1}, {{MoveName::Lunge, 0.5f}, {MoveName::SmokeBomb, 0.5f}}},
+      {{MoveName::Lunge, 1}, {{MoveName::SmokeBomb, 1.0f}}},
+      {{MoveName::SmokeBomb, 1}, {{MoveName::Escape, 1.0f}}},
+      // Escape terminates (enemy leaves); handle_end_turn skips its advance.
+  };
+
+  e.first_turn_move = MoveName::Mug1;  // fixed
+  e.last_move = std::nullopt;
+  e.consecutive_count = 0;
+
+  validate_transitions(e);
+  select_next_move(e, rng);  // prime via first_turn_move
+  return e;
+}
+
+}  // namespace
+
+Enemy make_looter(std::mt19937& rng) {
+  return make_thief(rng, EnemyKind::Looter, 44, 48, /*lunge=*/12, /*smoke=*/6);
+}
+
+Enemy make_mugger(std::mt19937& rng) {
+  return make_thief(rng, EnemyKind::Mugger, 48, 52, /*lunge=*/16, /*smoke=*/11);
+}
+
 }  // namespace minispire

@@ -1274,3 +1274,43 @@ TEST(TurnLoop, EntangleDoesNotStack) {
   // Both applied Entangle this turn; non-stacking -> exactly 1.
   EXPECT_EQ(s.character.status_effects[StatusEffect::Entangle], 1);
 }
+
+// ============================================================================
+// Thieves + Red Slaver — full-fight behavior (ROB-76)
+// ============================================================================
+
+TEST(TurnLoop, LooterEscapesAndEndsCombat) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  s.enemies.push_back(make_looter(rng));
+  s.character.hp = 200;  // survive the whole script
+
+  // End turn repeatedly; the Looter's script always terminates in Escape, which
+  // clears the last enemy -> Won.
+  for (int i = 0; i < 8 && s.outcome == Outcome::InProgress; ++i) {
+    apply_action(s, end_turn_action());
+  }
+  EXPECT_EQ(s.outcome, Outcome::Won);
+  EXPECT_LE(s.enemies[0].hp, 0);  // gone via escape
+}
+
+TEST(TurnLoop, RedSlaverEntangleBlocksPlayerAttacks) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy slaver = make_red_slaver(rng);
+  slaver.last_move = MoveName::Entangle;  // queue Entangle as this turn's intent
+  slaver.consecutive_count = 1;
+  s.enemies.push_back(std::move(slaver));
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));  // enemy applies Entangle
+
+  EXPECT_EQ(s.character.status_effects[StatusEffect::Entangle], 1);
+  auto mask = valid_actions(s);
+  EXPECT_FALSE(mask[card_action(CardId::Strike, 0)]);  // attack blocked
+  EXPECT_TRUE(mask[card_action(CardId::Defend, 0)]);   // Defend still fine
+}
