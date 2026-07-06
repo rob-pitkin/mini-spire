@@ -684,4 +684,96 @@ Enemy make_spike_slime_l(std::mt19937& rng) {
   return e;
 }
 
+namespace {
+
+// Single-move gremlin (Fat/Sneaky): one deterministic move, 100% of the time.
+Enemy make_simple_gremlin(std::mt19937& rng, EnemyKind kind, int hp_lo, int hp_hi,
+                          MoveName move, const Move& move_data) {
+  Enemy e;
+  e.kind = kind;
+  std::uniform_int_distribution<int> hp_roll(hp_lo, hp_hi);
+  e.max_hp = hp_roll(rng);
+  e.hp = e.max_hp;
+  e.current_block = 0;
+
+  e.moves = {{move, move_data}};
+  // One move -> the (move, 1) row covers all consecutive counts via the clamp.
+  e.transitions = {{{move, 1}, {{move, 1.0f}}}};
+  e.first_turn_move = move;
+  e.last_move = std::nullopt;
+  e.consecutive_count = 0;
+
+  validate_transitions(e);
+  select_next_move(e, rng);  // prime via first_turn_move
+  return e;
+}
+
+}  // namespace
+
+Enemy make_fat_gremlin(std::mt19937& rng) {
+  // Fat Gremlin (HP 13-17): Smash (4 dmg + 1 Weak), always.
+  Move smash{MoveName::Smash, 4, 0,
+             {{StatusEffect::Weak, 1, StatusApplication::Target::Character}}};
+  return make_simple_gremlin(rng, EnemyKind::FatGremlin, 13, 17, MoveName::Smash,
+                             smash);
+}
+
+Enemy make_sneaky_gremlin(std::mt19937& rng) {
+  // Sneaky Gremlin (HP 10-14): Puncture (9 dmg), always.
+  return make_simple_gremlin(rng, EnemyKind::SneakyGremlin, 10, 14,
+                             MoveName::Puncture,
+                             {MoveName::Puncture, 9, 0, {}});
+}
+
+Enemy make_mad_gremlin(std::mt19937& rng) {
+  // Mad Gremlin (HP 20-24): Scratch (4 dmg), always. Angry 1: +1 Strength on
+  // every attack-damage instance it takes (ROB-64 on_damaged, no latch).
+  Enemy e = make_simple_gremlin(rng, EnemyKind::MadGremlin, 20, 24,
+                                MoveName::Scratch,
+                                {MoveName::Scratch, 4, 0, {}});
+  e.on_damaged = OnDamagedEffect::Angry;
+  e.angry_amount = 1;
+  return e;
+}
+
+Enemy make_gremlin_wizard(std::mt19937& rng) {
+  // Gremlin Wizard (HP 23-25): Ultimate Blast (25 dmg) after charging. First
+  // cycle charges 2 turns, then 3 turns every cycle after (ROB-64 enriched
+  // states). Charge has no effect.
+  Enemy e;
+  e.kind = EnemyKind::GremlinWizard;
+  std::uniform_int_distribution<int> hp_roll(23, 25);
+  e.max_hp = hp_roll(rng);
+  e.hp = e.max_hp;
+  e.current_block = 0;
+
+  const Move charge{MoveName::Charge, 0, 0, {}};
+  const Move blast{MoveName::UltimateBlast, 25, 0, {}};
+  e.moves = {
+      {MoveName::Charge, charge}, {MoveName::UltimateBlast, blast},
+      {MoveName::Charge1, charge}, {MoveName::Charge2, charge},
+      {MoveName::Charge3a, charge}, {MoveName::Charge3b, charge},
+      {MoveName::Charge3c, charge},
+  };
+
+  e.transitions = {
+      // First cycle: 2 charges then blast.
+      {{MoveName::Charge1, 1}, {{MoveName::Charge2, 1.0f}}},
+      {{MoveName::Charge2, 1}, {{MoveName::UltimateBlast, 1.0f}}},
+      // Every cycle after: 3 charges then blast, looping.
+      {{MoveName::UltimateBlast, 1}, {{MoveName::Charge3a, 1.0f}}},
+      {{MoveName::Charge3a, 1}, {{MoveName::Charge3b, 1.0f}}},
+      {{MoveName::Charge3b, 1}, {{MoveName::Charge3c, 1.0f}}},
+      {{MoveName::Charge3c, 1}, {{MoveName::UltimateBlast, 1.0f}}},
+  };
+
+  e.first_turn_move = MoveName::Charge1;  // fixed
+  e.last_move = std::nullopt;
+  e.consecutive_count = 0;
+
+  validate_transitions(e);
+  select_next_move(e, rng);  // prime via first_turn_move
+  return e;
+}
+
 }  // namespace minispire

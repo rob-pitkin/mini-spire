@@ -1363,3 +1363,40 @@ TEST(TurnLoop, SlimeSplitSpawnsTwoChildrenAtInheritedHp) {
   EXPECT_EQ(living, 2);
   EXPECT_EQ(s.outcome, Outcome::InProgress);  // children still alive
 }
+
+// ============================================================================
+// Gremlins — full-fight behavior (ROB-64)
+// ============================================================================
+
+TEST(TurnLoop, MadGremlinGainsStrengthWhenHit) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy mad = make_mad_gremlin(rng);
+  mad.hp = 24;
+  mad.max_hp = 24;
+  s.enemies.push_back(std::move(mad));
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Strike});
+
+  // Each Strike that deals damage grants +1 Strength (Angry, no latch).
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Strength], 1);
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Strength], 2);  // fires again
+}
+
+TEST(TurnLoop, GremlinWizardUltimateBlastDeals25) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy wiz = make_gremlin_wizard(rng);
+  wiz.last_move = MoveName::UltimateBlast;  // force the blast this turn
+  wiz.consecutive_count = 1;
+  s.enemies.push_back(std::move(wiz));
+  s.character.hp = 80;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  EXPECT_EQ(s.character.hp, 80 - 25);
+}

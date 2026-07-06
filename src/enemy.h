@@ -29,6 +29,10 @@ enum class EnemyKind {
   Mugger,
   AcidSlimeL,
   SpikeSlimeL,
+  FatGremlin,
+  MadGremlin,
+  SneakyGremlin,
+  GremlinWizard,
 };
 
 enum class MoveName {
@@ -68,6 +72,16 @@ enum class MoveName {
   SmokeBomb,  // gain 6 (Looter) / 11 (Mugger) block
   Escape,     // leave the fight (ROB-74)
   Split,      // Large Slime: die and spawn 2 medium children at current HP (ROB-64)
+  // Gremlins (ROB-64)
+  Smash,          // Fat Gremlin: 4 damage + 1 Weak
+  Puncture,       // Sneaky Gremlin: 9 damage
+  Scratch,        // Mad Gremlin: 4 damage
+  Charge,         // Gremlin Wizard: no effect (charging)
+  UltimateBlast,  // Gremlin Wizard: 25 damage
+  // Wizard enriched pseudo-states (first cycle 2 charges, then 3 each cycle):
+  Charge1,  // = Charge (first cycle, turn 1)
+  Charge2,  // = Charge (first cycle, turn 2)
+  Charge3a, Charge3b, Charge3c,  // = Charge (later cycles, 3 turns)
 };
 
 // FUTURE: multi-hit moves (Lagavulin's attacks, Hexaghost) need a `hits`
@@ -118,7 +132,8 @@ enum class OnDeathEffect {
 
 enum class OnDamagedEffect {
   None,
-  CurlUp,  // on the first damage taken, gain curl_block block (Louse)
+  CurlUp,  // on the FIRST damage taken, gain curl_block block once (Louse)
+  Angry,   // on EVERY attack-damage instance, gain angry_amount Strength (Mad Gremlin)
 };
 
 }  // namespace minispire
@@ -168,6 +183,10 @@ struct Enemy {
   bool curl_available = false;
   int curl_block = 0;
 
+  // Angry: Strength gained per attack-damage instance (Mad Gremlin). No latch —
+  // fires every hit.
+  int angry_amount = 0;
+
   // SporeCloud: Vulnerable stacks applied to the player on death.
   int spore_vulnerable = 0;
 
@@ -198,5 +217,9 @@ Enemy make_looter(std::mt19937& rng);
 Enemy make_mugger(std::mt19937& rng);
 Enemy make_acid_slime_l(std::mt19937& rng);
 Enemy make_spike_slime_l(std::mt19937& rng);
+Enemy make_fat_gremlin(std::mt19937& rng);
+Enemy make_mad_gremlin(std::mt19937& rng);
+Enemy make_sneaky_gremlin(std::mt19937& rng);
+Enemy make_gremlin_wizard(std::mt19937& rng);
 
 }  // namespace minispire

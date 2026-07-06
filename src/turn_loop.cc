@@ -184,6 +184,10 @@ void fire_on_damaged(Enemy& enemy) {
     enemy.current_block += enemy.curl_block;
     enemy.curl_available = false;
   }
+  // Angry (Mad Gremlin): gain Strength on every attack-damage instance (no latch).
+  if (enemy.on_damaged == OnDamagedEffect::Angry) {
+    enemy.status_effects[StatusEffect::Strength] += enemy.angry_amount;
+  }
   // HP-threshold intent interrupt (ROB-64): if this hit dropped a still-living
   // enemy to at/below its split threshold, overwrite its queued intent to the
   // split move immediately, so the next obs shows Split. Idempotent — re-hitting

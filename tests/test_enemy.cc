@@ -613,3 +613,57 @@ TEST(Enemy, SpikeSlimeLConfig) {
   ASSERT_EQ(e.split_children.size(), 2u);
   EXPECT_EQ(e.split_children[0].kind, EnemyKind::SpikeSlimeM);
 }
+
+// ============================================================================
+// Gremlins (Fat, Sneaky, Mad, Wizard) (ROB-64). Shield deferred to ROB-77.
+// ============================================================================
+
+TEST(Enemy, FatGremlinSmashes) {
+  std::mt19937 rng(0);
+  Enemy e = make_fat_gremlin(rng);
+  EXPECT_GE(e.hp, 13); EXPECT_LE(e.hp, 17);
+  EXPECT_EQ(e.moves.at(MoveName::Smash).damage, 4);
+  EXPECT_EQ(e.moves.at(MoveName::Smash).applies.at(0).effect, StatusEffect::Weak);
+  EXPECT_EQ(*e.last_move, MoveName::Smash);
+  for (int i = 0; i < 10; ++i) EXPECT_EQ(select_next_move(e, rng), MoveName::Smash);
+}
+
+TEST(Enemy, SneakyGremlinPunctures) {
+  std::mt19937 rng(0);
+  Enemy e = make_sneaky_gremlin(rng);
+  EXPECT_GE(e.hp, 10); EXPECT_LE(e.hp, 14);
+  EXPECT_EQ(e.moves.at(MoveName::Puncture).damage, 9);
+  for (int i = 0; i < 10; ++i) EXPECT_EQ(select_next_move(e, rng), MoveName::Puncture);
+}
+
+TEST(Enemy, MadGremlinScratchesAndIsAngry) {
+  std::mt19937 rng(0);
+  Enemy e = make_mad_gremlin(rng);
+  EXPECT_GE(e.hp, 20); EXPECT_LE(e.hp, 24);
+  EXPECT_EQ(e.moves.at(MoveName::Scratch).damage, 4);
+  EXPECT_EQ(e.on_damaged, OnDamagedEffect::Angry);
+  EXPECT_EQ(e.angry_amount, 1);
+  for (int i = 0; i < 10; ++i) EXPECT_EQ(select_next_move(e, rng), MoveName::Scratch);
+}
+
+TEST(Enemy, GremlinWizardChargeCycle) {
+  // First cycle: 2 charges then Blast. Every cycle after: 3 charges then Blast.
+  std::mt19937 rng(0);
+  Enemy e = make_gremlin_wizard(rng);
+  EXPECT_GE(e.hp, 23); EXPECT_LE(e.hp, 25);
+  EXPECT_EQ(e.moves.at(MoveName::UltimateBlast).damage, 25);
+
+  // Collect the resolved-move sequence. Charge* pseudo-states all mean "charge";
+  // map them to whether the intent deals damage (Blast) or not (Charge).
+  auto is_blast = [](MoveName m) { return m == MoveName::UltimateBlast; };
+  // Turn 1 intent is the primed OpenerCharge (Charge1).
+  std::vector<bool> blasts;  // per turn: was it a Blast?
+  blasts.push_back(is_blast(*e.last_move));
+  for (int i = 0; i < 12; ++i) blasts.push_back(is_blast(select_next_move(e, rng)));
+
+  // Expected: [C C B]  then [C C C B] repeating -> blast at indices 2, 6, 10.
+  for (int i = 0; i < static_cast<int>(blasts.size()); ++i) {
+    bool expect_blast = (i == 2 || i == 6 || i == 10);
+    EXPECT_EQ(blasts[i], expect_blast) << "turn " << i;
+  }
+}
