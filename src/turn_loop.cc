@@ -177,12 +177,20 @@ void fire_on_death(CombatState& state, int slot) {
   }
 }
 
-// on_damaged hook: fires when an enemy actually loses HP. CurlUp grants block
-// once (the latch flips off).
+// on_damaged hook: fires when an enemy actually loses HP.
 void fire_on_damaged(Enemy& enemy) {
+  // CurlUp: grant block once (latch flips off).
   if (enemy.on_damaged == OnDamagedEffect::CurlUp && enemy.curl_available) {
     enemy.current_block += enemy.curl_block;
     enemy.curl_available = false;
+  }
+  // HP-threshold intent interrupt (ROB-64): if this hit dropped a still-living
+  // enemy to at/below its split threshold, overwrite its queued intent to the
+  // split move immediately, so the next obs shows Split. Idempotent — re-hitting
+  // an already-interrupted enemy just re-sets Split.
+  if (enemy.split_threshold_hp > 0 && enemy.hp > 0 &&
+      enemy.hp <= enemy.split_threshold_hp) {
+    enemy.last_move = enemy.split_move;
   }
 }
 
@@ -295,6 +303,25 @@ void apply_move_to_state(CombatState& state, const Move& move, int actor_slot) {
   // (run after the enemy turn) treats it as gone -> Won if it was the last one.
   if (move.escapes) {
     enemy.hp = 0;
+  }
+
+  // Split (ROB-64): the acting enemy dies and spawns its children, each set to
+  // the parent's CURRENT HP (inherited). Capture HP and kill the parent BEFORE
+  // spawning — place_child may reallocate state.enemies (invalidating `enemy`)
+  // and, by killing the parent first, its slot becomes a free slot a child can
+  // reuse. on_death hooks are not fired (split is its own mechanic).
+  if (move.splits) {
+    const int inherited_hp = enemy.hp;
+    std::vector<Enemy> children = enemy.split_children;  // copy before invalidation
+    state.enemies[actor_slot].hp = 0;                    // parent dies
+    for (Enemy child : children) {
+      // Children take the parent's split-time HP as BOTH current and max — they
+      // aren't "real" Mediums with rolled HP, just spawned at the inherited
+      // value for this fight (ROB-64, verified faithful).
+      child.hp = inherited_hp;
+      child.max_hp = inherited_hp;
+      place_child(state, child);
+    }
   }
 }
 

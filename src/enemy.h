@@ -27,6 +27,8 @@ enum class EnemyKind {
   RedSlaver,
   Looter,
   Mugger,
+  AcidSlimeL,
+  SpikeSlimeL,
 };
 
 enum class MoveName {
@@ -65,6 +67,7 @@ enum class MoveName {
   Lunge,      // deal 12 (Looter) / 16 (Mugger)
   SmokeBomb,  // gain 6 (Looter) / 11 (Mugger) block
   Escape,     // leave the fight (ROB-74)
+  Split,      // Large Slime: die and spawn 2 medium children at current HP (ROB-64)
 };
 
 // FUTURE: multi-hit moves (Lagavulin's attacks, Hexaghost) need a `hits`
@@ -83,6 +86,11 @@ struct Move {
   // (no longer targetable/acting; its slot frees). Escape counts as a win if it
   // was the last enemy; it does NOT trigger on_death hooks (escape != death).
   bool escapes = false;
+  // The acting enemy splits when this move resolves (ROB-64): it dies and spawns
+  // its split_children into free slots, each set to the parent's CURRENT HP
+  // (inherited at split time). The Large Slime's Split move. Distinct from the
+  // ROB-62 on_death Split hook — this is a chosen move, not a passive trigger.
+  bool splits = false;
 };
 
 struct MoveTransition {
@@ -162,6 +170,15 @@ struct Enemy {
 
   // SporeCloud: Vulnerable stacks applied to the player on death.
   int spore_vulnerable = 0;
+
+  // HP-threshold intent interrupt (ROB-64): when the enemy is damaged to
+  // hp <= split_threshold_hp (and still alive), its queued intent is overwritten
+  // to split_move immediately (obs-visible), regardless of what was planned.
+  // The Large Slime's "split at <=50% HP". 0 = no threshold (inert). This is the
+  // first, minimal instance of a general HP-threshold intent override; bosses
+  // (Guardian, Slime Boss) will generalize it later.
+  int split_threshold_hp = 0;
+  MoveName split_move = MoveName::Split;  // the move forced at the threshold
 };
 
 MoveName select_next_move(Enemy& enemy, std::mt19937& rng);
@@ -179,5 +196,7 @@ Enemy make_blue_slaver(std::mt19937& rng);
 Enemy make_red_slaver(std::mt19937& rng);
 Enemy make_looter(std::mt19937& rng);
 Enemy make_mugger(std::mt19937& rng);
+Enemy make_acid_slime_l(std::mt19937& rng);
+Enemy make_spike_slime_l(std::mt19937& rng);
 
 }  // namespace minispire

@@ -1314,3 +1314,52 @@ TEST(TurnLoop, RedSlaverEntangleBlocksPlayerAttacks) {
   EXPECT_FALSE(mask[card_action(CardId::Strike, 0)]);  // attack blocked
   EXPECT_TRUE(mask[card_action(CardId::Defend, 0)]);   // Defend still fine
 }
+
+// ============================================================================
+// Large Slime split (ROB-64)
+// ============================================================================
+
+TEST(TurnLoop, SlimeIntentInterruptsToSplitBelowHalfHp) {
+  // Dropping the slime to <= 50% HP flips its queued intent to Split immediately
+  // (obs-visible), regardless of what it was going to do.
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy slime = make_acid_slime_l(rng);
+  slime.hp = slime.split_threshold_hp + 3;  // just above the threshold
+  ASSERT_NE(*slime.last_move, MoveName::Split);  // not split yet
+  s.enemies.push_back(std::move(slime));
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Bash});  // 8 damage, crosses threshold
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bash, 0)));
+
+  ASSERT_GT(s.enemies[0].hp, 0);  // survived the hit (still above 0)
+  EXPECT_LE(s.enemies[0].hp, s.enemies[0].split_threshold_hp);
+  EXPECT_EQ(*s.enemies[0].last_move, MoveName::Split);  // intent interrupted
+}
+
+TEST(TurnLoop, SlimeSplitSpawnsTwoChildrenAtInheritedHp) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy slime = make_acid_slime_l(rng);
+  slime.hp = 20;                       // below threshold
+  slime.last_move = MoveName::Split;   // queue Split as the intent
+  s.enemies.push_back(std::move(slime));
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));  // slime acts -> Split
+
+  // Parent dead (slot 0 reused), two living Acid Slime M children at HP 20/20.
+  int living = 0;
+  for (const auto& e : s.enemies) {
+    if (e.hp > 0) {
+      ++living;
+      EXPECT_EQ(e.kind, EnemyKind::AcidSlimeM);
+      EXPECT_EQ(e.hp, 20);       // inherited current HP
+      EXPECT_EQ(e.max_hp, 20);   // and max HP (a-not-real-Medium)
+    }
+  }
+  EXPECT_EQ(living, 2);
+  EXPECT_EQ(s.outcome, Outcome::InProgress);  // children still alive
+}

@@ -589,4 +589,99 @@ Enemy make_mugger(std::mt19937& rng) {
   return make_thief(rng, EnemyKind::Mugger, 48, 52, /*lunge=*/16, /*smoke=*/11);
 }
 
+Enemy make_acid_slime_l(std::mt19937& rng) {
+  // Acid Slime (L) HP 65-69. Same renormalized 3-move AI as Acid Slime M
+  // (Tackle/Lick no-repeat, Corrosive Spit no-3x), bigger numbers. At <=50% HP
+  // the intent interrupts to Split, spawning 2 Acid Slime M children at the
+  // parent's current HP (ROB-64).
+  Enemy e;
+  e.kind = EnemyKind::AcidSlimeL;
+  std::uniform_int_distribution<int> hp_roll(65, 69);
+  e.max_hp = hp_roll(rng);
+  e.hp = e.max_hp;
+  e.current_block = 0;
+
+  e.moves = {
+      {MoveName::Tackle, {MoveName::Tackle, 16, 0, {}}},
+      {MoveName::Lick,
+       {MoveName::Lick, 0, 0,
+        {{StatusEffect::Weak, 2, StatusApplication::Target::Character}}}},
+      {MoveName::CorrosiveSpit,
+       {MoveName::CorrosiveSpit, 11, 0, {}, {CardId::Slimed, CardId::Slimed}}},
+  };
+  // Split move: kills self, spawns the children (HP inherited at split time).
+  Move split{MoveName::Split, 0, 0, {}};
+  split.splits = true;
+  e.moves[MoveName::Split] = split;
+
+  e.transitions = {
+      {{MoveName::Tackle, 1}, {{MoveName::Lick, 0.5f}, {MoveName::CorrosiveSpit, 0.5f}}},
+      {{MoveName::Lick, 1},
+       {{MoveName::Tackle, 4.0f / 7.0f}, {MoveName::CorrosiveSpit, 3.0f / 7.0f}}},
+      {{MoveName::CorrosiveSpit, 1},
+       {{MoveName::Tackle, 0.4f}, {MoveName::Lick, 0.3f},
+        {MoveName::CorrosiveSpit, 0.3f}}},
+      {{MoveName::CorrosiveSpit, 2},
+       {{MoveName::Tackle, 4.0f / 7.0f}, {MoveName::Lick, 3.0f / 7.0f}}},
+  };
+
+  // Split at <= 50% HP (integer floor). Children are Medium Acid Slimes; their
+  // HP is overridden to the parent's split-time HP by the split resolution.
+  e.split_threshold_hp = e.max_hp / 2;
+  e.split_move = MoveName::Split;
+  e.split_children = {make_acid_slime_m(rng), make_acid_slime_m(rng)};
+
+  const std::vector<MoveTransition> first{{MoveName::Tackle, 0.4f},
+                                          {MoveName::Lick, 0.3f},
+                                          {MoveName::CorrosiveSpit, 0.3f}};
+  e.first_turn_move = std::nullopt;
+  e.last_move = sample_from_distribution(first, rng);
+  e.consecutive_count = 1;
+
+  validate_transitions(e);
+  return e;
+}
+
+Enemy make_spike_slime_l(std::mt19937& rng) {
+  // Spike Slime (L) HP 64-70. Same AI as Spike Slime M (base 30/70, no move 3x),
+  // bigger numbers. At <=50% HP interrupts to Split -> 2 Spike Slime M children.
+  Enemy e;
+  e.kind = EnemyKind::SpikeSlimeL;
+  std::uniform_int_distribution<int> hp_roll(64, 70);
+  e.max_hp = hp_roll(rng);
+  e.hp = e.max_hp;
+  e.current_block = 0;
+
+  e.moves = {
+      {MoveName::FlameTackle,
+       {MoveName::FlameTackle, 16, 0, {}, {CardId::Slimed, CardId::Slimed}}},
+      {MoveName::Lick,
+       {MoveName::Lick, 0, 0,
+        {{StatusEffect::Frail, 2, StatusApplication::Target::Character}}}},
+  };
+  Move split{MoveName::Split, 0, 0, {}};
+  split.splits = true;
+  e.moves[MoveName::Split] = split;
+
+  const std::vector<MoveTransition> base{{MoveName::FlameTackle, 0.3f},
+                                         {MoveName::Lick, 0.7f}};
+  e.transitions = {
+      {{MoveName::FlameTackle, 1}, base},
+      {{MoveName::FlameTackle, 2}, {{MoveName::Lick, 1.0f}}},
+      {{MoveName::Lick, 1}, base},
+      {{MoveName::Lick, 2}, {{MoveName::FlameTackle, 1.0f}}},
+  };
+
+  e.split_threshold_hp = e.max_hp / 2;
+  e.split_move = MoveName::Split;
+  e.split_children = {make_spike_slime_m(rng), make_spike_slime_m(rng)};
+
+  e.first_turn_move = std::nullopt;
+  e.last_move = sample_from_distribution(base, rng);
+  e.consecutive_count = 1;
+
+  validate_transitions(e);
+  return e;
+}
+
 }  // namespace minispire

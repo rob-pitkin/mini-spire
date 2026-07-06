@@ -576,3 +576,40 @@ TEST(Enemy, RedSlaverPostEntangleNoThreeInARow) {
     p2 = p1; p1 = next; two = true;
   }
 }
+
+// ============================================================================
+// Large Slimes (Acid L, Spike L) — split mechanic (ROB-64)
+// ============================================================================
+
+TEST(Enemy, AcidSlimeLConfig) {
+  std::mt19937 rng(0);
+  Enemy e = make_acid_slime_l(rng);
+  EXPECT_GE(e.hp, 65); EXPECT_LE(e.hp, 69);
+  EXPECT_EQ(e.moves.at(MoveName::Tackle).damage, 16);
+  EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).amount, 2);  // 2 Weak
+  EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).effect, StatusEffect::Weak);
+  const Move& spit = e.moves.at(MoveName::CorrosiveSpit);
+  EXPECT_EQ(spit.damage, 11);
+  EXPECT_EQ(spit.adds_to_discard.size(), 2u);  // 2 Slimed
+  // Split config: threshold = max_hp/2, a Split move, 2 Medium children.
+  EXPECT_EQ(e.split_threshold_hp, e.max_hp / 2);
+  EXPECT_EQ(e.split_move, MoveName::Split);
+  EXPECT_TRUE(e.moves.at(MoveName::Split).splits);
+  ASSERT_EQ(e.split_children.size(), 2u);
+  EXPECT_EQ(e.split_children[0].kind, EnemyKind::AcidSlimeM);
+}
+
+TEST(Enemy, SpikeSlimeLConfig) {
+  std::mt19937 rng(0);
+  Enemy e = make_spike_slime_l(rng);
+  EXPECT_GE(e.hp, 64); EXPECT_LE(e.hp, 70);
+  const Move& flame = e.moves.at(MoveName::FlameTackle);
+  EXPECT_EQ(flame.damage, 16);
+  EXPECT_EQ(flame.adds_to_discard.size(), 2u);  // 2 Slimed
+  EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).effect, StatusEffect::Frail);
+  EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).amount, 2);  // 2 Frail
+  EXPECT_EQ(e.split_threshold_hp, e.max_hp / 2);
+  EXPECT_TRUE(e.moves.at(MoveName::Split).splits);
+  ASSERT_EQ(e.split_children.size(), 2u);
+  EXPECT_EQ(e.split_children[0].kind, EnemyKind::SpikeSlimeM);
+}
