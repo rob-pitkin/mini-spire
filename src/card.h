@@ -27,6 +27,18 @@ enum class CardId {
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
 inline constexpr int kNumCardTypes = 7;
 
+// A card's inherent StS type. This is a real property, NOT inferable from
+// damage/block: an Attack can gain block (Body Slam) and a Skill can deal
+// damage, so `damage > 0` is not a faithful proxy. Drives Entangle's attack
+// mask (ROB-75) and the Gremlin Nob's Enrage (OnPlayerSkill, ROB-65).
+enum class CardType {
+  Attack,
+  Skill,
+  Power,
+  Status,  // added mid-fight by enemies (Slimed, Dazed); not in any deck
+  Curse,
+};
+
 // FUTURE: per-instance card state (e.g. Ritual Dagger's accumulated damage,
 // Searing Blow's cumulative upgrades) will require widening this struct.
 // v1 cards don't need it.
@@ -40,17 +52,18 @@ struct CardData {
   int block;
   std::vector<StatusApplication> applies;
   bool exhaust = false;
+  CardType type = CardType::Attack;
 };
 
 inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
-    {CardId::Strike,     {1, 6,  0, {}}},
-    {CardId::StrikePlus, {1, 9,  0, {}}},
-    {CardId::Defend,     {1, 0,  5, {}}},
-    {CardId::DefendPlus, {1, 0,  8, {}}},
-    {CardId::Bash,       {2, 8,  0, {StatusApplication{StatusEffect::Vulnerable, 2, StatusApplication::Target::Enemy}}}},
-    {CardId::BashPlus,   {2, 10, 0, {StatusApplication{StatusEffect::Vulnerable, 3, StatusApplication::Target::Enemy}}}},
+    {CardId::Strike,     {1, 6,  0, {}, false, CardType::Attack}},
+    {CardId::StrikePlus, {1, 9,  0, {}, false, CardType::Attack}},
+    {CardId::Defend,     {1, 0,  5, {}, false, CardType::Skill}},
+    {CardId::DefendPlus, {1, 0,  8, {}, false, CardType::Skill}},
+    {CardId::Bash,       {2, 8,  0, {StatusApplication{StatusEffect::Vulnerable, 2, StatusApplication::Target::Enemy}}, false, CardType::Attack}},
+    {CardId::BashPlus,   {2, 10, 0, {StatusApplication{StatusEffect::Vulnerable, 3, StatusApplication::Target::Enemy}}, false, CardType::Attack}},
     // Slimed: a status card (ROB-72). 1 energy, does nothing, Exhausts on play.
-    {CardId::Slimed,     {1, 0,  0, {}, /*exhaust=*/true}},
+    {CardId::Slimed,     {1, 0,  0, {}, /*exhaust=*/true, CardType::Status}},
 };
 
 // Whether a card acts on a chosen enemy (vs. the player / self). Derived, not a
@@ -71,10 +84,5 @@ inline bool card_targets_enemy(const CardData& data) {
   }
   return false;
 }
-
-// Whether a card is an *attack* (deals damage). Used by Entangle (ROB-75),
-// which masks out all attack cards for one turn. Defend and other 0-damage
-// cards are not attacks.
-inline bool is_attack(const CardData& data) { return data.damage > 0; }
 
 }  // namespace minispire

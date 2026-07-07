@@ -152,50 +152,63 @@ void place_child(CombatState& state, const Enemy& child) {
   }
 }
 
-// on_death hook: fires when an enemy reaches hp <= 0. Deferred to after the
-// player's card fully resolves (Split mutates state.enemies). `slot` is the
-// dying enemy's slot.
-void fire_on_death(CombatState& state, int slot) {
-  Enemy& dying = state.enemies[slot];
-  switch (dying.on_death) {
-    case OnDeathEffect::None:
+// Apply one triggered effect's action to the enemy / player (ROB-65). `enemy`
+// is the effect's owner. HpAtOrBelow's threshold and RewriteIntent-when-dead
+// guards are handled by the caller/action semantics below.
+void apply_triggered_action(CombatState& state, Enemy& enemy,
+                            const TriggeredEffect& fx) {
+  switch (fx.action) {
+    case TriggeredAction::RewriteIntent:
+      // Only meaningful for a living enemy (a dead one takes no turn).
+      if (enemy.hp > 0) enemy.last_move = fx.move;
       break;
-    case OnDeathEffect::SporeCloud:
-      state.character.status_effects[StatusEffect::Vulnerable] +=
-          dying.spore_vulnerable;
+    case TriggeredAction::GainStrength:
+      enemy.status_effects[StatusEffect::Strength] += fx.amount;
       break;
-    case OnDeathEffect::Split: {
-      // Invariant guard: the children must fit. After this corpse is counted as
-      // dead, living must end up <= kMaxEnemies. Copy children first (placing
-      // may overwrite this corpse's slot and invalidate `dying`).
-      std::vector<Enemy> children = dying.split_children;
-      for (const Enemy& child : children) {
-        place_child(state, child);
-      }
+    case TriggeredAction::GainBlock:
+      enemy.current_block += fx.amount;
       break;
-    }
+    case TriggeredAction::ApplyPlayerStatus:
+      state.character.status_effects[fx.status] += fx.amount;
+      break;
   }
 }
 
-// on_damaged hook: fires when an enemy actually loses HP.
-void fire_on_damaged(Enemy& enemy) {
-  // CurlUp: grant block once (latch flips off).
-  if (enemy.on_damaged == OnDamagedEffect::CurlUp && enemy.curl_available) {
-    enemy.current_block += enemy.curl_block;
-    enemy.curl_available = false;
+// Generalized trigger dispatcher (ROB-65). Fires every triggered_effect on the
+// enemy at `slot` whose trigger matches `which`. `which` is the event that just
+// occurred; HpAtOrBelow is a special damage-time trigger whose param is the hp
+// threshold (checked here). `once` effects latch off after firing.
+void fire_triggers(CombatState& state, int slot, Trigger which) {
+  // Iterate by index: an effect could mutate state.enemies (none currently do),
+  // and we need a stable reference to the owner each iteration.
+  auto& effects = state.enemies[slot].triggered_effects;
+  for (std::size_t i = 0; i < effects.size(); ++i) {
+    TriggeredEffect& fx = effects[i];
+    if (fx.trigger != which) continue;
+    if (fx.once && fx.fired) continue;
+    // HpAtOrBelow: only fire while the enemy is alive and at/below the threshold.
+    if (which == Trigger::HpAtOrBelow) {
+      Enemy& e = state.enemies[slot];
+      if (e.hp <= 0 || e.hp > fx.param) continue;
+    }
+    apply_triggered_action(state, state.enemies[slot], fx);
+    fx.fired = true;
   }
-  // Angry (Mad Gremlin): gain Strength on every attack-damage instance (no latch).
-  if (enemy.on_damaged == OnDamagedEffect::Angry) {
-    enemy.status_effects[StatusEffect::Strength] += enemy.angry_amount;
-  }
-  // HP-threshold intent interrupt (ROB-64): if this hit dropped a still-living
-  // enemy to at/below its split threshold, overwrite its queued intent to the
-  // split move immediately, so the next obs shows Split. Idempotent — re-hitting
-  // an already-interrupted enemy just re-sets Split.
-  if (enemy.split_threshold_hp > 0 && enemy.hp > 0 &&
-      enemy.hp <= enemy.split_threshold_hp) {
-    enemy.last_move = enemy.split_move;
-  }
+}
+
+// on_death hook: fires when an enemy reaches hp <= 0. Deferred to after the
+// player's card fully resolves. `slot` is the dying enemy's slot. Spore Cloud
+// and any other OnDeath triggered_effects fire here.
+void fire_on_death(CombatState& state, int slot) {
+  fire_triggers(state, slot, Trigger::OnDeath);
+}
+
+// on_damaged hook: fires when an enemy actually loses HP. Runs the OnDamaged
+// triggers (Curl Up, Angry, Lagavulin wake) then the HpAtOrBelow triggers (the
+// Large Slime's split interrupt).
+void fire_on_damaged(CombatState& state, int slot) {
+  fire_triggers(state, slot, Trigger::OnDamaged);
+  fire_triggers(state, slot, Trigger::HpAtOrBelow);
 }
 
 void handle_play_card(CombatState& state, CardId card_id, int target) {
@@ -222,7 +235,7 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
           data.damage, state.character.status_effects, enemy.status_effects);
       apply_damage_to_hp_block(enemy.hp, enemy.current_block, dmg);
       if (enemy.hp < hp_before) {
-        fire_on_damaged(enemy);  // e.g. Louse Curl Up
+        fire_on_damaged(state, target);  // Curl Up / Angry / wake / split interrupt
       }
       if (hp_before > 0 && enemy.hp <= 0) {
         died_slot = target;  // defer on_death until the card resolves
@@ -258,20 +271,31 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
     state.discard_pile.push_back(played);
   }
 
+  // 5b. OnPlayerSkill triggers (ROB-65). Playing a Skill fires every living
+  // enemy's OnPlayerSkill effects (the Gremlin Nob's Enrage). Independent of
+  // whether the card dealt damage or killed anything.
+  if (data.type == CardType::Skill) {
+    for (std::size_t i = 0; i < state.enemies.size(); ++i) {
+      if (state.enemies[i].hp > 0) {
+        fire_triggers(state, static_cast<int>(i), Trigger::OnPlayerSkill);
+      }
+    }
+  }
+
   // 6. Deferred on_death hook (ROB-62). Fires after the card fully resolves so
   // a Split can safely mutate state.enemies. Runs before the terminal check so
   // a split's spawned children prevent a premature "all enemies dead" win.
   if (died_slot >= 0) {
     fire_on_death(state, died_slot);
 
-    // 6b. "Became the last living enemy" intent rewrite (ROB-77). Checked AFTER
-    // on_death (a split could have added enemies). If a kill left exactly one
-    // living enemy and it has an alone_move, overwrite its queued intent — a
-    // support unit (Shield Gremlin) switches off Protect once alone.
+    // 6b. BecameLastEnemy triggers (ROB-77 via ROB-65). Checked AFTER on_death
+    // (a split could have added enemies). If a kill left exactly one living
+    // enemy, fire its BecameLastEnemy effects — e.g. the Shield Gremlin rewrites
+    // its queued Protect to attack once alone.
     if (count_living(state) == 1) {
-      for (Enemy& e : state.enemies) {
-        if (e.hp > 0 && e.has_alone_move) {
-          e.last_move = e.alone_move;
+      for (std::size_t i = 0; i < state.enemies.size(); ++i) {
+        if (state.enemies[i].hp > 0) {
+          fire_triggers(state, static_cast<int>(i), Trigger::BecameLastEnemy);
         }
       }
     }
@@ -370,12 +394,13 @@ void handle_end_turn(CombatState& state) {
   // 1c. Discard leftover energy
   state.character.energy = 0;
 
-  // 2. Enemy turn — each living enemy acts in slot order. Enemies don't spawn
-  // during their own turn (no mid-loop vector growth), so a straight index loop
-  // is safe. An enemy CAN leave its slot via escape (ROB-74: hp->0), but that
-  // only frees a slot — it never invalidates the iteration. Two terminal cases
-  // are checked: the player dying (per enemy, below) and all enemies being gone
-  // (after the loop — an escape can clear the last enemy).
+  // 2. Enemy turn — each enemy that is ALIVE AT THE START OF THE PHASE acts, in
+  // slot order. An enemy can leave via escape (ROB-74: hp->0) or spawn children
+  // mid-phase via a Split move (ROB-64). Split children must NOT act the phase
+  // they spawn (StS), so we snapshot the acting slots up front: a child placed
+  // into a freed/appended slot mid-phase is not in the snapshot and is skipped
+  // until next phase. Terminal cases checked: the player dying (per enemy) and
+  // all enemies gone (after the loop).
   state.character_turn = false;
 
   // 2a. Reset ALL enemies' block once, at the start of the enemy phase — not
@@ -386,9 +411,15 @@ void handle_end_turn(CombatState& state) {
     if (e.hp > 0) e.current_block = 0;
   }
 
-  for (std::size_t slot = 0; slot < state.enemies.size(); ++slot) {
+  // Snapshot the slots alive at phase start — the only enemies that act.
+  std::vector<std::size_t> acting_slots;
+  for (std::size_t i = 0; i < state.enemies.size(); ++i) {
+    if (state.enemies[i].hp > 0) acting_slots.push_back(i);
+  }
+
+  for (std::size_t slot : acting_slots) {
     Enemy& enemy = state.enemies[slot];
-    if (enemy.hp <= 0) continue;  // dead slot: skip
+    if (enemy.hp <= 0) continue;  // died earlier this phase (e.g. killed by ...)
 
     // 2a-pre. Start-of-turn powers. Ritual: gain Strength = Ritual stacks
     // (Cultist). It does NOT tick down. Because Ritual is applied mid-turn when
@@ -521,7 +552,8 @@ std::vector<bool> valid_actions(const CombatState& state) {
     const bool in_hand = find_first_in_hand(state.current_hand, d.card) >= 0;
     const bool affordable = state.character.energy >= data.cost;
     if (!in_hand || !affordable) continue;
-    if (entangled && is_attack(data)) continue;  // attacks blocked while entangled
+    // Entangle blocks all Attack-type cards for a turn (ROB-75).
+    if (entangled && data.type == CardType::Attack) continue;
 
     // Target legality fork (shares card_targets_enemy with apply_action, so
     // the mask and the apply path never disagree).

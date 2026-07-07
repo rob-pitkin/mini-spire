@@ -9,6 +9,15 @@
 
 using namespace minispire;
 
+// Find the first triggered effect matching a trigger (ROB-65). Returns nullptr
+// if the enemy has none — lets config tests assert on the generalized mechanism.
+static const TriggeredEffect* find_trigger(const Enemy& e, Trigger t) {
+  for (const TriggeredEffect& fx : e.triggered_effects) {
+    if (fx.trigger == t) return &fx;
+  }
+  return nullptr;
+}
+
 TEST(Enemy, JawWormHpInRange) {
   // Sample a handful of seeds; all should yield HP in [40, 44].
   for (uint32_t seed = 0; seed < 50; ++seed) {
@@ -245,10 +254,13 @@ TEST(Enemy, LouseCurlUpConfigured) {
   for (uint32_t seed = 0; seed < 50; ++seed) {
     std::mt19937 rng(seed);
     Enemy e = make_green_louse(rng);
-    EXPECT_EQ(e.on_damaged, OnDamagedEffect::CurlUp);
-    EXPECT_TRUE(e.curl_available);
-    EXPECT_GE(e.curl_block, 3);
-    EXPECT_LE(e.curl_block, 7);
+    // Curl Up: a once=true OnDamaged GainBlock effect (ROB-65).
+    const TriggeredEffect* curl = find_trigger(e, Trigger::OnDamaged);
+    ASSERT_NE(curl, nullptr);
+    EXPECT_EQ(curl->action, TriggeredAction::GainBlock);
+    EXPECT_TRUE(curl->once);
+    EXPECT_GE(curl->amount, 3);
+    EXPECT_LE(curl->amount, 7);
   }
 }
 
@@ -423,8 +435,12 @@ TEST(Enemy, FungiBeastMoves) {
 TEST(Enemy, FungiBeastSporeCloudConfigured) {
   std::mt19937 rng(0);
   Enemy e = make_fungi_beast(rng);
-  EXPECT_EQ(e.on_death, OnDeathEffect::SporeCloud);
-  EXPECT_EQ(e.spore_vulnerable, 2);
+  // Spore Cloud: OnDeath -> apply 2 Vulnerable to the player (ROB-65).
+  const TriggeredEffect* spore = find_trigger(e, Trigger::OnDeath);
+  ASSERT_NE(spore, nullptr);
+  EXPECT_EQ(spore->action, TriggeredAction::ApplyPlayerStatus);
+  EXPECT_EQ(spore->status, StatusEffect::Vulnerable);
+  EXPECT_EQ(spore->amount, 2);
 }
 
 TEST(Enemy, FungiBeastAsymmetricNoRepeat) {
@@ -591,9 +607,13 @@ TEST(Enemy, AcidSlimeLConfig) {
   const Move& spit = e.moves.at(MoveName::CorrosiveSpit);
   EXPECT_EQ(spit.damage, 11);
   EXPECT_EQ(spit.adds_to_discard.size(), 2u);  // 2 Slimed
-  // Split config: threshold = max_hp/2, a Split move, 2 Medium children.
-  EXPECT_EQ(e.split_threshold_hp, e.max_hp / 2);
-  EXPECT_EQ(e.split_move, MoveName::Split);
+  // Split config: HpAtOrBelow (max_hp/2) -> RewriteIntent to Split, a splits
+  // move, 2 Medium children (ROB-65).
+  const TriggeredEffect* split = find_trigger(e, Trigger::HpAtOrBelow);
+  ASSERT_NE(split, nullptr);
+  EXPECT_EQ(split->action, TriggeredAction::RewriteIntent);
+  EXPECT_EQ(split->param, e.max_hp / 2);
+  EXPECT_EQ(split->move, MoveName::Split);
   EXPECT_TRUE(e.moves.at(MoveName::Split).splits);
   ASSERT_EQ(e.split_children.size(), 2u);
   EXPECT_EQ(e.split_children[0].kind, EnemyKind::AcidSlimeM);
@@ -608,7 +628,10 @@ TEST(Enemy, SpikeSlimeLConfig) {
   EXPECT_EQ(flame.adds_to_discard.size(), 2u);  // 2 Slimed
   EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).effect, StatusEffect::Frail);
   EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).amount, 2);  // 2 Frail
-  EXPECT_EQ(e.split_threshold_hp, e.max_hp / 2);
+  const TriggeredEffect* split = find_trigger(e, Trigger::HpAtOrBelow);
+  ASSERT_NE(split, nullptr);
+  EXPECT_EQ(split->param, e.max_hp / 2);
+  EXPECT_EQ(split->move, MoveName::Split);
   EXPECT_TRUE(e.moves.at(MoveName::Split).splits);
   ASSERT_EQ(e.split_children.size(), 2u);
   EXPECT_EQ(e.split_children[0].kind, EnemyKind::SpikeSlimeM);
@@ -641,8 +664,12 @@ TEST(Enemy, MadGremlinScratchesAndIsAngry) {
   Enemy e = make_mad_gremlin(rng);
   EXPECT_GE(e.hp, 20); EXPECT_LE(e.hp, 24);
   EXPECT_EQ(e.moves.at(MoveName::Scratch).damage, 4);
-  EXPECT_EQ(e.on_damaged, OnDamagedEffect::Angry);
-  EXPECT_EQ(e.angry_amount, 1);
+  // Angry: OnDamaged -> +1 Strength, every hit (no `once`) — ROB-65.
+  const TriggeredEffect* angry = find_trigger(e, Trigger::OnDamaged);
+  ASSERT_NE(angry, nullptr);
+  EXPECT_EQ(angry->action, TriggeredAction::GainStrength);
+  EXPECT_EQ(angry->amount, 1);
+  EXPECT_FALSE(angry->once);
   for (int i = 0; i < 10; ++i) EXPECT_EQ(select_next_move(e, rng), MoveName::Scratch);
 }
 
@@ -683,9 +710,11 @@ TEST(Enemy, ShieldGremlinConfig) {
   // Primes Protect; supports forever while allies live.
   EXPECT_EQ(*e.last_move, MoveName::Protect);
   for (int i = 0; i < 10; ++i) EXPECT_EQ(select_next_move(e, rng), MoveName::Protect);
-  // Alone-rewrite config.
-  EXPECT_TRUE(e.has_alone_move);
-  EXPECT_EQ(e.alone_move, MoveName::ProtectAlone);
+  // Alone-rewrite config: BecameLastEnemy -> RewriteIntent to ProtectAlone.
+  const TriggeredEffect* alone = find_trigger(e, Trigger::BecameLastEnemy);
+  ASSERT_NE(alone, nullptr);
+  EXPECT_EQ(alone->action, TriggeredAction::RewriteIntent);
+  EXPECT_EQ(alone->move, MoveName::ProtectAlone);
 }
 
 TEST(Enemy, ShieldGremlinProtectAloneThenBashes) {

@@ -784,11 +784,15 @@ CombatState make_hook_test_state(Enemy enemy) {
 }
 }  // namespace
 
+// A once=true OnDamaged GainBlock effect = Curl Up (ROB-65).
+static TriggeredEffect curl_up(int block) {
+  return {.trigger = Trigger::OnDamaged, .action = TriggeredAction::GainBlock,
+          .amount = block, .once = true};
+}
+
 TEST(TurnLoop, CurlUpGrantsBlockOnceOnFirstDamage) {
   Enemy e = make_test_enemy(50);
-  e.on_damaged = OnDamagedEffect::CurlUp;
-  e.curl_available = true;
-  e.curl_block = 9;
+  e.triggered_effects.push_back(curl_up(9));
   CombatState s = make_hook_test_state(std::move(e));
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
@@ -796,27 +800,26 @@ TEST(TurnLoop, CurlUpGrantsBlockOnceOnFirstDamage) {
   // *before* the curl block (damage is applied, then on_damaged fires).
   EXPECT_EQ(s.enemies[0].current_block, 9);
   EXPECT_EQ(s.enemies[0].hp, 44);  // 50 - 6
-  EXPECT_FALSE(s.enemies[0].curl_available);  // latch consumed
 }
 
 TEST(TurnLoop, CurlUpDoesNotFireTwice) {
   Enemy e = make_test_enemy(50);
-  e.on_damaged = OnDamagedEffect::CurlUp;
-  e.curl_available = true;
-  e.curl_block = 9;
+  e.triggered_effects.push_back(curl_up(9));
   CombatState s = make_hook_test_state(std::move(e));
   s.current_hand.push_back(Card{CardId::Strike});  // a second Strike
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));  // block 9, latch off
   // Second Strike: 6 dmg, eats 6 of the 9 block, no new curl block.
   ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
-  EXPECT_EQ(s.enemies[0].current_block, 3);  // 9 - 6, no re-curl
+  EXPECT_EQ(s.enemies[0].current_block, 3);  // 9 - 6, no re-curl (once latch)
 }
 
 TEST(TurnLoop, SporeCloudAppliesVulnerableToPlayerOnDeath) {
   Enemy e = make_test_enemy(5);  // dies to one Strike (6)
-  e.on_death = OnDeathEffect::SporeCloud;
-  e.spore_vulnerable = 2;
+  e.triggered_effects.push_back({.trigger = Trigger::OnDeath,
+                                 .action = TriggeredAction::ApplyPlayerStatus,
+                                 .amount = 2,
+                                 .status = StatusEffect::Vulnerable});
   CombatState s = make_hook_test_state(std::move(e));
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
@@ -824,43 +827,68 @@ TEST(TurnLoop, SporeCloudAppliesVulnerableToPlayerOnDeath) {
   EXPECT_EQ(s.character.status_effects[StatusEffect::Vulnerable], 2);
 }
 
+// Build a test enemy whose queued move Splits into the given children (ROB-64).
+static Enemy make_splitter(int hp, std::vector<Enemy> children) {
+  Enemy e = make_test_enemy(hp);
+  Move split{MoveName::Split, 0, 0, {}};
+  split.splits = true;
+  e.moves[MoveName::Split] = split;
+  e.transitions[{MoveName::Split, 1}] = {{MoveName::Split, 1.0f}};
+  e.last_move = MoveName::Split;
+  e.split_children = std::move(children);
+  return e;
+}
+
 TEST(TurnLoop, SplitSpawnsChildrenIntoFreeSlots) {
-  Enemy parent = make_test_enemy(5);  // dies to one Strike
-  parent.on_death = OnDeathEffect::Split;
-  parent.split_children = {make_test_enemy(20), make_test_enemy(20)};
+  // The splitter's Split move resolves on the enemy turn -> 2 children placed.
+  Enemy parent = make_splitter(30, {make_test_enemy(20), make_test_enemy(20)});
   CombatState s = make_hook_test_state(std::move(parent));
 
-  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+  ASSERT_TRUE(apply_action(s, end_turn_action()));  // enemy acts -> Split
 
-  // Parent (slot 0) dead; two children placed. Fight NOT won (children live).
-  EXPECT_EQ(s.outcome, Outcome::InProgress);
-  // Living-enemy count is 2.
+  EXPECT_EQ(s.outcome, Outcome::InProgress);  // children live
   int living = 0;
   for (const auto& en : s.enemies) if (en.hp > 0) living++;
   EXPECT_EQ(living, 2);
-  // The parent's corpse slot (0) is reused by a child (rule A).
-  EXPECT_GT(s.enemies[0].hp, 0);
+  EXPECT_GT(s.enemies[0].hp, 0);  // parent's corpse slot reused (rule A)
+}
+
+TEST(TurnLoop, SplitChildrenDoNotActThePhaseTheySpawn) {
+  // A child spawned mid-enemy-phase must NOT take a turn until the next phase
+  // (StS). Children here would Chomp for 5 if they acted; the player must be
+  // untouched this phase.
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  Enemy c1 = make_test_enemy(20), c2 = make_test_enemy(20);
+  for (Enemy* c : {&c1, &c2}) {
+    c->moves[MoveName::Chomp] = {MoveName::Chomp, 5, 0, {}};  // 5 dmg if it acts
+    c->transitions[{MoveName::Chomp, 1}] = {{MoveName::Chomp, 1.0f}};
+    c->last_move = MoveName::Chomp;
+  }
+  s.enemies.push_back(make_splitter(30, {std::move(c1), std::move(c2)}));
+  const int hp_before = s.character.hp;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));  // splitter acts -> Split
+
+  int living = 0;
+  for (const auto& en : s.enemies) if (en.hp > 0) living++;
+  EXPECT_EQ(living, 2);                       // two children spawned
+  EXPECT_EQ(s.character.hp, hp_before);       // but neither acted this phase
 }
 
 TEST(TurnLoop, SplitThrowsWhenNoFreeSlot) {
-  // Fill all 4 slots with living enemies; the slot-0 one splits into 2 -> would
-  // need a 5th living enemy. The invariant says throw.
+  // Fill all 4 slots with living enemies; the slot-0 one splits into 2 -> parent
+  // dies (3 living) then +2 children = 5 > kMaxEnemies. The invariant says throw.
   CombatState s = make_minimal_state(0);
   s.enemies.clear();
-  Enemy splitter = make_test_enemy(5);
-  splitter.on_death = OnDeathEffect::Split;
-  splitter.split_children = {make_test_enemy(20), make_test_enemy(20)};
-  s.enemies.push_back(std::move(splitter));
+  s.enemies.push_back(
+      make_splitter(30, {make_test_enemy(20), make_test_enemy(20)}));
   for (int i = 0; i < kMaxEnemies - 1; ++i) {
     s.enemies.push_back(make_test_enemy(20));  // 3 more living -> 4 total living
   }
-  s.character.energy = 3;
-  s.current_hand.push_back(Card{CardId::Strike});
 
-  // Killing the splitter (living 4 -> parent dies -> 3 living, then +2 children
-  // = 5 living > kMaxEnemies). No free slot exists -> throw.
-  EXPECT_THROW(apply_action(s, card_action(CardId::Strike, 0)),
-               std::runtime_error);
+  // On the enemy turn the splitter resolves Split -> would need a 5th slot.
+  EXPECT_THROW(apply_action(s, end_turn_action()), std::runtime_error);
 }
 
 // ============================================================================
@@ -1002,14 +1030,15 @@ TEST(TurnLoop, CultistIncantationThenRampingDarkStrike) {
 
 TEST(TurnLoop, LouseCurlUpFiresOnPlayerStrike) {
   // A Strike on a fresh Louse: it takes 6 damage AND Curl Up grants its block
-  // once (ROB-62). Pin curl_block for a deterministic assertion.
+  // once (ROB-62). Pin the curl amount for a deterministic assertion.
   CombatState s = make_minimal_state(0);
   s.enemies.clear();
   std::mt19937 rng(0);
   Enemy louse = make_red_louse(rng);
   louse.hp = 15;
   louse.max_hp = 15;
-  louse.curl_block = 4;  // pin
+  ASSERT_FALSE(louse.triggered_effects.empty());
+  louse.triggered_effects[0].amount = 4;  // pin the Curl Up block
   s.enemies.push_back(std::move(louse));
   s.character.energy = 3;
   s.current_hand.push_back(Card{CardId::Strike});  // 6 damage
@@ -1019,7 +1048,7 @@ TEST(TurnLoop, LouseCurlUpFiresOnPlayerStrike) {
   // Damage applied first (15 - 6 = 9), then Curl Up grants 4 block, latch off.
   EXPECT_EQ(s.enemies[0].hp, 9);
   EXPECT_EQ(s.enemies[0].current_block, 4);
-  EXPECT_FALSE(s.enemies[0].curl_available);
+  EXPECT_TRUE(s.enemies[0].triggered_effects[0].fired);  // latch consumed
 }
 
 TEST(TurnLoop, GreenLouseSpitWebWeakensPlayer) {
@@ -1090,19 +1119,21 @@ TEST(TurnLoop, EscapeDoesNotTriggerOnDeathHook) {
   CombatState s = make_minimal_state(0);
   s.enemies.clear();
   Enemy e = make_escaper();
-  // Give it a Split on_death hook; escaping must NOT spawn children.
-  e.on_death = OnDeathEffect::Split;
-  e.split_children = {make_test_enemy(20), make_test_enemy(20)};
+  // Give it an OnDeath effect; escaping must NOT fire it (escape != death).
+  e.triggered_effects.push_back({.trigger = Trigger::OnDeath,
+                                 .action = TriggeredAction::ApplyPlayerStatus,
+                                 .amount = 2,
+                                 .status = StatusEffect::Vulnerable});
   s.enemies.push_back(std::move(e));
 
   ASSERT_TRUE(apply_action(s, end_turn_action()));
 
-  // It fled, did not "die" -> no split children. Only the (now hp=0) escaper
-  // occupies the vector; no living enemy -> Won.
+  // It fled, did not "die" -> the OnDeath effect did not fire (no Vulnerable).
   int living = 0;
   for (const auto& en : s.enemies) if (en.hp > 0) ++living;
   EXPECT_EQ(living, 0);
   EXPECT_EQ(s.outcome, Outcome::Won);
+  EXPECT_EQ(s.character.status_effects[StatusEffect::Vulnerable], 0);
 }
 
 // ============================================================================
@@ -1326,7 +1357,8 @@ TEST(TurnLoop, SlimeIntentInterruptsToSplitBelowHalfHp) {
   s.enemies.clear();
   std::mt19937 rng(0);
   Enemy slime = make_acid_slime_l(rng);
-  slime.hp = slime.split_threshold_hp + 3;  // just above the threshold
+  const int threshold = slime.max_hp / 2;  // split at <= 50% HP
+  slime.hp = threshold + 3;                // just above the threshold
   ASSERT_NE(*slime.last_move, MoveName::Split);  // not split yet
   s.enemies.push_back(std::move(slime));
   s.character.energy = 3;
@@ -1335,7 +1367,7 @@ TEST(TurnLoop, SlimeIntentInterruptsToSplitBelowHalfHp) {
   ASSERT_TRUE(apply_action(s, card_action(CardId::Bash, 0)));
 
   ASSERT_GT(s.enemies[0].hp, 0);  // survived the hit (still above 0)
-  EXPECT_LE(s.enemies[0].hp, s.enemies[0].split_threshold_hp);
+  EXPECT_LE(s.enemies[0].hp, threshold);
   EXPECT_EQ(*s.enemies[0].last_move, MoveName::Split);  // intent interrupted
 }
 

@@ -194,11 +194,13 @@ Enemy make_louse(std::mt19937& rng, EnemyKind kind, int hp_lo, int hp_hi,
       {other_move, other_move_data},
   };
 
-  // Curl Up: gain X block (rolled 3-7) on the first damage taken (ROB-62).
+  // Curl Up: gain X block (rolled 3-7) on the FIRST damage taken (ROB-62 ->
+  // ROB-65 triggered effect: once=true latches it off after the first hit).
   std::uniform_int_distribution<int> curl_roll(3, 7);
-  e.on_damaged = OnDamagedEffect::CurlUp;
-  e.curl_available = true;
-  e.curl_block = curl_roll(rng);
+  e.triggered_effects.push_back({.trigger = Trigger::OnDamaged,
+                                 .action = TriggeredAction::GainBlock,
+                                 .amount = curl_roll(rng),
+                                 .once = true});
 
   // Transition table: 75% Bite / 25% other when both legal; forced switch when
   // a move has been used twice in a row (no three-in-a-row).
@@ -436,9 +438,11 @@ Enemy make_fungi_beast(std::mt19937& rng) {
       // No (Grow, 2): Grow can never reach two in a row.
   };
 
-  // On-death: Spore Cloud applies Vulnerable to the player.
-  e.on_death = OnDeathEffect::SporeCloud;
-  e.spore_vulnerable = 2;
+  // On-death: Spore Cloud applies 2 Vulnerable to the player (ROB-63 -> ROB-65).
+  e.triggered_effects.push_back({.trigger = Trigger::OnDeath,
+                                 .action = TriggeredAction::ApplyPlayerStatus,
+                                 .amount = 2,
+                                 .status = StatusEffect::Vulnerable});
 
   // Turn 1: base 60/40 roll.
   e.first_turn_move = std::nullopt;
@@ -625,10 +629,13 @@ Enemy make_acid_slime_l(std::mt19937& rng) {
        {{MoveName::Tackle, 4.0f / 7.0f}, {MoveName::Lick, 3.0f / 7.0f}}},
   };
 
-  // Split at <= 50% HP (integer floor). Children are Medium Acid Slimes; their
-  // HP is overridden to the parent's split-time HP by the split resolution.
-  e.split_threshold_hp = e.max_hp / 2;
-  e.split_move = MoveName::Split;
+  // Split at <= 50% HP (integer floor): interrupt the intent to Split (ROB-64 ->
+  // ROB-65 HpAtOrBelow trigger). Children are Medium Acid Slimes; their HP is
+  // overridden to the parent's split-time HP by the split move resolution.
+  e.triggered_effects.push_back({.trigger = Trigger::HpAtOrBelow,
+                                 .action = TriggeredAction::RewriteIntent,
+                                 .param = e.max_hp / 2,
+                                 .move = MoveName::Split});
   e.split_children = {make_acid_slime_m(rng), make_acid_slime_m(rng)};
 
   const std::vector<MoveTransition> first{{MoveName::Tackle, 0.4f},
@@ -672,8 +679,11 @@ Enemy make_spike_slime_l(std::mt19937& rng) {
       {{MoveName::Lick, 2}, {{MoveName::FlameTackle, 1.0f}}},
   };
 
-  e.split_threshold_hp = e.max_hp / 2;
-  e.split_move = MoveName::Split;
+  // Split at <= 50% HP -> 2 Spike Slime M children (ROB-64 -> ROB-65).
+  e.triggered_effects.push_back({.trigger = Trigger::HpAtOrBelow,
+                                 .action = TriggeredAction::RewriteIntent,
+                                 .param = e.max_hp / 2,
+                                 .move = MoveName::Split});
   e.split_children = {make_spike_slime_m(rng), make_spike_slime_m(rng)};
 
   e.first_turn_move = std::nullopt;
@@ -727,12 +737,14 @@ Enemy make_sneaky_gremlin(std::mt19937& rng) {
 
 Enemy make_mad_gremlin(std::mt19937& rng) {
   // Mad Gremlin (HP 20-24): Scratch (4 dmg), always. Angry 1: +1 Strength on
-  // every attack-damage instance it takes (ROB-64 on_damaged, no latch).
+  // every attack-damage instance it takes (ROB-64 -> ROB-65 triggered effect;
+  // no `once`, so it fires every hit).
   Enemy e = make_simple_gremlin(rng, EnemyKind::MadGremlin, 20, 24,
                                 MoveName::Scratch,
                                 {MoveName::Scratch, 4, 0, {}});
-  e.on_damaged = OnDamagedEffect::Angry;
-  e.angry_amount = 1;
+  e.triggered_effects.push_back({.trigger = Trigger::OnDamaged,
+                                 .action = TriggeredAction::GainStrength,
+                                 .amount = 1});
   return e;
 }
 
@@ -805,9 +817,10 @@ Enemy make_shield_gremlin(std::mt19937& rng) {
   };
 
   // On becoming the last living enemy, rewrite the queued Protect intent to
-  // ProtectAlone (protect self this turn, then Shield Bash).
-  e.has_alone_move = true;
-  e.alone_move = MoveName::ProtectAlone;
+  // ProtectAlone (protect self this turn, then Shield Bash) — ROB-77 -> ROB-65.
+  e.triggered_effects.push_back({.trigger = Trigger::BecameLastEnemy,
+                                 .action = TriggeredAction::RewriteIntent,
+                                 .move = MoveName::ProtectAlone});
 
   e.first_turn_move = MoveName::Protect;  // never spawns alone; primes Protect
   e.last_move = std::nullopt;

@@ -37,6 +37,7 @@ enum class EnemyKind {
 };
 
 enum class MoveName {
+  None,  // sentinel: "no move" (TriggeredEffect::move default when unused)
   Chomp,
   Thrash,
   Bellow,
@@ -130,19 +131,37 @@ struct TransitionKey {
   }
 };
 
-// Enemy effect hooks (ROB-62). Plain enum tags + data fields on Enemy keep the
-// enemy a trivially-copyable value type (required for CombatState::clone() /
-// MCTS — no virtual methods, no std::function). TurnLoop dispatches on the tag.
-enum class OnDeathEffect {
-  None,
-  Split,       // spawn split_children into free enemy slots (e.g. Large Slime)
-  SporeCloud,  // apply spore_vulnerable Vulnerable to the player (Fungi Beast)
+// Generalized triggered effects (ROB-65). One data-driven, clone-safe (POD)
+// mechanism unifying every event->effect enemy behavior: the Large Slime's
+// split interrupt, the Shield Gremlin's became-alone rewrite, the Mad Gremlin's
+// Angry, the Louse's Curl Up, the Fungi Beast's Spore Cloud, plus the elites'
+// Lagavulin wake-on-damage, Gremlin Nob Enrage, and Siphon Soul. A dispatcher
+// fires the matching effects at each trigger site (damage / hp / alone / card
+// play / death).
+enum class Trigger {
+  OnDamaged,        // the enemy took attack damage
+  HpAtOrBelow,      // the enemy's hp <= param (checked after damage)
+  BecameLastEnemy,  // this enemy is now the only living one
+  OnPlayerSkill,    // the player played a Skill-type card
+  OnDeath,          // the enemy died (hp -> 0 from the player, not escape)
 };
 
-enum class OnDamagedEffect {
-  None,
-  CurlUp,  // on the FIRST damage taken, gain curl_block block once (Louse)
-  Angry,   // on EVERY attack-damage instance, gain angry_amount Strength (Mad Gremlin)
+enum class TriggeredAction {
+  RewriteIntent,      // set last_move = move (interrupt the queued intent)
+  GainStrength,       // status_effects[Strength] += amount
+  GainBlock,          // current_block += amount (once=true -> Curl Up)
+  ApplyPlayerStatus,  // apply `status` x amount to the player (may be negative)
+};
+
+struct TriggeredEffect {
+  Trigger trigger;
+  TriggeredAction action;
+  int param = 0;                   // HpAtOrBelow threshold (else unused)
+  int amount = 0;                  // Gain*/ApplyPlayerStatus magnitude (signed)
+  MoveName move = MoveName::None;   // RewriteIntent target (else unused)
+  StatusEffect status = StatusEffect::Strength;  // ApplyPlayerStatus effect
+  bool once = false;               // fire at most once, then latch off
+  bool fired = false;              // runtime latch for `once`
 };
 
 }  // namespace minispire
@@ -179,41 +198,17 @@ struct Enemy {
   std::optional<MoveName> last_move;
   int consecutive_count;
 
-  // --- Effect hooks (ROB-62). All default to inert. ---
-  OnDeathEffect on_death = OnDeathEffect::None;
-  OnDamagedEffect on_damaged = OnDamagedEffect::None;
+  // Generalized triggered effects (ROB-65): every event->effect behavior (Curl
+  // Up, Angry, Spore Cloud, Split interrupt, became-alone rewrite, wake, Enrage,
+  // Siphon Soul). Fired by the TurnLoop dispatcher at each trigger site. Empty
+  // for enemies with no reactive behavior. POD + heap-backed vector -> stays
+  // clone-safe.
+  std::vector<TriggeredEffect> triggered_effects;
 
-  // Split: the children spawned when this enemy dies. The dying enemy carries
-  // its own children as data (M3 sets them); std::vector<Enemy> is heap-backed
-  // so the recursive value type compiles and stays copyable for clone().
+  // Split: the children spawned when this enemy's Split move resolves (ROB-64).
+  // Data the Split *move* consumes — not itself a trigger. std::vector<Enemy> is
+  // heap-backed so the recursive value type compiles and stays copyable.
   std::vector<Enemy> split_children;
-
-  // CurlUp: block-once latch. curl_available flips false after the first hit.
-  bool curl_available = false;
-  int curl_block = 0;
-
-  // Angry: Strength gained per attack-damage instance (Mad Gremlin). No latch —
-  // fires every hit.
-  int angry_amount = 0;
-
-  // SporeCloud: Vulnerable stacks applied to the player on death.
-  int spore_vulnerable = 0;
-
-  // HP-threshold intent interrupt (ROB-64): when the enemy is damaged to
-  // hp <= split_threshold_hp (and still alive), its queued intent is overwritten
-  // to split_move immediately (obs-visible), regardless of what was planned.
-  // The Large Slime's "split at <=50% HP". 0 = no threshold (inert). This is the
-  // first, minimal instance of a general HP-threshold intent override; bosses
-  // (Guardian, Slime Boss) will generalize it later.
-  int split_threshold_hp = 0;
-  MoveName split_move = MoveName::Split;  // the move forced at the threshold
-
-  // "Became the last living enemy" intent rewrite (ROB-77). When this enemy
-  // becomes the only living enemy, its queued intent is overwritten to
-  // alone_move (an enriched pseudo-state), so a support unit switches to
-  // attacking once alone. Inert unless has_alone_move is set.
-  bool has_alone_move = false;
-  MoveName alone_move = MoveName::ProtectAlone;  // moot unless has_alone_move
 };
 
 MoveName select_next_move(Enemy& enemy, std::mt19937& rng);
