@@ -418,39 +418,44 @@ void handle_end_turn(CombatState& state) {
   }
 
   for (std::size_t slot : acting_slots) {
-    Enemy& enemy = state.enemies[slot];
-    if (enemy.hp <= 0) continue;  // died earlier this phase (e.g. killed by ...)
+    if (state.enemies[slot].hp <= 0) continue;  // died earlier this phase
 
     // 2a-pre. Start-of-turn powers. Ritual: gain Strength = Ritual stacks
     // (Cultist). It does NOT tick down. Because Ritual is applied mid-turn when
     // Incantation resolves (after this trigger point), it first fires the turn
     // *after* it's gained — matching StS (ROB-73).
-    int ritual = get_status(enemy.status_effects, StatusEffect::Ritual);
+    int ritual = get_status(state.enemies[slot].status_effects,
+                            StatusEffect::Ritual);
     if (ritual > 0) {
-      enemy.status_effects[StatusEffect::Strength] += ritual;
+      state.enemies[slot].status_effects[StatusEffect::Strength] += ritual;
     }
 
     // 2b. Apply the primed intent (set at combat start or the prior enemy turn).
-    // last_move always stores the upcoming intent so the obs shows it.
-    assert(enemy.last_move.has_value() &&
+    // last_move always stores the upcoming intent so the obs shows it. NOTE: a
+    // Split move calls place_child -> push_back, which can REALLOCATE
+    // state.enemies. Hold no Enemy& across this call; re-index by `slot` after.
+    // Copy the move by value so it stays valid even if enemy.moves is freed.
+    assert(state.enemies[slot].last_move.has_value() &&
            "enemy.last_move must be primed by start_v1_combat or prior turn");
-    apply_move_to_state(state, enemy.moves.at(*enemy.last_move),
-                        static_cast<int>(slot));
+    const Move move = state.enemies[slot].moves.at(*state.enemies[slot].last_move);
+    apply_move_to_state(state, move, static_cast<int>(slot));
 
     // 2c. Terminal check — an enemy attack may have killed the player.
     check_character_terminal(state);
     if (state.outcome != Outcome::InProgress) return;
 
-    // If this enemy left the fight via its move (escape, ROB-74; hp -> 0), it
-    // has no next intent — skip status tick + Markov advance. Its transition
-    // table need not contain an entry for a terminal move like Escape.
-    if (enemy.hp <= 0) continue;
+    // If this enemy left the fight via its move — escape (ROB-74) or Split
+    // (ROB-64) — it takes no further action this phase. Both make the actor's
+    // hp 0, but a Split child may immediately REOCCUPY this slot, so we can't
+    // re-test state.enemies[slot].hp here (that would read the child). Key off
+    // the move instead. Also skip if the actor died some other way (hp <= 0).
+    if (move.escapes || move.splits || state.enemies[slot].hp <= 0) continue;
 
     // 2d. Tick this enemy's statuses.
-    tick_status_effects(enemy.status_effects);
+    tick_status_effects(state.enemies[slot].status_effects);
 
     // 2e. Advance this enemy's Markov chain to set its next intent.
-    select_next_move(enemy, state.rng);
+    select_next_move(state.enemies[slot], state.rng);
   }
 
   // 2f. All enemies gone? An escape (ROB-74) can clear the last living enemy,
