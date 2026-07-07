@@ -67,8 +67,9 @@ cmake.version = ">=3.16"
 cmake.build-type = "Release"
 wheel.packages = ["python/minispire"]
 # Only the extension target is needed for the wheel — the CLI binary and the
-# GoogleTest binary are dev-only artifacts.
-cmake.targets = ["_core"]
+# GoogleTest binary are dev-only artifacts. (scikit-build-core renamed
+# cmake.targets -> build.targets.)
+build.targets = ["_core"]
 
 [tool.pytest.ini_options]
 # The `analysis/` package lives at the repo root (not in the installed
