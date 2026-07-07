@@ -35,6 +35,7 @@ constexpr std::array<StatusEffect, kNumStatusEffects> kObsStatusOrder = {
     StatusEffect::Frail,
     StatusEffect::Ritual,
     StatusEffect::Entangle,
+    StatusEffect::Metallicize,
 };
 static_assert(kObsStatusOrder.size() == kNumStatusEffects,
               "kObsStatusOrder must list every status effect");

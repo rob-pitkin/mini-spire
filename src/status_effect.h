@@ -10,12 +10,14 @@ enum class StatusEffect {
   Frail,     // player: block gained from cards reduced 25% (floored); ticks down
   Ritual,    // enemy: gain Strength = stacks at the start of each of its turns
   Entangle,  // player: cannot play attack cards this turn; non-stacking, 1 turn
+  Metallicize,  // enemy: gain block = stacks at the start of each of its turns
+                // (Lagavulin while asleep); does not tick down
 };
 
 // Number of status effects tracked in the observation. Drives the per-entity
 // status block width in the obs layout (combat_env). Keep kObsStatusOrder in
 // lockstep — a static_assert enforces the count matches.
-inline constexpr int kNumStatusEffects = 7;
+inline constexpr int kNumStatusEffects = 8;
 
 // FUTURE (multi-enemy): Target { Character, Enemy } collapses any "the enemy"
 // to a single entity, which is unambiguous in v1 with one enemy. Multi-enemy

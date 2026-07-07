@@ -831,4 +831,83 @@ Enemy make_shield_gremlin(std::mt19937& rng) {
   return e;
 }
 
+Enemy make_lagavulin(std::mt19937& rng) {
+  // Lagavulin (HP 109-111). Starts Asleep with Metallicize 8 (gains 8 block at
+  // the start of every turn while asleep). Two wake paths (ROB-65):
+  //   Self-wake: does nothing for 3 turns, then wakes UNSTUNNED and attacks turn
+  //     4. Sleep3 fires OnWake on resolve (end of the 3rd turn) -> that turn
+  //     keeps its 8 block; from turn 4 on it gets none.
+  //   Damage-wake: taking HP damage while asleep fires OnWake immediately (no
+  //     block on the stun turn) and interrupts the intent to Stunned (do nothing
+  //     one turn), then joins the cycle.
+  // OnWake = { Wake (clear is_asleep), RemoveSelfStatus(Metallicize) }.
+  // Post-wake cycle: Attack (18), Attack (18), Siphon Soul (-1 Str/-1 Dex),
+  // repeating endlessly.
+  Enemy e;
+  e.kind = EnemyKind::Lagavulin;
+  std::uniform_int_distribution<int> hp_roll(109, 111);
+  e.max_hp = hp_roll(rng);
+  e.hp = e.max_hp;
+  e.current_block = 0;
+  e.is_asleep = true;
+  e.status_effects[StatusEffect::Metallicize] = 8;
+
+  const Move sleep{MoveName::Sleep, 0, 0, {}};
+  // Sleep3 is the last asleep turn: it fires OnWake on resolve (self-wake path).
+  Move sleep3{MoveName::Sleep3, 0, 0, {}};
+  sleep3.wakes_on_resolve = true;
+  const Move stunned{MoveName::Stunned, 0, 0, {}};
+  const Move attack{MoveName::LagavulinAttack, 18, 0, {}};
+  const Move siphon{
+      MoveName::SiphonSoul, 0, 0,
+      {{StatusEffect::Strength, -1, StatusApplication::Target::Character},
+       {StatusEffect::Dexterity, -1, StatusApplication::Target::Character}}};
+  e.moves = {
+      {MoveName::Sleep, sleep},   {MoveName::Sleep1, sleep},
+      {MoveName::Sleep2, sleep},  {MoveName::Sleep3, sleep3},
+      {MoveName::Stunned, stunned},
+      {MoveName::LagavulinAttack, attack},
+      {MoveName::LagavulinAttack1, attack},
+      {MoveName::LagavulinAttack2, attack},
+      {MoveName::SiphonSoul, siphon},
+  };
+
+  e.transitions = {
+      // Self-wake countdown: 3 asleep turns, then attack (unstunned) turn 4.
+      {{MoveName::Sleep1, 1}, {{MoveName::Sleep2, 1.0f}}},
+      {{MoveName::Sleep2, 1}, {{MoveName::Sleep3, 1.0f}}},
+      {{MoveName::Sleep3, 1}, {{MoveName::LagavulinAttack1, 1.0f}}},
+      // Post-stun (damage-wake) joins the cycle.
+      {{MoveName::Stunned, 1}, {{MoveName::LagavulinAttack1, 1.0f}}},
+      // Endless Attack, Attack, Siphon Soul cycle.
+      {{MoveName::LagavulinAttack1, 1}, {{MoveName::LagavulinAttack2, 1.0f}}},
+      {{MoveName::LagavulinAttack2, 1}, {{MoveName::SiphonSoul, 1.0f}}},
+      {{MoveName::SiphonSoul, 1}, {{MoveName::LagavulinAttack1, 1.0f}}},
+  };
+
+  // OnWake: clear the asleep flag and drop Metallicize. Fires from both wake
+  // paths (Sleep3 resolve via wakes_on_resolve; damage-wake in fire_on_damaged).
+  e.triggered_effects.push_back(
+      {.trigger = Trigger::OnWake, .action = TriggeredAction::Wake});
+  e.triggered_effects.push_back({.trigger = Trigger::OnWake,
+                                 .action = TriggeredAction::RemoveSelfStatus,
+                                 .status = StatusEffect::Metallicize});
+  // Damage-wake: a hit while asleep (requires_asleep guard) interrupts the intent
+  // to Stunned. once=true + the guard mean it fires only for the first wake,
+  // never mid-cycle after is_asleep is cleared.
+  e.triggered_effects.push_back({.trigger = Trigger::OnDamaged,
+                                 .action = TriggeredAction::RewriteIntent,
+                                 .move = MoveName::Stunned,
+                                 .once = true,
+                                 .requires_asleep = true});
+
+  e.first_turn_move = MoveName::Sleep1;  // starts asleep
+  e.last_move = std::nullopt;
+  e.consecutive_count = 0;
+
+  validate_transitions(e);
+  select_next_move(e, rng);  // prime via first_turn_move
+  return e;
+}
+
 }  // namespace minispire

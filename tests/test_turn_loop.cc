@@ -1489,3 +1489,118 @@ TEST(TurnLoop, KillingAllyRewritesShieldIntentToProtectAlone) {
   EXPECT_EQ(*s.enemies[0].last_move, MoveName::ProtectAlone);  // intent rewritten
   EXPECT_EQ(s.outcome, Outcome::InProgress);  // shield still alive
 }
+
+// ============================================================================
+// Lagavulin — full-fight behavior (ROB-65)
+// ============================================================================
+
+// A state with a lone Lagavulin and a high-HP player (survives 18-dmg attacks).
+static CombatState lagavulin_state() {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  s.enemies.push_back(make_lagavulin(rng));
+  s.character.hp = 80;
+  s.character.max_hp = 80;
+  return s;
+}
+
+TEST(TurnLoop, LagavulinMetallicizeGrants8BlockEachAsleepTurn) {
+  CombatState s = lagavulin_state();
+  ASSERT_TRUE(apply_action(s, end_turn_action()));  // Sleep1 turn
+  EXPECT_EQ(s.enemies[0].current_block, 8);
+  ASSERT_TRUE(apply_action(s, end_turn_action()));  // Sleep2 turn
+  EXPECT_EQ(s.enemies[0].current_block, 8);  // reset to 0 then +8, no accumulation
+  EXPECT_EQ(s.character.hp, 80);             // asleep -> no attacks
+}
+
+TEST(TurnLoop, LagavulinSelfWakeKeepsBlockTurn3ThenNone) {
+  CombatState s = lagavulin_state();
+  apply_action(s, end_turn_action());  // Sleep1
+  apply_action(s, end_turn_action());  // Sleep2
+  apply_action(s, end_turn_action());  // Sleep3 -> resolves OnWake at end
+  // Turn 3 still got its 8 block (OnWake fires AFTER the grant).
+  EXPECT_EQ(s.enemies[0].current_block, 8);
+  EXPECT_FALSE(s.enemies[0].is_asleep);  // woke
+  EXPECT_EQ(s.enemies[0].status_effects.count(StatusEffect::Metallicize), 0u);
+  EXPECT_EQ(*s.enemies[0].last_move, MoveName::LagavulinAttack1);  // unstunned
+  // Turn 4: attacks for 18, no more Metallicize block.
+  apply_action(s, end_turn_action());
+  EXPECT_EQ(s.enemies[0].current_block, 0);
+  EXPECT_EQ(s.character.hp, 80 - 18);
+}
+
+TEST(TurnLoop, LagavulinDamageWakeStunsAndDropsBlock) {
+  CombatState s = lagavulin_state();
+  s.character.energy = 3;
+  // First hit must break the 8 block and deal HP damage: Bash (8) leaves 0
+  // block; a second hit does HP damage. Use Bash then Strike.
+  s.current_hand.push_back(Card{CardId::Bash});    // 8 dmg -> eats the 8 block
+  s.current_hand.push_back(Card{CardId::Strike});  // 6 dmg -> HP damage, wakes
+  // Grant it a turn of Metallicize block first.
+  apply_action(s, end_turn_action());  // Sleep1 -> 8 block
+  ASSERT_EQ(s.enemies[0].current_block, 8);
+
+  apply_action(s, card_action(CardId::Bash, 0));    // block 8 -> 0, no HP loss
+  EXPECT_TRUE(s.enemies[0].is_asleep);              // block-only hit doesn't wake
+  apply_action(s, card_action(CardId::Strike, 0));  // HP damage -> wake
+
+  EXPECT_FALSE(s.enemies[0].is_asleep);
+  EXPECT_EQ(s.enemies[0].status_effects.count(StatusEffect::Metallicize), 0u);
+  EXPECT_EQ(*s.enemies[0].last_move, MoveName::Stunned);  // damage-wake stuns
+
+  // Stun turn: no Metallicize block, does nothing.
+  apply_action(s, end_turn_action());
+  EXPECT_EQ(s.enemies[0].current_block, 0);  // Metallicize gone -> no block
+  EXPECT_EQ(s.character.hp, 80);             // stunned -> no attack
+  EXPECT_EQ(*s.enemies[0].last_move, MoveName::LagavulinAttack1);  // then attacks
+}
+
+TEST(TurnLoop, LagavulinDamageAfterSelfWakeDoesNotReStun) {
+  // The requires_asleep guard: a hit AFTER a self-wake must not re-stun.
+  CombatState s = lagavulin_state();
+  s.character.energy = 3;
+  apply_action(s, end_turn_action());  // Sleep1
+  apply_action(s, end_turn_action());  // Sleep2
+  apply_action(s, end_turn_action());  // Sleep3 -> self-wake, now awake
+  ASSERT_FALSE(s.enemies[0].is_asleep);
+  ASSERT_EQ(*s.enemies[0].last_move, MoveName::LagavulinAttack1);
+
+  s.current_hand.push_back(Card{CardId::Strike});
+  apply_action(s, card_action(CardId::Strike, 0));  // first HP hit, but awake
+
+  EXPECT_EQ(*s.enemies[0].last_move, MoveName::LagavulinAttack1);  // NOT re-stunned
+}
+
+TEST(TurnLoop, SiphonSoulNegativeStrengthFloorsAttackDamage) {
+  CombatState s = lagavulin_state();
+  // Force Siphon Soul as the intent, applied twice, then check a follow-up
+  // attack's damage is floored (Str goes negative but damage never < 0).
+  s.enemies[0].is_asleep = false;
+  s.enemies[0].status_effects.erase(StatusEffect::Metallicize);
+  s.enemies[0].last_move = MoveName::SiphonSoul;
+  s.enemies[0].consecutive_count = 1;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));  // Siphon: player -1 Str/-1 Dex
+  EXPECT_EQ(s.character.status_effects[StatusEffect::Strength], -1);
+  EXPECT_EQ(s.character.status_effects[StatusEffect::Dexterity], -1);
+
+  // A 0-base "attack" from the player with -1 Str would floor at 0; verify the
+  // damage floor via compute path: player Strike (6) + (-1 Str) = 5, not < 0.
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Strike});
+  int hp_before = s.enemies[0].hp;
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+  EXPECT_EQ(s.enemies[0].hp, hp_before - 5);  // 6 - 1 Str = 5
+}
+
+TEST(TurnLoop, NegativeStrengthFloorsDamageAtZero) {
+  // Directly verify the floor: a big negative Strength can't make damage negative.
+  CombatState s = lagavulin_state();
+  s.character.status_effects[StatusEffect::Strength] = -100;
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Strike});  // 6 base
+  int hp_before = s.enemies[0].hp;
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+  EXPECT_EQ(s.enemies[0].hp, hp_before);  // 6 - 100 floored to 0 damage
+}

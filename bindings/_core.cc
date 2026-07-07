@@ -89,7 +89,8 @@ PYBIND11_MODULE(_core, m) {
       .value("Dexterity", StatusEffect::Dexterity)
       .value("Frail", StatusEffect::Frail)
       .value("Ritual", StatusEffect::Ritual)
-      .value("Entangle", StatusEffect::Entangle);
+      .value("Entangle", StatusEffect::Entangle)
+      .value("Metallicize", StatusEffect::Metallicize);
 
   py::class_<StatusApplication> status_application(m, "StatusApplication");
   py::enum_<StatusApplication::Target>(status_application, "Target")

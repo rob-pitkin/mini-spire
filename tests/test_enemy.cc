@@ -726,3 +726,37 @@ TEST(Enemy, ShieldGremlinProtectAloneThenBashes) {
   EXPECT_EQ(select_next_move(e, rng), MoveName::ShieldBash);
   for (int i = 0; i < 10; ++i) EXPECT_EQ(select_next_move(e, rng), MoveName::ShieldBash);
 }
+
+// ============================================================================
+// Lagavulin (ROB-65) — elite
+// ============================================================================
+
+TEST(Enemy, LagavulinConfig) {
+  std::mt19937 rng(0);
+  Enemy e = make_lagavulin(rng);
+  EXPECT_GE(e.hp, 109); EXPECT_LE(e.hp, 111);
+  EXPECT_TRUE(e.is_asleep);
+  EXPECT_EQ(e.status_effects[StatusEffect::Metallicize], 8);
+  EXPECT_EQ(*e.last_move, MoveName::Sleep1);  // starts asleep
+  EXPECT_EQ(e.moves.at(MoveName::LagavulinAttack).damage, 18);
+  // Siphon Soul: -1 Str AND -1 Dex to the player.
+  const Move& siphon = e.moves.at(MoveName::SiphonSoul);
+  ASSERT_EQ(siphon.applies.size(), 2u);
+  EXPECT_EQ(siphon.applies[0].amount, -1);
+  EXPECT_EQ(siphon.applies[1].amount, -1);
+  // Sleep3 wakes on resolve (self-wake).
+  EXPECT_TRUE(e.moves.at(MoveName::Sleep3).wakes_on_resolve);
+}
+
+TEST(Enemy, LagavulinSelfWakeCountdownThenAttackCycle) {
+  // Undamaged: Sleep1, Sleep2, Sleep3, then Attack, Attack, Siphon, repeating.
+  std::mt19937 rng(0);
+  Enemy e = make_lagavulin(rng);
+  EXPECT_EQ(*e.last_move, MoveName::Sleep1);
+  EXPECT_EQ(select_next_move(e, rng), MoveName::Sleep2);
+  EXPECT_EQ(select_next_move(e, rng), MoveName::Sleep3);
+  EXPECT_EQ(select_next_move(e, rng), MoveName::LagavulinAttack1);
+  EXPECT_EQ(select_next_move(e, rng), MoveName::LagavulinAttack2);
+  EXPECT_EQ(select_next_move(e, rng), MoveName::SiphonSoul);
+  EXPECT_EQ(select_next_move(e, rng), MoveName::LagavulinAttack1);  // loops
+}

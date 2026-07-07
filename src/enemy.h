@@ -34,6 +34,7 @@ enum class EnemyKind {
   SneakyGremlin,
   GremlinWizard,
   ShieldGremlin,
+  Lagavulin,
 };
 
 enum class MoveName {
@@ -88,6 +89,13 @@ enum class MoveName {
   Protect,       // give a living ally 7 block (self if none)
   ShieldBash,    // 6 damage
   ProtectAlone,  // = Protect; enriched state after becoming the last enemy
+  // Lagavulin (ROB-65)
+  LagavulinAttack,  // 18 damage
+  SiphonSoul,       // -1 Strength and -1 Dexterity to the player
+  Sleep,            // asleep: do nothing (holds Metallicize)
+  Sleep1, Sleep2, Sleep3,  // = Sleep; the 3 self-wake countdown states
+  Stunned,          // awake but does nothing this turn (damage-wake target)
+  LagavulinAttack1, LagavulinAttack2,  // = LagavulinAttack; cycle states
 };
 
 // FUTURE: multi-hit moves (Lagavulin's attacks, Hexaghost) need a `hits`
@@ -115,6 +123,11 @@ struct Move {
   // slot), not the acting enemy (ROB-77). The Shield Gremlin's Protect. If no
   // ally is alive, the block falls back to the acting enemy itself.
   bool blocks_ally = false;
+  // The acting enemy wakes when this move resolves (ROB-65): fires the enemy's
+  // OnWake triggered effects. Lagavulin's last sleep move (Sleep3) sets this, so
+  // the self-wake path clears Metallicize at the END of the 3rd asleep turn
+  // (that turn keeps its block; from the next turn on it gets none).
+  bool wakes_on_resolve = false;
 };
 
 struct MoveTransition {
@@ -144,6 +157,7 @@ enum class Trigger {
   BecameLastEnemy,  // this enemy is now the only living one
   OnPlayerSkill,    // the player played a Skill-type card
   OnDeath,          // the enemy died (hp -> 0 from the player, not escape)
+  OnWake,           // the enemy woke (Lagavulin: self-wake or damage-wake)
 };
 
 enum class TriggeredAction {
@@ -151,6 +165,8 @@ enum class TriggeredAction {
   GainStrength,       // status_effects[Strength] += amount
   GainBlock,          // current_block += amount (once=true -> Curl Up)
   ApplyPlayerStatus,  // apply `status` x amount to the player (may be negative)
+  RemoveSelfStatus,   // erase `status` from the acting enemy
+  Wake,               // set is_asleep = false (Lagavulin OnWake)
 };
 
 struct TriggeredEffect {
@@ -159,9 +175,13 @@ struct TriggeredEffect {
   int param = 0;                   // HpAtOrBelow threshold (else unused)
   int amount = 0;                  // Gain*/ApplyPlayerStatus magnitude (signed)
   MoveName move = MoveName::None;   // RewriteIntent target (else unused)
-  StatusEffect status = StatusEffect::Strength;  // ApplyPlayerStatus effect
+  StatusEffect status = StatusEffect::Strength;  // ApplyPlayerStatus/RemoveSelfStatus
   bool once = false;               // fire at most once, then latch off
   bool fired = false;              // runtime latch for `once`
+  // Guard: fire only while the enemy is_asleep. Lagavulin's damage-wake uses
+  // this so a first hit AFTER a self-wake can't re-stun it mid-cycle (the `once`
+  // latch alone wouldn't distinguish the two).
+  bool requires_asleep = false;
 };
 
 }  // namespace minispire
@@ -209,6 +229,11 @@ struct Enemy {
   // Data the Split *move* consumes — not itself a trigger. std::vector<Enemy> is
   // heap-backed so the recursive value type compiles and stays copyable.
   std::vector<Enemy> split_children;
+
+  // Asleep (ROB-65): Lagavulin starts asleep and does nothing but hold
+  // Metallicize until it wakes (self-wake after 3 turns, or damage-wake). The
+  // TriggeredAction::Wake action clears this; the requires_asleep guard reads it.
+  bool is_asleep = false;
 };
 
 MoveName select_next_move(Enemy& enemy, std::mt19937& rng);
@@ -233,5 +258,6 @@ Enemy make_mad_gremlin(std::mt19937& rng);
 Enemy make_sneaky_gremlin(std::mt19937& rng);
 Enemy make_gremlin_wizard(std::mt19937& rng);
 Enemy make_shield_gremlin(std::mt19937& rng);
+Enemy make_lagavulin(std::mt19937& rng);
 
 }  // namespace minispire

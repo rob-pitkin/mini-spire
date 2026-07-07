@@ -171,6 +171,12 @@ void apply_triggered_action(CombatState& state, Enemy& enemy,
     case TriggeredAction::ApplyPlayerStatus:
       state.character.status_effects[fx.status] += fx.amount;
       break;
+    case TriggeredAction::RemoveSelfStatus:
+      enemy.status_effects.erase(fx.status);
+      break;
+    case TriggeredAction::Wake:
+      enemy.is_asleep = false;
+      break;
   }
 }
 
@@ -186,6 +192,9 @@ void fire_triggers(CombatState& state, int slot, Trigger which) {
     TriggeredEffect& fx = effects[i];
     if (fx.trigger != which) continue;
     if (fx.once && fx.fired) continue;
+    // Guard: fire only while the enemy is asleep (Lagavulin's damage-wake; a
+    // first hit AFTER a self-wake must not re-stun it mid-cycle).
+    if (fx.requires_asleep && !state.enemies[slot].is_asleep) continue;
     // HpAtOrBelow: only fire while the enemy is alive and at/below the threshold.
     if (which == Trigger::HpAtOrBelow) {
       Enemy& e = state.enemies[slot];
@@ -204,10 +213,17 @@ void fire_on_death(CombatState& state, int slot) {
 }
 
 // on_damaged hook: fires when an enemy actually loses HP. Runs the OnDamaged
-// triggers (Curl Up, Angry, Lagavulin wake) then the HpAtOrBelow triggers (the
-// Large Slime's split interrupt).
+// triggers (Curl Up, Angry, Lagavulin's damage-wake -> Stunned), then OnWake if
+// this hit woke a sleeping enemy (Metallicize present), then the HpAtOrBelow
+// triggers (the Large Slime's split interrupt).
 void fire_on_damaged(CombatState& state, int slot) {
+  const bool was_asleep = state.enemies[slot].is_asleep;
+  // OnDamaged first: the damage-wake RewriteIntent (guarded on is_asleep) sets
+  // the Stunned intent while still asleep.
   fire_triggers(state, slot, Trigger::OnDamaged);
+  // Damage-wake: a hit that lands while asleep wakes the enemy immediately
+  // (OnWake clears Metallicize now, so the stun turn gains no block).
+  if (was_asleep) fire_triggers(state, slot, Trigger::OnWake);
   fire_triggers(state, slot, Trigger::HpAtOrBelow);
 }
 
@@ -353,6 +369,12 @@ void apply_move_to_state(CombatState& state, const Move& move, int actor_slot) {
   for (CardId card : move.adds_to_discard) {
     state.discard_pile.push_back(Card{card});
   }
+  // Wake-on-resolve (ROB-65): Lagavulin's last sleep move (Sleep3) fires the
+  // enemy's OnWake effects at the END of the asleep turn (self-wake path), so
+  // that turn keeps its Metallicize block and the next turn onward gets none.
+  if (move.wakes_on_resolve) {
+    fire_triggers(state, actor_slot, Trigger::OnWake);
+  }
   // Escape (ROB-74): the acting enemy flees by setting its own hp to 0. It
   // leaves the fight — everything keys on hp>0, so it's no longer
   // targetable/acting and its slot frees. This is NOT a death: on_death hooks
@@ -428,6 +450,14 @@ void handle_end_turn(CombatState& state) {
                             StatusEffect::Ritual);
     if (ritual > 0) {
       state.enemies[slot].status_effects[StatusEffect::Strength] += ritual;
+    }
+    // Metallicize: gain block = stacks at the start of the turn (ROB-65,
+    // Lagavulin asleep). Runs AFTER the phase-start block reset, so an asleep
+    // enemy shows exactly its Metallicize amount each turn (no accumulation).
+    int metallicize = get_status(state.enemies[slot].status_effects,
+                                 StatusEffect::Metallicize);
+    if (metallicize > 0) {
+      state.enemies[slot].current_block += metallicize;
     }
 
     // 2b. Apply the primed intent (set at combat start or the prior enemy turn).
