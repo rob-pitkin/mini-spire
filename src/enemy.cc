@@ -776,4 +776,46 @@ Enemy make_gremlin_wizard(std::mt19937& rng) {
   return e;
 }
 
+Enemy make_shield_gremlin(std::mt19937& rng) {
+  // Shield Gremlin (HP 12-15): Protect (7 block to a random living ally) while
+  // allies live; Shield Bash (6 dmg) once alone. Enriched states (ROB-77):
+  //   first_turn = Protect; (Protect,1) -> Protect (support loop).
+  //   On becoming the last enemy, the queued Protect is rewritten to
+  //   ProtectAlone (protect self this turn), which -> ShieldBash next turn ->
+  //   ShieldBash forever.
+  Enemy e;
+  e.kind = EnemyKind::ShieldGremlin;
+  std::uniform_int_distribution<int> hp_roll(12, 15);
+  e.max_hp = hp_roll(rng);
+  e.hp = e.max_hp;
+  e.current_block = 0;
+
+  Move protect{MoveName::Protect, 0, 7, {}};
+  protect.blocks_ally = true;
+  e.moves = {
+      {MoveName::Protect, protect},
+      {MoveName::ProtectAlone, protect},  // same data; different transition role
+      {MoveName::ShieldBash, {MoveName::ShieldBash, 6, 0, {}}},
+  };
+
+  e.transitions = {
+      {{MoveName::Protect, 1}, {{MoveName::Protect, 1.0f}}},
+      {{MoveName::ProtectAlone, 1}, {{MoveName::ShieldBash, 1.0f}}},
+      {{MoveName::ShieldBash, 1}, {{MoveName::ShieldBash, 1.0f}}},
+  };
+
+  // On becoming the last living enemy, rewrite the queued Protect intent to
+  // ProtectAlone (protect self this turn, then Shield Bash).
+  e.has_alone_move = true;
+  e.alone_move = MoveName::ProtectAlone;
+
+  e.first_turn_move = MoveName::Protect;  // never spawns alone; primes Protect
+  e.last_move = std::nullopt;
+  e.consecutive_count = 0;
+
+  validate_transitions(e);
+  select_next_move(e, rng);  // prime via first_turn_move
+  return e;
+}
+
 }  // namespace minispire

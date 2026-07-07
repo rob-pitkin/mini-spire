@@ -667,3 +667,33 @@ TEST(Enemy, GremlinWizardChargeCycle) {
     EXPECT_EQ(blasts[i], expect_blast) << "turn " << i;
   }
 }
+
+// ============================================================================
+// Shield Gremlin (ROB-77)
+// ============================================================================
+
+TEST(Enemy, ShieldGremlinConfig) {
+  std::mt19937 rng(0);
+  Enemy e = make_shield_gremlin(rng);
+  EXPECT_GE(e.hp, 12); EXPECT_LE(e.hp, 15);
+  const Move& protect = e.moves.at(MoveName::Protect);
+  EXPECT_EQ(protect.block, 7);
+  EXPECT_TRUE(protect.blocks_ally);
+  EXPECT_EQ(e.moves.at(MoveName::ShieldBash).damage, 6);
+  // Primes Protect; supports forever while allies live.
+  EXPECT_EQ(*e.last_move, MoveName::Protect);
+  for (int i = 0; i < 10; ++i) EXPECT_EQ(select_next_move(e, rng), MoveName::Protect);
+  // Alone-rewrite config.
+  EXPECT_TRUE(e.has_alone_move);
+  EXPECT_EQ(e.alone_move, MoveName::ProtectAlone);
+}
+
+TEST(Enemy, ShieldGremlinProtectAloneThenBashes) {
+  // From ProtectAlone: -> Shield Bash -> Shield Bash forever.
+  std::mt19937 rng(0);
+  Enemy e = make_shield_gremlin(rng);
+  e.last_move = MoveName::ProtectAlone;
+  e.consecutive_count = 1;
+  EXPECT_EQ(select_next_move(e, rng), MoveName::ShieldBash);
+  for (int i = 0; i < 10; ++i) EXPECT_EQ(select_next_move(e, rng), MoveName::ShieldBash);
+}

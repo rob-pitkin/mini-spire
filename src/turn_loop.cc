@@ -263,6 +263,18 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   // a split's spawned children prevent a premature "all enemies dead" win.
   if (died_slot >= 0) {
     fire_on_death(state, died_slot);
+
+    // 6b. "Became the last living enemy" intent rewrite (ROB-77). Checked AFTER
+    // on_death (a split could have added enemies). If a kill left exactly one
+    // living enemy and it has an alone_move, overwrite its queued intent — a
+    // support unit (Shield Gremlin) switches off Protect once alone.
+    if (count_living(state) == 1) {
+      for (Enemy& e : state.enemies) {
+        if (e.hp > 0 && e.has_alone_move) {
+          e.last_move = e.alone_move;
+        }
+      }
+    }
   }
 
   // 7. Terminal checks
@@ -271,12 +283,22 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   check_character_terminal(state);  // currently unreachable in v1
 }
 
+// Choose a uniform-random living ally (a slot != actor with hp > 0), or -1 if
+// there are none. Used by ally-targeting moves (ROB-77 Protect).
+int random_living_ally(CombatState& state, int actor_slot) {
+  std::vector<int> allies;
+  for (int i = 0; i < static_cast<int>(state.enemies.size()); ++i) {
+    if (i != actor_slot && state.enemies[i].hp > 0) allies.push_back(i);
+  }
+  if (allies.empty()) return -1;
+  std::uniform_int_distribution<int> pick(0, static_cast<int>(allies.size()) - 1);
+  return allies[pick(state.rng)];
+}
+
 // Resolve one enemy's move. `actor_slot` is the acting enemy's slot index — the
-// move's damage uses that enemy's status, its block lands on that enemy, and a
-// Target::Enemy status is that enemy's self-buff (e.g. Cultist Incantation ->
-// own Strength).
-// LIMITATION (cross-enemy buffs): a move that buffs a *different* enemy (none in
-// the current roster) would need a target field on Move; revisit in M3.
+// move's damage uses that enemy's status, its block lands on that enemy (or a
+// random ally for a blocks_ally move), and a Target::Enemy status is that
+// enemy's self-buff (e.g. Cultist Incantation -> own Strength).
 void apply_move_to_state(CombatState& state, const Move& move, int actor_slot) {
   Enemy& enemy = state.enemies[actor_slot];
 
@@ -287,7 +309,14 @@ void apply_move_to_state(CombatState& state, const Move& move, int actor_slot) {
                              dmg);
   }
   if (move.block > 0) {
-    enemy.current_block += move.block;
+    if (move.blocks_ally) {
+      // Protect (ROB-77): block a random living ally; fall back to self if none.
+      int ally = random_living_ally(state, actor_slot);
+      int slot = (ally >= 0) ? ally : actor_slot;
+      state.enemies[slot].current_block += move.block;
+    } else {
+      enemy.current_block += move.block;
+    }
   }
   // STS limitation: multi-hit attacks (Twin Strike, Pommel Strike) deal Strength
   // bonus per-hit. Our Move model is one hit per cast; multi-hit needs a `hits`
@@ -348,6 +377,15 @@ void handle_end_turn(CombatState& state) {
   // are checked: the player dying (per enemy, below) and all enemies being gone
   // (after the loop — an escape can clear the last enemy).
   state.character_turn = false;
+
+  // 2a. Reset ALL enemies' block once, at the start of the enemy phase — not
+  // per-individual-turn. This matches StS: block persists through the whole
+  // enemy phase, so a Protect (ROB-77) granted to an ally that hasn't acted yet
+  // survives into the player's turn. (Per-turn reset would wipe it.)
+  for (Enemy& e : state.enemies) {
+    if (e.hp > 0) e.current_block = 0;
+  }
+
   for (std::size_t slot = 0; slot < state.enemies.size(); ++slot) {
     Enemy& enemy = state.enemies[slot];
     if (enemy.hp <= 0) continue;  // dead slot: skip
@@ -361,8 +399,6 @@ void handle_end_turn(CombatState& state) {
       enemy.status_effects[StatusEffect::Strength] += ritual;
     }
 
-    // 2a. Reset block
-    enemy.current_block = 0;
     // 2b. Apply the primed intent (set at combat start or the prior enemy turn).
     // last_move always stores the upcoming intent so the obs shows it.
     assert(enemy.last_move.has_value() &&

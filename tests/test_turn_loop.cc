@@ -1400,3 +1400,60 @@ TEST(TurnLoop, GremlinWizardUltimateBlastDeals25) {
   ASSERT_TRUE(apply_action(s, end_turn_action()));
   EXPECT_EQ(s.character.hp, 80 - 25);
 }
+
+// ============================================================================
+// Shield Gremlin — full-fight behavior (ROB-77)
+// ============================================================================
+
+TEST(TurnLoop, ShieldGremlinProtectsAnAlly) {
+  // Shield Gremlin (slot 0) Protects; the 7 block lands on the ally (slot 1),
+  // not itself.
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  s.enemies.push_back(make_shield_gremlin(rng));      // slot 0, intent = Protect
+  s.enemies.push_back(make_minimal_state(0).enemies[0]);  // slot 1: a Jaw Worm
+  ASSERT_EQ(*s.enemies[0].last_move, MoveName::Protect);
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_EQ(s.enemies[0].current_block, 0);  // shield gremlin didn't block itself
+  EXPECT_EQ(s.enemies[1].current_block, 7);  // ally got the 7 block
+}
+
+TEST(TurnLoop, ShieldGremlinAloneProtectsItself) {
+  // With no ally, Protect falls back to self-block.
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy shield = make_shield_gremlin(rng);
+  shield.last_move = MoveName::ProtectAlone;  // the self-protect intent
+  shield.consecutive_count = 1;
+  s.enemies.push_back(std::move(shield));
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  EXPECT_EQ(s.enemies[0].current_block, 7);  // protected self (no ally)
+}
+
+TEST(TurnLoop, KillingAllyRewritesShieldIntentToProtectAlone) {
+  // Shield Gremlin (slot 0) with one ally (slot 1). Killing the ally leaves the
+  // Shield as the only living enemy -> its queued Protect is rewritten to
+  // ProtectAlone.
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  s.enemies.push_back(make_shield_gremlin(rng));  // slot 0
+  Enemy ally = make_minimal_state(0).enemies[0];
+  ally.hp = 4;                                    // dies to one Strike (6)
+  ally.max_hp = 4;
+  s.enemies.push_back(std::move(ally));           // slot 1
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Strike});
+  ASSERT_EQ(*s.enemies[0].last_move, MoveName::Protect);
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, /*target=*/1)));  // kill ally
+
+  EXPECT_LE(s.enemies[1].hp, 0);  // ally dead
+  EXPECT_EQ(*s.enemies[0].last_move, MoveName::ProtectAlone);  // intent rewritten
+  EXPECT_EQ(s.outcome, Outcome::InProgress);  // shield still alive
+}

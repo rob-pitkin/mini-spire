@@ -33,6 +33,7 @@ enum class EnemyKind {
   MadGremlin,
   SneakyGremlin,
   GremlinWizard,
+  ShieldGremlin,
 };
 
 enum class MoveName {
@@ -82,6 +83,10 @@ enum class MoveName {
   Charge1,  // = Charge (first cycle, turn 1)
   Charge2,  // = Charge (first cycle, turn 2)
   Charge3a, Charge3b, Charge3c,  // = Charge (later cycles, 3 turns)
+  // Shield Gremlin (ROB-77)
+  Protect,       // give a living ally 7 block (self if none)
+  ShieldBash,    // 6 damage
+  ProtectAlone,  // = Protect; enriched state after becoming the last enemy
 };
 
 // FUTURE: multi-hit moves (Lagavulin's attacks, Hexaghost) need a `hits`
@@ -105,6 +110,10 @@ struct Move {
   // (inherited at split time). The Large Slime's Split move. Distinct from the
   // ROB-62 on_death Split hook — this is a chosen move, not a passive trigger.
   bool splits = false;
+  // The move's `block` goes to a uniform-random living ALLY (a different enemy
+  // slot), not the acting enemy (ROB-77). The Shield Gremlin's Protect. If no
+  // ally is alive, the block falls back to the acting enemy itself.
+  bool blocks_ally = false;
 };
 
 struct MoveTransition {
@@ -198,6 +207,13 @@ struct Enemy {
   // (Guardian, Slime Boss) will generalize it later.
   int split_threshold_hp = 0;
   MoveName split_move = MoveName::Split;  // the move forced at the threshold
+
+  // "Became the last living enemy" intent rewrite (ROB-77). When this enemy
+  // becomes the only living enemy, its queued intent is overwritten to
+  // alone_move (an enriched pseudo-state), so a support unit switches to
+  // attacking once alone. Inert unless has_alone_move is set.
+  bool has_alone_move = false;
+  MoveName alone_move = MoveName::ProtectAlone;  // moot unless has_alone_move
 };
 
 MoveName select_next_move(Enemy& enemy, std::mt19937& rng);
@@ -221,5 +237,6 @@ Enemy make_fat_gremlin(std::mt19937& rng);
 Enemy make_mad_gremlin(std::mt19937& rng);
 Enemy make_sneaky_gremlin(std::mt19937& rng);
 Enemy make_gremlin_wizard(std::mt19937& rng);
+Enemy make_shield_gremlin(std::mt19937& rng);
 
 }  // namespace minispire
