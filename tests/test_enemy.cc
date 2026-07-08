@@ -42,11 +42,11 @@ TEST(Enemy, BellowAppliesStrengthToSelf) {
   std::mt19937 rng(0);
   Enemy e = make_jaw_worm(rng);
   const Move& bellow = e.moves.at(MoveName::Bellow);
-  ASSERT_EQ(bellow.applies.size(), 1u);
-  EXPECT_EQ(bellow.applies[0].effect, StatusEffect::Strength);
-  EXPECT_EQ(bellow.applies[0].amount, 3);
+  ASSERT_EQ(bellow.applies_powers.size(), 1u);
+  EXPECT_EQ(bellow.applies_powers[0].effect, Power::Strength);
+  EXPECT_EQ(bellow.applies_powers[0].amount, 3);
   // From the player's perspective, the buff lands on Target::Enemy.
-  EXPECT_EQ(bellow.applies[0].target, StatusApplication::Target::Enemy);
+  EXPECT_EQ(bellow.applies_powers[0].target, Target::Enemy);
 }
 
 TEST(Enemy, FirstTurnMoveIsChomp) {
@@ -188,10 +188,10 @@ TEST(Enemy, IncantationAppliesRitualThreeToSelf) {
   Enemy e = make_cultist(rng);
   const Move& inc = e.moves.at(MoveName::Incantation);
   EXPECT_EQ(inc.damage, 0);
-  ASSERT_EQ(inc.applies.size(), 1u);
-  EXPECT_EQ(inc.applies[0].effect, StatusEffect::Ritual);
-  EXPECT_EQ(inc.applies[0].amount, 3);
-  EXPECT_EQ(inc.applies[0].target, StatusApplication::Target::Enemy);
+  ASSERT_EQ(inc.applies_powers.size(), 1u);
+  EXPECT_EQ(inc.applies_powers[0].effect, Power::Ritual);
+  EXPECT_EQ(inc.applies_powers[0].amount, 3);
+  EXPECT_EQ(inc.applies_powers[0].target, Target::Enemy);
 }
 
 TEST(Enemy, DarkStrikeDealsSixBase) {
@@ -268,20 +268,20 @@ TEST(Enemy, RedLouseGrowGivesThreeStrengthToSelf) {
   std::mt19937 rng(0);
   Enemy e = make_red_louse(rng);
   const Move& grow = e.moves.at(MoveName::Grow);
-  ASSERT_EQ(grow.applies.size(), 1u);
-  EXPECT_EQ(grow.applies[0].effect, StatusEffect::Strength);
-  EXPECT_EQ(grow.applies[0].amount, 3);
-  EXPECT_EQ(grow.applies[0].target, StatusApplication::Target::Enemy);
+  ASSERT_EQ(grow.applies_powers.size(), 1u);
+  EXPECT_EQ(grow.applies_powers[0].effect, Power::Strength);
+  EXPECT_EQ(grow.applies_powers[0].amount, 3);
+  EXPECT_EQ(grow.applies_powers[0].target, Target::Enemy);
 }
 
 TEST(Enemy, GreenLouseSpitWebAppliesTwoWeakToPlayer) {
   std::mt19937 rng(0);
   Enemy e = make_green_louse(rng);
   const Move& spit = e.moves.at(MoveName::SpitWeb);
-  ASSERT_EQ(spit.applies.size(), 1u);
-  EXPECT_EQ(spit.applies[0].effect, StatusEffect::Weak);
-  EXPECT_EQ(spit.applies[0].amount, 2);
-  EXPECT_EQ(spit.applies[0].target, StatusApplication::Target::Character);
+  ASSERT_EQ(spit.applies_debuffs.size(), 1u);
+  EXPECT_EQ(spit.applies_debuffs[0].effect, Debuff::Weak);
+  EXPECT_EQ(spit.applies_debuffs[0].amount, 2);
+  EXPECT_EQ(spit.applies_debuffs[0].target, Target::Character);
 }
 
 TEST(Enemy, LouseFirstMoveIsBiteOrOther) {
@@ -337,8 +337,8 @@ TEST(Enemy, AcidSlimeMMoves) {
   std::mt19937 rng(0);
   Enemy e = make_acid_slime_m(rng);
   EXPECT_EQ(e.moves.at(MoveName::Tackle).damage, 10);
-  EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).effect, StatusEffect::Weak);
-  EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).amount, 1);
+  EXPECT_EQ(e.moves.at(MoveName::Lick).applies_debuffs.at(0).effect, Debuff::Weak);
+  EXPECT_EQ(e.moves.at(MoveName::Lick).applies_debuffs.at(0).amount, 1);
   const Move& spit = e.moves.at(MoveName::CorrosiveSpit);
   EXPECT_EQ(spit.damage, 7);
   ASSERT_EQ(spit.adds_to_discard.size(), 1u);
@@ -352,8 +352,8 @@ TEST(Enemy, SpikeSlimeMMoves) {
   EXPECT_EQ(flame.damage, 8);
   ASSERT_EQ(flame.adds_to_discard.size(), 1u);
   EXPECT_EQ(flame.adds_to_discard[0], CardId::Slimed);
-  EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).effect, StatusEffect::Frail);
-  EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).amount, 1);
+  EXPECT_EQ(e.moves.at(MoveName::Lick).applies_debuffs.at(0).effect, Debuff::Frail);
+  EXPECT_EQ(e.moves.at(MoveName::Lick).applies_debuffs.at(0).amount, 1);
 }
 
 TEST(Enemy, SpikeSlimeSAlwaysTackles) {
@@ -426,10 +426,10 @@ TEST(Enemy, FungiBeastMoves) {
   Enemy e = make_fungi_beast(rng);
   EXPECT_EQ(e.moves.at(MoveName::Bite).damage, 6);
   const Move& grow = e.moves.at(MoveName::Grow);
-  ASSERT_EQ(grow.applies.size(), 1u);
-  EXPECT_EQ(grow.applies[0].effect, StatusEffect::Strength);
-  EXPECT_EQ(grow.applies[0].amount, 3);
-  EXPECT_EQ(grow.applies[0].target, StatusApplication::Target::Enemy);
+  ASSERT_EQ(grow.applies_powers.size(), 1u);
+  EXPECT_EQ(grow.applies_powers[0].effect, Power::Strength);
+  EXPECT_EQ(grow.applies_powers[0].amount, 3);
+  EXPECT_EQ(grow.applies_powers[0].target, Target::Enemy);
 }
 
 TEST(Enemy, FungiBeastSporeCloudConfigured) {
@@ -438,8 +438,8 @@ TEST(Enemy, FungiBeastSporeCloudConfigured) {
   // Spore Cloud: OnDeath -> apply 2 Vulnerable to the player (ROB-65).
   const TriggeredEffect* spore = find_trigger(e, Trigger::OnDeath);
   ASSERT_NE(spore, nullptr);
-  EXPECT_EQ(spore->action, TriggeredAction::ApplyPlayerStatus);
-  EXPECT_EQ(spore->status, StatusEffect::Vulnerable);
+  EXPECT_EQ(spore->action, TriggeredAction::ApplyPlayerDebuff);
+  EXPECT_EQ(spore->debuff, Debuff::Vulnerable);
   EXPECT_EQ(spore->amount, 2);
 }
 
@@ -481,10 +481,10 @@ TEST(Enemy, BlueSlaverMoves) {
   EXPECT_EQ(e.moves.at(MoveName::Stab).damage, 12);
   const Move& rake = e.moves.at(MoveName::Rake);
   EXPECT_EQ(rake.damage, 7);
-  ASSERT_EQ(rake.applies.size(), 1u);
-  EXPECT_EQ(rake.applies[0].effect, StatusEffect::Weak);
-  EXPECT_EQ(rake.applies[0].amount, 1);
-  EXPECT_EQ(rake.applies[0].target, StatusApplication::Target::Character);
+  ASSERT_EQ(rake.applies_debuffs.size(), 1u);
+  EXPECT_EQ(rake.applies_debuffs[0].effect, Debuff::Weak);
+  EXPECT_EQ(rake.applies_debuffs[0].amount, 1);
+  EXPECT_EQ(rake.applies_debuffs[0].target, Target::Character);
 }
 
 TEST(Enemy, BlueSlaverNeverRepeatsMoveThreeTimes) {
@@ -555,8 +555,8 @@ TEST(Enemy, RedSlaverHpAndMoves) {
   EXPECT_GE(e.hp, 46); EXPECT_LE(e.hp, 50);
   EXPECT_EQ(e.moves.at(MoveName::Stab).damage, 13);
   EXPECT_EQ(e.moves.at(MoveName::Scrape).damage, 8);
-  EXPECT_EQ(e.moves.at(MoveName::Scrape).applies.at(0).effect, StatusEffect::Weak);
-  EXPECT_EQ(e.moves.at(MoveName::Entangle).applies.at(0).effect, StatusEffect::Entangle);
+  EXPECT_EQ(e.moves.at(MoveName::Scrape).applies_debuffs.at(0).effect, Debuff::Weak);
+  EXPECT_EQ(e.moves.at(MoveName::Entangle).applies_debuffs.at(0).effect, Debuff::Entangle);
   // Pseudo-states share data.
   EXPECT_EQ(e.moves.at(MoveName::OpenerStab).damage, 13);
   EXPECT_EQ(e.moves.at(MoveName::CycleStab).damage, 13);
@@ -602,8 +602,8 @@ TEST(Enemy, AcidSlimeLConfig) {
   Enemy e = make_acid_slime_l(rng);
   EXPECT_GE(e.hp, 65); EXPECT_LE(e.hp, 69);
   EXPECT_EQ(e.moves.at(MoveName::Tackle).damage, 16);
-  EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).amount, 2);  // 2 Weak
-  EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).effect, StatusEffect::Weak);
+  EXPECT_EQ(e.moves.at(MoveName::Lick).applies_debuffs.at(0).amount, 2);  // 2 Weak
+  EXPECT_EQ(e.moves.at(MoveName::Lick).applies_debuffs.at(0).effect, Debuff::Weak);
   const Move& spit = e.moves.at(MoveName::CorrosiveSpit);
   EXPECT_EQ(spit.damage, 11);
   EXPECT_EQ(spit.adds_to_discard.size(), 2u);  // 2 Slimed
@@ -626,8 +626,8 @@ TEST(Enemy, SpikeSlimeLConfig) {
   const Move& flame = e.moves.at(MoveName::FlameTackle);
   EXPECT_EQ(flame.damage, 16);
   EXPECT_EQ(flame.adds_to_discard.size(), 2u);  // 2 Slimed
-  EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).effect, StatusEffect::Frail);
-  EXPECT_EQ(e.moves.at(MoveName::Lick).applies.at(0).amount, 2);  // 2 Frail
+  EXPECT_EQ(e.moves.at(MoveName::Lick).applies_debuffs.at(0).effect, Debuff::Frail);
+  EXPECT_EQ(e.moves.at(MoveName::Lick).applies_debuffs.at(0).amount, 2);  // 2 Frail
   const TriggeredEffect* split = find_trigger(e, Trigger::HpAtOrBelow);
   ASSERT_NE(split, nullptr);
   EXPECT_EQ(split->param, e.max_hp / 2);
@@ -646,7 +646,7 @@ TEST(Enemy, FatGremlinSmashes) {
   Enemy e = make_fat_gremlin(rng);
   EXPECT_GE(e.hp, 13); EXPECT_LE(e.hp, 17);
   EXPECT_EQ(e.moves.at(MoveName::Smash).damage, 4);
-  EXPECT_EQ(e.moves.at(MoveName::Smash).applies.at(0).effect, StatusEffect::Weak);
+  EXPECT_EQ(e.moves.at(MoveName::Smash).applies_debuffs.at(0).effect, Debuff::Weak);
   EXPECT_EQ(*e.last_move, MoveName::Smash);
   for (int i = 0; i < 10; ++i) EXPECT_EQ(select_next_move(e, rng), MoveName::Smash);
 }
@@ -736,14 +736,14 @@ TEST(Enemy, LagavulinConfig) {
   Enemy e = make_lagavulin(rng);
   EXPECT_GE(e.hp, 109); EXPECT_LE(e.hp, 111);
   EXPECT_TRUE(e.is_asleep);
-  EXPECT_EQ(e.status_effects[StatusEffect::Metallicize], 8);
+  EXPECT_EQ(e.powers[Power::Metallicize], 8);
   EXPECT_EQ(*e.last_move, MoveName::Sleep1);  // starts asleep
   EXPECT_EQ(e.moves.at(MoveName::LagavulinAttack).damage, 18);
   // Siphon Soul: -1 Str AND -1 Dex to the player.
   const Move& siphon = e.moves.at(MoveName::SiphonSoul);
-  ASSERT_EQ(siphon.applies.size(), 2u);
-  EXPECT_EQ(siphon.applies[0].amount, -1);
-  EXPECT_EQ(siphon.applies[1].amount, -1);
+  ASSERT_EQ(siphon.applies_powers.size(), 2u);
+  EXPECT_EQ(siphon.applies_powers[0].amount, -1);
+  EXPECT_EQ(siphon.applies_powers[1].amount, -1);
   // Sleep3 wakes on resolve (self-wake).
   EXPECT_TRUE(e.moves.at(MoveName::Sleep3).wakes_on_resolve);
 }

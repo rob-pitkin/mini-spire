@@ -201,8 +201,8 @@ TEST(CombatEnv, IntentDamageReflectsEnemyStrength) {
     MoveName next = *e.last_move;
     const Move& m = e.moves.at(next);
     if (m.damage > 0) {
-      int expected = compute_attack_damage(
-          m.damage, e.status_effects, env.state().character.status_effects);
+      int expected = compute_attack_damage(m.damage, e.powers, e.debuffs,
+                                           env.state().character.debuffs);
       EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + kIntentOff + 1],
                       static_cast<float>(expected));
     }

@@ -50,20 +50,21 @@ struct CardData {
   int cost;
   int damage;
   int block;
-  std::vector<StatusApplication> applies;
+  std::vector<DebuffApplication> applies_debuffs;
+  std::vector<PowerApplication> applies_powers;
   bool exhaust = false;
   CardType type = CardType::Attack;
 };
 
 inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
-    {CardId::Strike,     {1, 6,  0, {}, false, CardType::Attack}},
-    {CardId::StrikePlus, {1, 9,  0, {}, false, CardType::Attack}},
-    {CardId::Defend,     {1, 0,  5, {}, false, CardType::Skill}},
-    {CardId::DefendPlus, {1, 0,  8, {}, false, CardType::Skill}},
-    {CardId::Bash,       {2, 8,  0, {StatusApplication{StatusEffect::Vulnerable, 2, StatusApplication::Target::Enemy}}, false, CardType::Attack}},
-    {CardId::BashPlus,   {2, 10, 0, {StatusApplication{StatusEffect::Vulnerable, 3, StatusApplication::Target::Enemy}}, false, CardType::Attack}},
+    {CardId::Strike,     {1, 6,  0, {}, {}, false, CardType::Attack}},
+    {CardId::StrikePlus, {1, 9,  0, {}, {}, false, CardType::Attack}},
+    {CardId::Defend,     {1, 0,  5, {}, {}, false, CardType::Skill}},
+    {CardId::DefendPlus, {1, 0,  8, {}, {}, false, CardType::Skill}},
+    {CardId::Bash,       {2, 8,  0, {{Debuff::Vulnerable, 2, Target::Enemy}}, {}, false, CardType::Attack}},
+    {CardId::BashPlus,   {2, 10, 0, {{Debuff::Vulnerable, 3, Target::Enemy}}, {}, false, CardType::Attack}},
     // Slimed: a status card (ROB-72). 1 energy, does nothing, Exhausts on play.
-    {CardId::Slimed,     {1, 0,  0, {}, /*exhaust=*/true, CardType::Status}},
+    {CardId::Slimed,     {1, 0,  0, {}, {}, /*exhaust=*/true, CardType::Status}},
 };
 
 // Whether a card acts on a chosen enemy (vs. the player / self). Derived, not a
@@ -79,8 +80,11 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
 // index. Revisit the masking/decoding fork then.
 inline bool card_targets_enemy(const CardData& data) {
   if (data.damage > 0) return true;
-  for (const StatusApplication& app : data.applies) {
-    if (app.target == StatusApplication::Target::Enemy) return true;
+  for (const DebuffApplication& app : data.applies_debuffs) {
+    if (app.target == Target::Enemy) return true;
+  }
+  for (const PowerApplication& app : data.applies_powers) {
+    if (app.target == Target::Enemy) return true;
   }
   return false;
 }

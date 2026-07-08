@@ -239,7 +239,8 @@ def test_card_data_strike():
     assert data.cost == 1
     assert data.damage == 6
     assert data.block == 0
-    assert len(data.applies) == 0
+    assert len(data.applies_debuffs) == 0
+    assert len(data.applies_powers) == 0
     assert data.exhaust is False
 
 
@@ -256,18 +257,18 @@ def test_card_data_bash_applies_vulnerable():
     data = core.card_data(core.CardId.Bash)
     assert data.cost == 2
     assert data.damage == 8
-    assert len(data.applies) == 1
-    app = data.applies[0]
-    assert app.effect == core.StatusEffect.Vulnerable
+    assert len(data.applies_debuffs) == 1
+    app = data.applies_debuffs[0]
+    assert app.effect == core.Debuff.Vulnerable
     assert app.amount == 2
-    assert app.target == core.StatusApplication.Target.Enemy
+    assert app.target == core.Target.Enemy
 
 
 def test_card_data_bashplus_stronger():
     core = minispire._core
     data = core.card_data(core.CardId.BashPlus)
     assert data.damage == 10
-    assert data.applies[0].amount == 3
+    assert data.applies_debuffs[0].amount == 3
 
 
 def test_card_data_covers_all_card_ids():

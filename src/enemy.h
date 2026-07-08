@@ -104,7 +104,8 @@ struct Move {
   MoveName name;
   int damage;
   int block;
-  std::vector<StatusApplication> applies;
+  std::vector<DebuffApplication> applies_debuffs;
+  std::vector<PowerApplication> applies_powers;
   // Status cards this move adds to the player's discard pile (ROB-72), e.g. a
   // slime's spit adding Slimed. Applied at end of the acting enemy's turn.
   // General (not Slimed-specific) so Dazed/Wound/Burn reuse it.
@@ -162,10 +163,10 @@ enum class Trigger {
 
 enum class TriggeredAction {
   RewriteIntent,      // set last_move = move (interrupt the queued intent)
-  GainStrength,       // status_effects[Strength] += amount
+  GainStrength,       // powers[Strength] += amount
   GainBlock,          // current_block += amount (once=true -> Curl Up)
-  ApplyPlayerStatus,  // apply `status` x amount to the player (may be negative)
-  RemoveSelfStatus,   // erase `status` from the acting enemy
+  ApplyPlayerDebuff,  // apply `debuff` x amount to the player
+  RemoveSelfPower,    // erase `power` from the acting enemy
   Wake,               // set is_asleep = false (Lagavulin OnWake)
 };
 
@@ -173,9 +174,10 @@ struct TriggeredEffect {
   Trigger trigger;
   TriggeredAction action;
   int param = 0;                   // HpAtOrBelow threshold (else unused)
-  int amount = 0;                  // Gain*/ApplyPlayerStatus magnitude (signed)
+  int amount = 0;                  // Gain*/ApplyPlayerDebuff magnitude (signed)
   MoveName move = MoveName::None;   // RewriteIntent target (else unused)
-  StatusEffect status = StatusEffect::Strength;  // ApplyPlayerStatus/RemoveSelfStatus
+  Debuff debuff = Debuff::None;    // ApplyPlayerDebuff effect (else unused)
+  Power power = Power::None;        // RemoveSelfPower effect (else unused)
   bool once = false;               // fire at most once, then latch off
   bool fired = false;              // runtime latch for `once`
   // Guard: fire only while the enemy is_asleep. Lagavulin's damage-wake uses
@@ -204,7 +206,8 @@ struct Enemy {
   int hp;
   int max_hp;
   int current_block;
-  std::unordered_map<StatusEffect, int> status_effects;
+  std::unordered_map<Debuff, int> debuffs;
+  std::unordered_map<Power, int> powers;
 
   std::unordered_map<MoveName, Move> moves;
   std::optional<MoveName> first_turn_move;

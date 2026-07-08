@@ -25,23 +25,29 @@ constexpr std::array<CardId, kNumCardTypes> kObsCardOrder = {
 static_assert(kObsCardOrder.size() == kNumCardTypes,
               "kObsCardOrder must list every card type");
 
-// StatusEffect ordering for the obs layout. Must list every StatusEffect and
-// match kNumStatusEffects (static_assert below).
-constexpr std::array<StatusEffect, kNumStatusEffects> kObsStatusOrder = {
-    StatusEffect::Vulnerable,
-    StatusEffect::Weak,
-    StatusEffect::Strength,
-    StatusEffect::Dexterity,
-    StatusEffect::Frail,
-    StatusEffect::Ritual,
-    StatusEffect::Entangle,
-    StatusEffect::Metallicize,
+// Per-entity status block = [debuffs then powers] (ROB-78). Each order array
+// must list every real value of its enum (excluding the None sentinel) and match
+// its count (static_asserts below).
+constexpr std::array<Debuff, kNumDebuffs> kObsDebuffOrder = {
+    Debuff::Vulnerable,
+    Debuff::Weak,
+    Debuff::Frail,
+    Debuff::Entangle,
 };
-static_assert(kObsStatusOrder.size() == kNumStatusEffects,
-              "kObsStatusOrder must list every status effect");
+static_assert(kObsDebuffOrder.size() == kNumDebuffs,
+              "kObsDebuffOrder must list every debuff");
+constexpr std::array<Power, kNumPowers> kObsPowerOrder = {
+    Power::Strength,
+    Power::Dexterity,
+    Power::Ritual,
+    Power::Metallicize,
+    Power::Enrage,
+};
+static_assert(kObsPowerOrder.size() == kNumPowers,
+              "kObsPowerOrder must list every power");
 
-float status_stacks(const std::unordered_map<StatusEffect, int>& effects,
-                    StatusEffect e) {
+template <typename Effect>
+float status_stacks(const std::unordered_map<Effect, int>& effects, Effect e) {
   auto it = effects.find(e);
   return it == effects.end() ? 0.0f : static_cast<float>(it->second);
 }
@@ -138,9 +144,12 @@ void CombatEnv::compute_obs() {
   o[3] = static_cast<float>(c.energy);
   o[4] = static_cast<float>(c.energy_per_turn);
 
-  // --- Player status (slots 5 .. 5+kNumStatusEffects) ---
-  for (std::size_t i = 0; i < kObsStatusOrder.size(); ++i) {
-    o[5 + i] = status_stacks(c.status_effects, kObsStatusOrder[i]);
+  // --- Player status = [debuffs then powers], slots 5 .. 5+kNumStatusEffects ---
+  for (std::size_t i = 0; i < kObsDebuffOrder.size(); ++i) {
+    o[5 + i] = status_stacks(c.debuffs, kObsDebuffOrder[i]);
+  }
+  for (std::size_t i = 0; i < kObsPowerOrder.size(); ++i) {
+    o[5 + kNumDebuffs + i] = status_stacks(c.powers, kObsPowerOrder[i]);
   }
 
   // --- Enemies: kMaxEnemies blocks of kEnemyObsStride floats each ---
@@ -159,8 +168,13 @@ void CombatEnv::compute_obs() {
     o[base + 0] = 1.0f;  // is_alive
     o[base + 1] = static_cast<float>(e.hp);
     o[base + 2] = static_cast<float>(e.current_block);
-    for (std::size_t i = 0; i < kObsStatusOrder.size(); ++i) {
-      o[base + kStatusOff + i] = status_stacks(e.status_effects, kObsStatusOrder[i]);
+    // Status = [debuffs then powers].
+    for (std::size_t i = 0; i < kObsDebuffOrder.size(); ++i) {
+      o[base + kStatusOff + i] = status_stacks(e.debuffs, kObsDebuffOrder[i]);
+    }
+    for (std::size_t i = 0; i < kObsPowerOrder.size(); ++i) {
+      o[base + kStatusOff + kNumDebuffs + i] =
+          status_stacks(e.powers, kObsPowerOrder[i]);
     }
     // Intent. last_move is primed at combat start and each enemy turn, but
     // guard defensively (a freshly-spawned split child may not be primed yet).
@@ -174,10 +188,12 @@ void CombatEnv::compute_obs() {
         // factored in) — matches what the TUI shows.
         o[base + kIntentOff + 1] = is_attacking
                           ? static_cast<float>(compute_attack_damage(
-                                m.damage, e.status_effects, c.status_effects))
+                                m.damage, e.powers, e.debuffs, c.debuffs))
                           : 0.0f;
         o[base + kIntentOff + 2] = m.block > 0 ? 1.0f : 0.0f;
-        o[base + kIntentOff + 3] = !m.applies.empty() ? 1.0f : 0.0f;
+        o[base + kIntentOff + 3] =
+            (!m.applies_debuffs.empty() || !m.applies_powers.empty()) ? 1.0f
+                                                                      : 0.0f;
       }
     }
   }

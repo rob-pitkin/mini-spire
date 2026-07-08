@@ -84,8 +84,8 @@ Enemy make_jaw_worm(std::mt19937& rng) {
       {MoveName::Chomp, {MoveName::Chomp, 11, 0, {}}},
       {MoveName::Thrash, {MoveName::Thrash, 7, 5, {}}},
       {MoveName::Bellow,
-       {MoveName::Bellow, 0, 6,
-        {{StatusEffect::Strength, 3, StatusApplication::Target::Enemy}}}},
+       {MoveName::Bellow, 0, 6, /*debuffs=*/{},
+        {{Power::Strength, 3, Target::Enemy}}}},
   };
 
   e.first_turn_move = MoveName::Chomp;
@@ -138,8 +138,8 @@ Enemy make_cultist(std::mt19937& rng) {
       // Strength at the start of each subsequent turn (ROB-73), so the first
       // Dark Strike (turn 2) already hits for 6 + 3 = 9.
       {MoveName::Incantation,
-       {MoveName::Incantation, 0, 0,
-        {{StatusEffect::Ritual, 3, StatusApplication::Target::Enemy}}}},
+       {MoveName::Incantation, 0, 0, /*debuffs=*/{},
+        {{Power::Ritual, 3, Target::Enemy}}}},
       {MoveName::DarkStrike, {MoveName::DarkStrike, 6, 0, {}}},
   };
 
@@ -237,15 +237,15 @@ Enemy make_louse(std::mt19937& rng, EnemyKind kind, int hp_lo, int hp_hi,
 
 Enemy make_red_louse(std::mt19937& rng) {
   // Grow: gain 3 Strength (self-buff via Target::Enemy).
-  Move grow{MoveName::Grow, 0, 0,
-            {{StatusEffect::Strength, 3, StatusApplication::Target::Enemy}}};
+  Move grow{MoveName::Grow, 0, 0, /*debuffs=*/{},
+            {{Power::Strength, 3, Target::Enemy}}};
   return make_louse(rng, EnemyKind::RedLouse, 10, 15, MoveName::Grow, grow);
 }
 
 Enemy make_green_louse(std::mt19937& rng) {
   // SpitWeb: apply 2 Weak to the player.
   Move spit{MoveName::SpitWeb, 0, 0,
-            {{StatusEffect::Weak, 2, StatusApplication::Target::Character}}};
+            {{Debuff::Weak, 2, Target::Character}}};
   return make_louse(rng, EnemyKind::GreenLouse, 11, 17, MoveName::SpitWeb, spit);
 }
 
@@ -279,7 +279,7 @@ Enemy make_acid_slime_s(std::mt19937& rng) {
       {MoveName::Tackle, {MoveName::Tackle, 3, 0, {}}},
       {MoveName::Lick,
        {MoveName::Lick, 0, 0,
-        {{StatusEffect::Weak, 1, StatusApplication::Target::Character}}}},
+        {{Debuff::Weak, 1, Target::Character}}}},
   };
 
   // Strict alternation: each move forces the other next.
@@ -315,9 +315,9 @@ Enemy make_acid_slime_m(std::mt19937& rng) {
       {MoveName::Tackle, {MoveName::Tackle, 10, 0, {}}},
       {MoveName::Lick,
        {MoveName::Lick, 0, 0,
-        {{StatusEffect::Weak, 1, StatusApplication::Target::Character}}}},
+        {{Debuff::Weak, 1, Target::Character}}}},
       {MoveName::CorrosiveSpit,
-       {MoveName::CorrosiveSpit, 7, 0, {}, {CardId::Slimed}}},
+       {MoveName::CorrosiveSpit, 7, 0, {}, {}, {CardId::Slimed}}},
   };
 
   // Renormalized distributions per (last, consecutive). Fractions written as
@@ -386,10 +386,10 @@ Enemy make_spike_slime_m(std::mt19937& rng) {
 
   e.moves = {
       {MoveName::FlameTackle,
-       {MoveName::FlameTackle, 8, 0, {}, {CardId::Slimed}}},
+       {MoveName::FlameTackle, 8, 0, {}, {}, {CardId::Slimed}}},
       {MoveName::Lick,
        {MoveName::Lick, 0, 0,
-        {{StatusEffect::Frail, 1, StatusApplication::Target::Character}}}},
+        {{Debuff::Frail, 1, Target::Character}}}},
   };
 
   const std::vector<MoveTransition> base{{MoveName::FlameTackle, 0.3f},
@@ -425,8 +425,8 @@ Enemy make_fungi_beast(std::mt19937& rng) {
   e.moves = {
       {MoveName::Bite, {MoveName::Bite, 6, 0, {}}},
       {MoveName::Grow,
-       {MoveName::Grow, 0, 0,
-        {{StatusEffect::Strength, 3, StatusApplication::Target::Enemy}}}},
+       {MoveName::Grow, 0, 0, /*debuffs=*/{},
+        {{Power::Strength, 3, Target::Enemy}}}},
   };
 
   const std::vector<MoveTransition> base{{MoveName::Bite, 0.6f},
@@ -440,9 +440,9 @@ Enemy make_fungi_beast(std::mt19937& rng) {
 
   // On-death: Spore Cloud applies 2 Vulnerable to the player (ROB-63 -> ROB-65).
   e.triggered_effects.push_back({.trigger = Trigger::OnDeath,
-                                 .action = TriggeredAction::ApplyPlayerStatus,
+                                 .action = TriggeredAction::ApplyPlayerDebuff,
                                  .amount = 2,
-                                 .status = StatusEffect::Vulnerable});
+                                 .debuff = Debuff::Vulnerable});
 
   // Turn 1: base 60/40 roll.
   e.first_turn_move = std::nullopt;
@@ -467,7 +467,7 @@ Enemy make_blue_slaver(std::mt19937& rng) {
       {MoveName::Stab, {MoveName::Stab, 12, 0, {}}},
       {MoveName::Rake,
        {MoveName::Rake, 7, 0,
-        {{StatusEffect::Weak, 1, StatusApplication::Target::Character}}}},
+        {{Debuff::Weak, 1, Target::Character}}}},
   };
 
   const std::vector<MoveTransition> base{{MoveName::Stab, 0.6f},
@@ -505,10 +505,10 @@ Enemy make_red_slaver(std::mt19937& rng) {
   // to the same Stab/Scrape data; only their transition role differs.
   const Move stab{MoveName::Stab, 13, 0, {}};
   const Move scrape{MoveName::Scrape, 8, 0,
-                    {{StatusEffect::Weak, 1, StatusApplication::Target::Character}}};
+                    {{Debuff::Weak, 1, Target::Character}}};
   const Move entangle{MoveName::Entangle, 0, 0,
-                      {{StatusEffect::Entangle, 1,
-                        StatusApplication::Target::Character}}};
+                      {{Debuff::Entangle, 1,
+                        Target::Character}}};
   e.moves = {
       {MoveName::Stab, stab},          {MoveName::Scrape, scrape},
       {MoveName::Entangle, entangle},  {MoveName::OpenerStab, stab},
@@ -609,9 +609,9 @@ Enemy make_acid_slime_l(std::mt19937& rng) {
       {MoveName::Tackle, {MoveName::Tackle, 16, 0, {}}},
       {MoveName::Lick,
        {MoveName::Lick, 0, 0,
-        {{StatusEffect::Weak, 2, StatusApplication::Target::Character}}}},
+        {{Debuff::Weak, 2, Target::Character}}}},
       {MoveName::CorrosiveSpit,
-       {MoveName::CorrosiveSpit, 11, 0, {}, {CardId::Slimed, CardId::Slimed}}},
+       {MoveName::CorrosiveSpit, 11, 0, {}, {}, {CardId::Slimed, CardId::Slimed}}},
   };
   // Split move: kills self, spawns the children (HP inherited at split time).
   Move split{MoveName::Split, 0, 0, {}};
@@ -661,10 +661,10 @@ Enemy make_spike_slime_l(std::mt19937& rng) {
 
   e.moves = {
       {MoveName::FlameTackle,
-       {MoveName::FlameTackle, 16, 0, {}, {CardId::Slimed, CardId::Slimed}}},
+       {MoveName::FlameTackle, 16, 0, {}, {}, {CardId::Slimed, CardId::Slimed}}},
       {MoveName::Lick,
        {MoveName::Lick, 0, 0,
-        {{StatusEffect::Frail, 2, StatusApplication::Target::Character}}}},
+        {{Debuff::Frail, 2, Target::Character}}}},
   };
   Move split{MoveName::Split, 0, 0, {}};
   split.splits = true;
@@ -723,7 +723,7 @@ Enemy make_simple_gremlin(std::mt19937& rng, EnemyKind kind, int hp_lo, int hp_h
 Enemy make_fat_gremlin(std::mt19937& rng) {
   // Fat Gremlin (HP 13-17): Smash (4 dmg + 1 Weak), always.
   Move smash{MoveName::Smash, 4, 0,
-             {{StatusEffect::Weak, 1, StatusApplication::Target::Character}}};
+             {{Debuff::Weak, 1, Target::Character}}};
   return make_simple_gremlin(rng, EnemyKind::FatGremlin, 13, 17, MoveName::Smash,
                              smash);
 }
@@ -850,7 +850,7 @@ Enemy make_lagavulin(std::mt19937& rng) {
   e.hp = e.max_hp;
   e.current_block = 0;
   e.is_asleep = true;
-  e.status_effects[StatusEffect::Metallicize] = 8;
+  e.powers[Power::Metallicize] = 8;
 
   const Move sleep{MoveName::Sleep, 0, 0, {}};
   // Sleep3 is the last asleep turn: it fires OnWake on resolve (self-wake path).
@@ -858,10 +858,12 @@ Enemy make_lagavulin(std::mt19937& rng) {
   sleep3.wakes_on_resolve = true;
   const Move stunned{MoveName::Stunned, 0, 0, {}};
   const Move attack{MoveName::LagavulinAttack, 18, 0, {}};
-  const Move siphon{
-      MoveName::SiphonSoul, 0, 0,
-      {{StatusEffect::Strength, -1, StatusApplication::Target::Character},
-       {StatusEffect::Dexterity, -1, StatusApplication::Target::Character}}};
+  const Move siphon{MoveName::SiphonSoul,
+                    0,
+                    0,
+                    /*debuffs=*/{},
+                    {{Power::Strength, -1, Target::Character},
+                     {Power::Dexterity, -1, Target::Character}}};
   e.moves = {
       {MoveName::Sleep, sleep},   {MoveName::Sleep1, sleep},
       {MoveName::Sleep2, sleep},  {MoveName::Sleep3, sleep3},
@@ -890,8 +892,8 @@ Enemy make_lagavulin(std::mt19937& rng) {
   e.triggered_effects.push_back(
       {.trigger = Trigger::OnWake, .action = TriggeredAction::Wake});
   e.triggered_effects.push_back({.trigger = Trigger::OnWake,
-                                 .action = TriggeredAction::RemoveSelfStatus,
-                                 .status = StatusEffect::Metallicize});
+                                 .action = TriggeredAction::RemoveSelfPower,
+                                 .power = Power::Metallicize});
   // Damage-wake: a hit while asleep (requires_asleep guard) interrupts the intent
   // to Stunned. once=true + the guard mean it fires only for the first wake,
   // never mid-cycle after is_asleep is cleared.

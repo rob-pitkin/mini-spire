@@ -21,9 +21,10 @@ constexpr int HAND_SIZE_LIMIT = 10;
 //
 // Exposed so the CLI / observation layer can display the *effective* enemy
 // attack damage (Strength-modified, etc.) rather than the raw move.damage.
-int compute_attack_damage(int base,
-                          const std::unordered_map<StatusEffect, int>& attacker,
-                          const std::unordered_map<StatusEffect, int>& defender);
+int compute_attack_damage(
+    int base, const std::unordered_map<Power, int>& attacker_powers,
+    const std::unordered_map<Debuff, int>& attacker_debuffs,
+    const std::unordered_map<Debuff, int>& defender_debuffs);
 
 // Constructs the v1 initial CombatState: seeded RNG, Ironclad starter
 // character (80 HP / 3 energy), one Jaw Worm with rolled HP, starter deck

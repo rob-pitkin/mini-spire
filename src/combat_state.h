@@ -31,7 +31,8 @@ struct Character {
   int energy;
   int energy_per_turn;
   int current_block;
-  std::unordered_map<StatusEffect, int> status_effects;
+  std::unordered_map<Debuff, int> debuffs;
+  std::unordered_map<Power, int> powers;
 };
 
 struct CombatState {

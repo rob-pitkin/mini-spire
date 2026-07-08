@@ -27,7 +27,8 @@ TEST(Card, StrikeStats) {
   EXPECT_EQ(d.cost, 1);
   EXPECT_EQ(d.damage, 6);
   EXPECT_EQ(d.block, 0);
-  EXPECT_TRUE(d.applies.empty());
+  EXPECT_TRUE(d.applies_debuffs.empty());
+  EXPECT_TRUE(d.applies_powers.empty());
   EXPECT_FALSE(d.exhaust);
 }
 
@@ -40,7 +41,8 @@ TEST(Card, DefendStats) {
   EXPECT_EQ(d.cost, 1);
   EXPECT_EQ(d.damage, 0);
   EXPECT_EQ(d.block, 5);
-  EXPECT_TRUE(d.applies.empty());
+  EXPECT_TRUE(d.applies_debuffs.empty());
+  EXPECT_TRUE(d.applies_powers.empty());
 }
 
 TEST(Card, DefendPlusBlock) {
@@ -52,17 +54,17 @@ TEST(Card, BashStatsAndVulnerable) {
   EXPECT_EQ(d.cost, 2);
   EXPECT_EQ(d.damage, 8);
   EXPECT_EQ(d.block, 0);
-  ASSERT_EQ(d.applies.size(), 1u);
-  EXPECT_EQ(d.applies[0].effect, StatusEffect::Vulnerable);
-  EXPECT_EQ(d.applies[0].amount, 2);
-  EXPECT_EQ(d.applies[0].target, StatusApplication::Target::Enemy);
+  ASSERT_EQ(d.applies_debuffs.size(), 1u);
+  EXPECT_EQ(d.applies_debuffs[0].effect, Debuff::Vulnerable);
+  EXPECT_EQ(d.applies_debuffs[0].amount, 2);
+  EXPECT_EQ(d.applies_debuffs[0].target, Target::Enemy);
 }
 
 TEST(Card, BashPlusDamageAndVulnerable) {
   const CardData& d = data_for(CardId::BashPlus);
   EXPECT_EQ(d.damage, 10);
-  ASSERT_EQ(d.applies.size(), 1u);
-  EXPECT_EQ(d.applies[0].effect, StatusEffect::Vulnerable);
-  EXPECT_EQ(d.applies[0].amount, 3);
-  EXPECT_EQ(d.applies[0].target, StatusApplication::Target::Enemy);
+  ASSERT_EQ(d.applies_debuffs.size(), 1u);
+  EXPECT_EQ(d.applies_debuffs[0].effect, Debuff::Vulnerable);
+  EXPECT_EQ(d.applies_debuffs[0].amount, 3);
+  EXPECT_EQ(d.applies_debuffs[0].target, Target::Enemy);
 }

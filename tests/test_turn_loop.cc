@@ -45,7 +45,7 @@ TEST(TurnLoop, StrikeDealsSixDamageToFreshEnemy) {
 TEST(TurnLoop, StrikeAgainstVulnerableEnemyDealsNine) {
   CombatState s = make_minimal_state(0);
   s.enemies[0].hp = 44;
-  s.enemies[0].status_effects[StatusEffect::Vulnerable] = 2;
+  s.enemies[0].debuffs[Debuff::Vulnerable] = 2;
   s.current_hand.push_back(Card{CardId::Strike});
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
@@ -56,7 +56,7 @@ TEST(TurnLoop, StrikeAgainstVulnerableEnemyDealsNine) {
 TEST(TurnLoop, StrikeWithStrengthDealsEight) {
   CombatState s = make_minimal_state(0);
   s.enemies[0].hp = 44;
-  s.character.status_effects[StatusEffect::Strength] = 2;
+  s.character.powers[Power::Strength] = 2;
   s.current_hand.push_back(Card{CardId::Strike});
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
@@ -66,7 +66,7 @@ TEST(TurnLoop, StrikeWithStrengthDealsEight) {
 TEST(TurnLoop, StrikeWithWeakDealsFour) {
   CombatState s = make_minimal_state(0);
   s.enemies[0].hp = 44;
-  s.character.status_effects[StatusEffect::Weak] = 1;
+  s.character.debuffs[Debuff::Weak] = 1;
   s.current_hand.push_back(Card{CardId::Strike});
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
@@ -77,8 +77,8 @@ TEST(TurnLoop, StrikeWithWeakDealsFour) {
 TEST(TurnLoop, StrikeWithWeakAndVulnerableDealsSix) {
   CombatState s = make_minimal_state(0);
   s.enemies[0].hp = 44;
-  s.character.status_effects[StatusEffect::Weak] = 1;
-  s.enemies[0].status_effects[StatusEffect::Vulnerable] = 2;
+  s.character.debuffs[Debuff::Weak] = 1;
+  s.enemies[0].debuffs[Debuff::Vulnerable] = 2;
   s.current_hand.push_back(Card{CardId::Strike});
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
@@ -89,8 +89,8 @@ TEST(TurnLoop, StrikeWithWeakAndVulnerableDealsSix) {
 TEST(TurnLoop, StrikeWithStrengthAndWeakDealsSix) {
   CombatState s = make_minimal_state(0);
   s.enemies[0].hp = 44;
-  s.character.status_effects[StatusEffect::Strength] = 2;
-  s.character.status_effects[StatusEffect::Weak] = 1;
+  s.character.powers[Power::Strength] = 2;
+  s.character.debuffs[Debuff::Weak] = 1;
   s.current_hand.push_back(Card{CardId::Strike});
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
@@ -105,7 +105,7 @@ TEST(TurnLoop, BashDealsEightAndAppliesVulnerable) {
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::Bash)));
   EXPECT_EQ(s.enemies[0].hp, 44 - 8);
-  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Vulnerable], 2);
+  EXPECT_EQ(s.enemies[0].debuffs[Debuff::Vulnerable], 2);
 }
 
 TEST(TurnLoop, BashThenStrikeSameTurnHitsVulnerable) {
@@ -135,7 +135,7 @@ TEST(TurnLoop, DefendGivesFiveBlock) {
 
 TEST(TurnLoop, DefendWithDexterityGivesSeven) {
   CombatState s = make_minimal_state(0);
-  s.character.status_effects[StatusEffect::Dexterity] = 2;
+  s.character.powers[Power::Dexterity] = 2;
   s.current_hand.push_back(Card{CardId::Defend});
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
@@ -144,7 +144,7 @@ TEST(TurnLoop, DefendWithDexterityGivesSeven) {
 
 TEST(TurnLoop, FrailReducesBlockByQuarterFloored) {
   CombatState s = make_minimal_state(0);
-  s.character.status_effects[StatusEffect::Frail] = 1;
+  s.character.debuffs[Debuff::Frail] = 1;
   s.current_hand.push_back(Card{CardId::Defend});  // 5 block
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
@@ -153,8 +153,8 @@ TEST(TurnLoop, FrailReducesBlockByQuarterFloored) {
 
 TEST(TurnLoop, FrailAppliesToDexterityAdjustedBlock) {
   CombatState s = make_minimal_state(0);
-  s.character.status_effects[StatusEffect::Dexterity] = 2;
-  s.character.status_effects[StatusEffect::Frail] = 1;
+  s.character.powers[Power::Dexterity] = 2;
+  s.character.debuffs[Debuff::Frail] = 1;
   s.current_hand.push_back(Card{CardId::Defend});  // 5 + Dex 2 = 7, then Frail
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
@@ -163,10 +163,10 @@ TEST(TurnLoop, FrailAppliesToDexterityAdjustedBlock) {
 
 TEST(TurnLoop, FrailTicksDownOnEndTurn) {
   CombatState s = make_minimal_state(0);
-  s.character.status_effects[StatusEffect::Frail] = 2;
+  s.character.debuffs[Debuff::Frail] = 2;
 
   ASSERT_TRUE(apply_action(s, end_turn_action()));
-  EXPECT_EQ(s.character.status_effects[StatusEffect::Frail], 1);  // ticked 2->1
+  EXPECT_EQ(s.character.debuffs[Debuff::Frail], 1);  // ticked 2->1
 }
 
 TEST(TurnLoop, BlockAbsorbsDamageOneForOne) {
@@ -219,56 +219,49 @@ TEST(TurnLoop, EnemyHpClampedAtZeroOnLethal) {
 // compute_attack_damage (public formula helper)
 // ============================================================================
 
+namespace {
+using PowerMap = std::unordered_map<Power, int>;
+using DebuffMap = std::unordered_map<Debuff, int>;
+const PowerMap kNoPowers;
+const DebuffMap kNoDebuffs;
+}  // namespace
+
 TEST(ComputeAttackDamage, BaseNoStatuses) {
-  std::unordered_map<StatusEffect, int> empty;
-  EXPECT_EQ(compute_attack_damage(6, empty, empty), 6);
+  EXPECT_EQ(compute_attack_damage(6, kNoPowers, kNoDebuffs, kNoDebuffs), 6);
 }
 
 TEST(ComputeAttackDamage, AttackerStrengthAdds) {
-  std::unordered_map<StatusEffect, int> attacker{{StatusEffect::Strength, 3}};
-  std::unordered_map<StatusEffect, int> empty;
-  EXPECT_EQ(compute_attack_damage(11, attacker, empty), 14);
+  PowerMap atk_pow{{Power::Strength, 3}};
+  EXPECT_EQ(compute_attack_damage(11, atk_pow, kNoDebuffs, kNoDebuffs), 14);
 }
 
 TEST(ComputeAttackDamage, AttackerWeakReduces) {
-  std::unordered_map<StatusEffect, int> attacker{{StatusEffect::Weak, 1}};
-  std::unordered_map<StatusEffect, int> empty;
-  EXPECT_EQ(compute_attack_damage(6, attacker, empty), 4);  // floor(6*0.75)
+  DebuffMap atk_deb{{Debuff::Weak, 1}};
+  EXPECT_EQ(compute_attack_damage(6, kNoPowers, atk_deb, kNoDebuffs), 4);
 }
 
 TEST(ComputeAttackDamage, DefenderVulnerableAmplifies) {
-  std::unordered_map<StatusEffect, int> empty;
-  std::unordered_map<StatusEffect, int> defender{{StatusEffect::Vulnerable, 1}};
-  EXPECT_EQ(compute_attack_damage(6, empty, defender), 9);  // floor(6*1.5)
+  DebuffMap def_deb{{Debuff::Vulnerable, 1}};
+  EXPECT_EQ(compute_attack_damage(6, kNoPowers, kNoDebuffs, def_deb), 9);
 }
 
 TEST(ComputeAttackDamage, SingleTruncationWhenMultipleModifiers) {
-  // Strength 3 + Weak + Vulnerable on a base-11 attack (Chomp with Strength):
-  // d = 11 + 3 = 14
-  // d *= 0.75 = 10.5
-  // d *= 1.5 = 15.75
-  // floor = 15
-  std::unordered_map<StatusEffect, int> attacker{
-      {StatusEffect::Strength, 3}, {StatusEffect::Weak, 1}};
-  std::unordered_map<StatusEffect, int> defender{
-      {StatusEffect::Vulnerable, 1}};
-  EXPECT_EQ(compute_attack_damage(11, attacker, defender), 15);
+  // Strength 3 (power) + Weak (debuff) + Vulnerable (defender debuff) on base 11:
+  // d = 11 + 3 = 14; *0.75 = 10.5; *1.5 = 15.75; floor = 15.
+  PowerMap atk_pow{{Power::Strength, 3}};
+  DebuffMap atk_deb{{Debuff::Weak, 1}};
+  DebuffMap def_deb{{Debuff::Vulnerable, 1}};
+  EXPECT_EQ(compute_attack_damage(11, atk_pow, atk_deb, def_deb), 15);
 }
 
 TEST(ComputeAttackDamage, NeverNegative) {
-  // Hypothetically negative damage via overlapping debuffs — formula must
-  // clamp at 0.
-  std::unordered_map<StatusEffect, int> empty;
-  EXPECT_EQ(compute_attack_damage(0, empty, empty), 0);
-  EXPECT_EQ(compute_attack_damage(-5, empty, empty), 0);
+  EXPECT_EQ(compute_attack_damage(0, kNoPowers, kNoDebuffs, kNoDebuffs), 0);
+  EXPECT_EQ(compute_attack_damage(-5, kNoPowers, kNoDebuffs, kNoDebuffs), 0);
 }
 
 TEST(ComputeAttackDamage, JawWormChompWithStrength) {
-  // Real-world case: Bellow gives Jaw Worm Strength 3; subsequent Chomp
-  // should display as 14 attack.
-  std::unordered_map<StatusEffect, int> attacker{{StatusEffect::Strength, 3}};
-  std::unordered_map<StatusEffect, int> empty;
-  EXPECT_EQ(compute_attack_damage(11, attacker, empty), 14);
+  PowerMap atk_pow{{Power::Strength, 3}};
+  EXPECT_EQ(compute_attack_damage(11, atk_pow, kNoDebuffs, kNoDebuffs), 14);
 }
 
 // ============================================================================
@@ -369,53 +362,53 @@ TEST(TurnLoop, EndTurnResetsEnemyBlockBeforeAttack) {
 
 TEST(TurnLoop, EndTurnTicksCharacterVulnerable) {
   CombatState s = make_minimal_state(0);
-  s.character.status_effects[StatusEffect::Vulnerable] = 2;
+  s.character.debuffs[Debuff::Vulnerable] = 2;
 
   ASSERT_TRUE(apply_action(s, end_turn_action()));
-  EXPECT_EQ(s.character.status_effects[StatusEffect::Vulnerable], 1);
+  EXPECT_EQ(s.character.debuffs[Debuff::Vulnerable], 1);
 }
 
 TEST(TurnLoop, EndTurnRemovesCharacterVulnerableAtZero) {
   CombatState s = make_minimal_state(0);
-  s.character.status_effects[StatusEffect::Vulnerable] = 1;
+  s.character.debuffs[Debuff::Vulnerable] = 1;
 
   ASSERT_TRUE(apply_action(s, end_turn_action()));
-  EXPECT_EQ(s.character.status_effects.find(StatusEffect::Vulnerable),
-            s.character.status_effects.end());
+  EXPECT_EQ(s.character.debuffs.find(Debuff::Vulnerable),
+            s.character.debuffs.end());
 }
 
 TEST(TurnLoop, EndTurnTicksCharacterWeak) {
   CombatState s = make_minimal_state(0);
-  s.character.status_effects[StatusEffect::Weak] = 2;
+  s.character.debuffs[Debuff::Weak] = 2;
 
   ASSERT_TRUE(apply_action(s, end_turn_action()));
-  EXPECT_EQ(s.character.status_effects[StatusEffect::Weak], 1);
+  EXPECT_EQ(s.character.debuffs[Debuff::Weak], 1);
 }
 
 TEST(TurnLoop, EndTurnTicksEnemyVulnerable) {
   CombatState s = make_minimal_state(0);
-  s.enemies[0].status_effects[StatusEffect::Vulnerable] = 2;
+  s.enemies[0].debuffs[Debuff::Vulnerable] = 2;
 
   ASSERT_TRUE(apply_action(s, end_turn_action()));
-  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Vulnerable], 1);
+  EXPECT_EQ(s.enemies[0].debuffs[Debuff::Vulnerable], 1);
 }
 
 TEST(TurnLoop, StrengthDoesNotTick) {
   CombatState s = make_minimal_state(0);
-  s.character.status_effects[StatusEffect::Strength] = 3;
-  s.enemies[0].status_effects[StatusEffect::Strength] = 3;
+  s.character.powers[Power::Strength] = 3;
+  s.enemies[0].powers[Power::Strength] = 3;
 
   ASSERT_TRUE(apply_action(s, end_turn_action()));
-  EXPECT_EQ(s.character.status_effects[StatusEffect::Strength], 3);
-  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Strength], 3);
+  EXPECT_EQ(s.character.powers[Power::Strength], 3);
+  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 3);
 }
 
 TEST(TurnLoop, DexterityDoesNotTick) {
   CombatState s = make_minimal_state(0);
-  s.character.status_effects[StatusEffect::Dexterity] = 2;
+  s.character.powers[Power::Dexterity] = 2;
 
   ASSERT_TRUE(apply_action(s, end_turn_action()));
-  EXPECT_EQ(s.character.status_effects[StatusEffect::Dexterity], 2);
+  EXPECT_EQ(s.character.powers[Power::Dexterity], 2);
 }
 
 // ============================================================================
@@ -630,7 +623,8 @@ TEST(StartV1Combat, CharacterStats) {
   EXPECT_EQ(s.character.max_hp, 80);
   EXPECT_EQ(s.character.energy, 3);
   EXPECT_EQ(s.character.energy_per_turn, 3);
-  EXPECT_TRUE(s.character.status_effects.empty());
+  EXPECT_TRUE(s.character.debuffs.empty());
+  EXPECT_TRUE(s.character.powers.empty());
 }
 
 TEST(StartV1Combat, OneJawWormEnemy) {
@@ -740,8 +734,8 @@ TEST(TurnLoop, BashAppliesVulnerableToTargetedEnemy) {
   ASSERT_TRUE(apply_action(s, card_action(CardId::Bash, /*target=*/1)));
 
   // Bash applies Vulnerable(2) to the targeted enemy only.
-  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Vulnerable], 0);
-  EXPECT_EQ(s.enemies[1].status_effects[StatusEffect::Vulnerable], 2);
+  EXPECT_EQ(s.enemies[0].debuffs[Debuff::Vulnerable], 0);
+  EXPECT_EQ(s.enemies[1].debuffs[Debuff::Vulnerable], 2);
 }
 
 TEST(TurnLoop, TargetingDeadEnemyIsMasked) {
@@ -817,14 +811,14 @@ TEST(TurnLoop, CurlUpDoesNotFireTwice) {
 TEST(TurnLoop, SporeCloudAppliesVulnerableToPlayerOnDeath) {
   Enemy e = make_test_enemy(5);  // dies to one Strike (6)
   e.triggered_effects.push_back({.trigger = Trigger::OnDeath,
-                                 .action = TriggeredAction::ApplyPlayerStatus,
+                                 .action = TriggeredAction::ApplyPlayerDebuff,
                                  .amount = 2,
-                                 .status = StatusEffect::Vulnerable});
+                                 .debuff = Debuff::Vulnerable});
   CombatState s = make_hook_test_state(std::move(e));
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
   EXPECT_EQ(s.outcome, Outcome::Won);  // only enemy died
-  EXPECT_EQ(s.character.status_effects[StatusEffect::Vulnerable], 2);
+  EXPECT_EQ(s.character.debuffs[Debuff::Vulnerable], 2);
 }
 
 // Build a test enemy whose queued move Splits into the given children (ROB-64).
@@ -934,7 +928,8 @@ TEST(TurnLoop, EnemyMoveAddsSlimedToDiscard) {
   spitter.max_hp = 30;
   spitter.current_block = 0;
   spitter.moves = {
-      {MoveName::Chomp, {MoveName::Chomp, 0, 0, {}, {CardId::Slimed, CardId::Slimed}}},
+      {MoveName::Chomp,
+       {MoveName::Chomp, 0, 0, {}, {}, {CardId::Slimed, CardId::Slimed}}},
   };
   spitter.first_turn_move = MoveName::Chomp;
   spitter.last_move = MoveName::Chomp;  // primed (the move that fires this turn)
@@ -980,7 +975,7 @@ Enemy make_ritual_dummy(int ritual_stacks) {
   e.last_move = MoveName::Chomp;
   e.transitions = {{{MoveName::Chomp, 1}, {{MoveName::Chomp, 1.0f}}}};
   e.consecutive_count = 1;
-  e.status_effects[StatusEffect::Ritual] = ritual_stacks;
+  e.powers[Power::Ritual] = ritual_stacks;
   return e;
 }
 }  // namespace
@@ -993,12 +988,12 @@ TEST(TurnLoop, RitualGainsStrengthAtStartOfEnemyTurnAndRamps) {
   // Going into the enemy turn the Cultist already has Ritual 3 -> start-of-turn
   // grants +3 Strength (this models a "subsequent" turn).
   ASSERT_TRUE(apply_action(s, end_turn_action()));
-  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Strength], 3);
+  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 3);
 
   // Next enemy turn: +3 more -> 6. Ritual itself stays at 3 (does not tick).
   ASSERT_TRUE(apply_action(s, end_turn_action()));
-  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Strength], 6);
-  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Ritual], 3);
+  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 6);
+  EXPECT_EQ(s.enemies[0].powers[Power::Ritual], 3);
 }
 
 TEST(TurnLoop, CultistIncantationThenRampingDarkStrike) {
@@ -1014,18 +1009,18 @@ TEST(TurnLoop, CultistIncantationThenRampingDarkStrike) {
   // — Ritual was set after the start-of-turn trigger.)
   ASSERT_TRUE(apply_action(s, end_turn_action()));
   EXPECT_EQ(s.character.hp, hp0);  // Incantation does no damage
-  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Ritual], 3);
-  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Strength], 0);
+  EXPECT_EQ(s.enemies[0].powers[Power::Ritual], 3);
+  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 0);
 
   // Turn 2: start-of-turn +3 Strength, then Dark Strike for 6 + 3 = 9.
   ASSERT_TRUE(apply_action(s, end_turn_action()));
   EXPECT_EQ(s.character.hp, hp0 - 9);
-  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Strength], 3);
+  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 3);
 
   // Turn 3: +3 more (Strength 6), Dark Strike for 6 + 6 = 12.
   ASSERT_TRUE(apply_action(s, end_turn_action()));
   EXPECT_EQ(s.character.hp, hp0 - 9 - 12);
-  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Strength], 6);
+  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 6);
 }
 
 TEST(TurnLoop, LouseCurlUpFiresOnPlayerStrike) {
@@ -1062,7 +1057,7 @@ TEST(TurnLoop, GreenLouseSpitWebWeakensPlayer) {
   s.enemies.push_back(std::move(louse));
 
   ASSERT_TRUE(apply_action(s, end_turn_action()));
-  EXPECT_EQ(s.character.status_effects[StatusEffect::Weak], 2);
+  EXPECT_EQ(s.character.debuffs[Debuff::Weak], 2);
 }
 
 // ============================================================================
@@ -1121,9 +1116,9 @@ TEST(TurnLoop, EscapeDoesNotTriggerOnDeathHook) {
   Enemy e = make_escaper();
   // Give it an OnDeath effect; escaping must NOT fire it (escape != death).
   e.triggered_effects.push_back({.trigger = Trigger::OnDeath,
-                                 .action = TriggeredAction::ApplyPlayerStatus,
+                                 .action = TriggeredAction::ApplyPlayerDebuff,
                                  .amount = 2,
-                                 .status = StatusEffect::Vulnerable});
+                                 .debuff = Debuff::Vulnerable});
   s.enemies.push_back(std::move(e));
 
   ASSERT_TRUE(apply_action(s, end_turn_action()));
@@ -1133,7 +1128,7 @@ TEST(TurnLoop, EscapeDoesNotTriggerOnDeathHook) {
   for (const auto& en : s.enemies) if (en.hp > 0) ++living;
   EXPECT_EQ(living, 0);
   EXPECT_EQ(s.outcome, Outcome::Won);
-  EXPECT_EQ(s.character.status_effects[StatusEffect::Vulnerable], 0);
+  EXPECT_EQ(s.character.debuffs[Debuff::Vulnerable], 0);
 }
 
 // ============================================================================
@@ -1172,7 +1167,7 @@ TEST(TurnLoop, SpikeSlimeMLickAppliesFrail) {
   s.enemies.push_back(std::move(slime));
 
   ASSERT_TRUE(apply_action(s, end_turn_action()));
-  EXPECT_EQ(s.character.status_effects[StatusEffect::Frail], 1);
+  EXPECT_EQ(s.character.debuffs[Debuff::Frail], 1);
 }
 
 TEST(TurnLoop, SpikeSlimeMFlameTackleDealsEightAndAddsSlimed) {
@@ -1215,7 +1210,7 @@ TEST(TurnLoop, FungiBeastSporeCloudVulnerableOnDeath) {
   ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
 
   EXPECT_EQ(s.outcome, Outcome::Won);
-  EXPECT_EQ(s.character.status_effects[StatusEffect::Vulnerable], 2);
+  EXPECT_EQ(s.character.debuffs[Debuff::Vulnerable], 2);
 }
 
 // ============================================================================
@@ -1235,7 +1230,7 @@ TEST(TurnLoop, BlueSlaverRakeDealsSevenAndWeakens) {
   ASSERT_TRUE(apply_action(s, end_turn_action()));
 
   EXPECT_EQ(s.character.hp, hp0 - 7);  // Rake deals 7
-  EXPECT_EQ(s.character.status_effects[StatusEffect::Weak], 1);
+  EXPECT_EQ(s.character.debuffs[Debuff::Weak], 1);
 }
 
 // ============================================================================
@@ -1245,7 +1240,7 @@ TEST(TurnLoop, BlueSlaverRakeDealsSevenAndWeakens) {
 TEST(TurnLoop, EntangleMasksAttackCardsButNotDefend) {
   CombatState s = make_minimal_state(0);
   s.character.energy = 3;
-  s.character.status_effects[StatusEffect::Entangle] = 1;
+  s.character.debuffs[Debuff::Entangle] = 1;
   s.current_hand.push_back(Card{CardId::Strike});  // attack
   s.current_hand.push_back(Card{CardId::Bash});    // attack
   s.current_hand.push_back(Card{CardId::Defend});  // not an attack
@@ -1262,7 +1257,7 @@ TEST(TurnLoop, EntangledAttackActionRejectedByApply) {
   // apply_action (no way to sneak an attack through).
   CombatState s = make_minimal_state(0);
   s.character.energy = 3;
-  s.character.status_effects[StatusEffect::Entangle] = 1;
+  s.character.debuffs[Debuff::Entangle] = 1;
   s.current_hand.push_back(Card{CardId::Strike});
 
   EXPECT_FALSE(apply_action(s, card_action(CardId::Strike, 0)));
@@ -1270,11 +1265,11 @@ TEST(TurnLoop, EntangledAttackActionRejectedByApply) {
 
 TEST(TurnLoop, EntangleTicksOffAfterOneTurn) {
   CombatState s = make_minimal_state(0);
-  s.character.status_effects[StatusEffect::Entangle] = 1;
+  s.character.debuffs[Debuff::Entangle] = 1;
 
   ASSERT_TRUE(apply_action(s, end_turn_action()));
   // Ticked 1 -> 0 -> removed. Attacks legal again next turn.
-  EXPECT_EQ(s.character.status_effects.count(StatusEffect::Entangle), 0u);
+  EXPECT_EQ(s.character.debuffs.count(Debuff::Entangle), 0u);
 }
 
 TEST(TurnLoop, EntangleDoesNotStack) {
@@ -1289,7 +1284,7 @@ TEST(TurnLoop, EntangleDoesNotStack) {
     e.max_hp = 30;
     e.current_block = 0;
     Move web{MoveName::Chomp, 0, 0,
-             {{StatusEffect::Entangle, 1, StatusApplication::Target::Character}}};
+             {{Debuff::Entangle, 1, Target::Character}}};
     e.moves = {{MoveName::Chomp, web}};
     e.first_turn_move = MoveName::Chomp;
     e.last_move = MoveName::Chomp;
@@ -1303,7 +1298,7 @@ TEST(TurnLoop, EntangleDoesNotStack) {
   ASSERT_TRUE(apply_action(s, end_turn_action()));
 
   // Both applied Entangle this turn; non-stacking -> exactly 1.
-  EXPECT_EQ(s.character.status_effects[StatusEffect::Entangle], 1);
+  EXPECT_EQ(s.character.debuffs[Debuff::Entangle], 1);
 }
 
 // ============================================================================
@@ -1340,7 +1335,7 @@ TEST(TurnLoop, RedSlaverEntangleBlocksPlayerAttacks) {
 
   ASSERT_TRUE(apply_action(s, end_turn_action()));  // enemy applies Entangle
 
-  EXPECT_EQ(s.character.status_effects[StatusEffect::Entangle], 1);
+  EXPECT_EQ(s.character.debuffs[Debuff::Entangle], 1);
   auto mask = valid_actions(s);
   EXPECT_FALSE(mask[card_action(CardId::Strike, 0)]);  // attack blocked
   EXPECT_TRUE(mask[card_action(CardId::Defend, 0)]);   // Defend still fine
@@ -1414,9 +1409,9 @@ TEST(TurnLoop, MadGremlinGainsStrengthWhenHit) {
 
   // Each Strike that deals damage grants +1 Strength (Angry, no latch).
   ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
-  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Strength], 1);
+  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 1);
   ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
-  EXPECT_EQ(s.enemies[0].status_effects[StatusEffect::Strength], 2);  // fires again
+  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 2);  // fires again
 }
 
 TEST(TurnLoop, GremlinWizardUltimateBlastDeals25) {
@@ -1522,7 +1517,7 @@ TEST(TurnLoop, LagavulinSelfWakeKeepsBlockTurn3ThenNone) {
   // Turn 3 still got its 8 block (OnWake fires AFTER the grant).
   EXPECT_EQ(s.enemies[0].current_block, 8);
   EXPECT_FALSE(s.enemies[0].is_asleep);  // woke
-  EXPECT_EQ(s.enemies[0].status_effects.count(StatusEffect::Metallicize), 0u);
+  EXPECT_EQ(s.enemies[0].powers.count(Power::Metallicize), 0u);
   EXPECT_EQ(*s.enemies[0].last_move, MoveName::LagavulinAttack1);  // unstunned
   // Turn 4: attacks for 18, no more Metallicize block.
   apply_action(s, end_turn_action());
@@ -1546,7 +1541,7 @@ TEST(TurnLoop, LagavulinDamageWakeStunsAndDropsBlock) {
   apply_action(s, card_action(CardId::Strike, 0));  // HP damage -> wake
 
   EXPECT_FALSE(s.enemies[0].is_asleep);
-  EXPECT_EQ(s.enemies[0].status_effects.count(StatusEffect::Metallicize), 0u);
+  EXPECT_EQ(s.enemies[0].powers.count(Power::Metallicize), 0u);
   EXPECT_EQ(*s.enemies[0].last_move, MoveName::Stunned);  // damage-wake stuns
 
   // Stun turn: no Metallicize block, does nothing.
@@ -1577,13 +1572,13 @@ TEST(TurnLoop, SiphonSoulNegativeStrengthFloorsAttackDamage) {
   // Force Siphon Soul as the intent, applied twice, then check a follow-up
   // attack's damage is floored (Str goes negative but damage never < 0).
   s.enemies[0].is_asleep = false;
-  s.enemies[0].status_effects.erase(StatusEffect::Metallicize);
+  s.enemies[0].powers.erase(Power::Metallicize);
   s.enemies[0].last_move = MoveName::SiphonSoul;
   s.enemies[0].consecutive_count = 1;
 
   ASSERT_TRUE(apply_action(s, end_turn_action()));  // Siphon: player -1 Str/-1 Dex
-  EXPECT_EQ(s.character.status_effects[StatusEffect::Strength], -1);
-  EXPECT_EQ(s.character.status_effects[StatusEffect::Dexterity], -1);
+  EXPECT_EQ(s.character.powers[Power::Strength], -1);
+  EXPECT_EQ(s.character.powers[Power::Dexterity], -1);
 
   // A 0-base "attack" from the player with -1 Str would floor at 0; verify the
   // damage floor via compute path: player Strike (6) + (-1 Str) = 5, not < 0.
@@ -1597,7 +1592,7 @@ TEST(TurnLoop, SiphonSoulNegativeStrengthFloorsAttackDamage) {
 TEST(TurnLoop, NegativeStrengthFloorsDamageAtZero) {
   // Directly verify the floor: a big negative Strength can't make damage negative.
   CombatState s = lagavulin_state();
-  s.character.status_effects[StatusEffect::Strength] = -100;
+  s.character.powers[Power::Strength] = -100;
   s.character.energy = 3;
   s.current_hand.push_back(Card{CardId::Strike});  // 6 base
   int hp_before = s.enemies[0].hp;

@@ -81,31 +81,37 @@ PYBIND11_MODULE(_core, m) {
       .def_readonly("discard", &StatePiles::discard)
       .def_readonly("exhaust", &StatePiles::exhaust);
 
-  // Card data model (ROB-49) — lets the TUI render what each card does.
-  py::enum_<StatusEffect>(m, "StatusEffect")
-      .value("Vulnerable", StatusEffect::Vulnerable)
-      .value("Weak", StatusEffect::Weak)
-      .value("Strength", StatusEffect::Strength)
-      .value("Dexterity", StatusEffect::Dexterity)
-      .value("Frail", StatusEffect::Frail)
-      .value("Ritual", StatusEffect::Ritual)
-      .value("Entangle", StatusEffect::Entangle)
-      .value("Metallicize", StatusEffect::Metallicize);
+  // Card data model (ROB-49 -> ROB-78) — lets the TUI render what each card does.
+  py::enum_<Debuff>(m, "Debuff")
+      .value("Vulnerable", Debuff::Vulnerable)
+      .value("Weak", Debuff::Weak)
+      .value("Frail", Debuff::Frail)
+      .value("Entangle", Debuff::Entangle);
+  py::enum_<Power>(m, "Power")
+      .value("Strength", Power::Strength)
+      .value("Dexterity", Power::Dexterity)
+      .value("Ritual", Power::Ritual)
+      .value("Metallicize", Power::Metallicize)
+      .value("Enrage", Power::Enrage);
 
-  py::class_<StatusApplication> status_application(m, "StatusApplication");
-  py::enum_<StatusApplication::Target>(status_application, "Target")
-      .value("Character", StatusApplication::Target::Character)
-      .value("Enemy", StatusApplication::Target::Enemy);
-  status_application
-      .def_readonly("effect", &StatusApplication::effect)
-      .def_readonly("amount", &StatusApplication::amount)
-      .def_readonly("target", &StatusApplication::target);
+  py::enum_<Target>(m, "Target")
+      .value("Character", Target::Character)
+      .value("Enemy", Target::Enemy);
+  py::class_<DebuffApplication>(m, "DebuffApplication")
+      .def_readonly("effect", &DebuffApplication::effect)
+      .def_readonly("amount", &DebuffApplication::amount)
+      .def_readonly("target", &DebuffApplication::target);
+  py::class_<PowerApplication>(m, "PowerApplication")
+      .def_readonly("effect", &PowerApplication::effect)
+      .def_readonly("amount", &PowerApplication::amount)
+      .def_readonly("target", &PowerApplication::target);
 
   py::class_<CardData>(m, "CardData")
       .def_readonly("cost", &CardData::cost)
       .def_readonly("damage", &CardData::damage)
       .def_readonly("block", &CardData::block)
-      .def_readonly("applies", &CardData::applies)
+      .def_readonly("applies_debuffs", &CardData::applies_debuffs)
+      .def_readonly("applies_powers", &CardData::applies_powers)
       .def_readonly("exhaust", &CardData::exhaust);
 
   // Look up the static card definition for a CardId. Backed by CARD_DATABASE.
@@ -139,6 +145,8 @@ PYBIND11_MODULE(_core, m) {
       .def_readonly_static("PLAYER_OBS_SIZE", &CombatEnv::kPlayerObsSize)
       .def_readonly_static("ENEMY_OBS_STRIDE", &CombatEnv::kEnemyObsStride)
       .def_readonly_static("NUM_STATUS_EFFECTS", &kNumStatusEffects)
+      .def_readonly_static("NUM_DEBUFFS", &kNumDebuffs)
+      .def_readonly_static("NUM_POWERS", &kNumPowers)
       .def_readonly_static("NUM_CARD_TYPES", &kNumCardTypes)
       .def(
           "reset",

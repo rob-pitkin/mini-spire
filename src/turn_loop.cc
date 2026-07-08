@@ -14,8 +14,9 @@ namespace minispire {
 
 namespace {
 
-// Helper: look up a stack count in a status map, returning 0 if absent.
-int get_status(const std::unordered_map<StatusEffect, int>& m, StatusEffect e) {
+// Helper: look up a stack count in a debuff/power map, returning 0 if absent.
+template <typename Effect>
+int get_status(const std::unordered_map<Effect, int>& m, Effect e) {
   auto it = m.find(e);
   return it == m.end() ? 0 : it->second;
 }
@@ -33,50 +34,56 @@ void apply_damage_to_hp_block(int& hp, int& block, int amount) {
   if (hp < 0) hp = 0;
 }
 
-// Apply a status to either the character or a specific enemy slot. `enemy_target`
-// is the decoded target slot (ROB-60) for Target::Enemy applications; ignored for
-// Target::Character. AoE status (apply to all enemies) is not yet modeled —
-// revisit when AoE cards land.
-// Non-stacking statuses are SET to the applied amount rather than accumulated —
-// applying twice doesn't build up. Entangle is 1-turn and boolean (ROB-75);
-// stacking it to 2 would wrongly make it last two turns.
-bool is_non_stacking(StatusEffect e) { return e == StatusEffect::Entangle; }
-
-void apply_one_status(std::unordered_map<StatusEffect, int>& effects,
-                      const StatusApplication& app) {
-  if (is_non_stacking(app.effect)) {
-    effects[app.effect] = app.amount;
-  } else {
-    effects[app.effect] += app.amount;
-  }
-}
-
-void apply_status(CombatState& state, const StatusApplication& app,
-                  int enemy_target) {
-  if (app.target == StatusApplication::Target::Character) {
-    apply_one_status(state.character.status_effects, app);
-    return;
-  }
+// Resolve a Target to the map to write into. `enemy_target` is the decoded enemy
+// slot (ROB-60); ignored for Target::Character. Returns nullptr if the target
+// slot is out of range (defensive). AoE (apply to all enemies) is not yet
+// modeled — revisit when AoE cards land.
+std::unordered_map<Debuff, int>* debuff_map(CombatState& state, Target target,
+                                            int enemy_target) {
+  if (target == Target::Character) return &state.character.debuffs;
   if (enemy_target >= 0 && enemy_target < static_cast<int>(state.enemies.size())) {
-    apply_one_status(state.enemies[enemy_target].status_effects, app);
+    return &state.enemies[enemy_target].debuffs;
+  }
+  return nullptr;
+}
+std::unordered_map<Power, int>* power_map(CombatState& state, Target target,
+                                          int enemy_target) {
+  if (target == Target::Character) return &state.character.powers;
+  if (enemy_target >= 0 && enemy_target < static_cast<int>(state.enemies.size())) {
+    return &state.enemies[enemy_target].powers;
+  }
+  return nullptr;
+}
+
+// Entangle is non-stacking: SET to the applied amount, not accumulated. It's
+// 1-turn and boolean (ROB-75); stacking to 2 would wrongly last two turns.
+void apply_debuff(CombatState& state, const DebuffApplication& app,
+                  int enemy_target) {
+  auto* m = debuff_map(state, app.target, enemy_target);
+  if (!m) return;
+  if (app.effect == Debuff::Entangle) {
+    (*m)[app.effect] = app.amount;
+  } else {
+    (*m)[app.effect] += app.amount;
   }
 }
 
-// Decrement Vulnerable/Weak by 1; remove if at 0. Strength/Dexterity persist.
-void tick_status_effects(std::unordered_map<StatusEffect, int>& effects) {
-  for (auto it = effects.begin(); it != effects.end();) {
-    bool decrements = (it->first == StatusEffect::Vulnerable ||
-                       it->first == StatusEffect::Weak ||
-                       it->first == StatusEffect::Frail ||
-                       it->first == StatusEffect::Entangle);
-    if (decrements) {
-      it->second -= 1;
-      if (it->second <= 0) {
-        it = effects.erase(it);
-        continue;
-      }
+void apply_power(CombatState& state, const PowerApplication& app,
+                 int enemy_target) {
+  auto* m = power_map(state, app.target, enemy_target);
+  if (m) (*m)[app.effect] += app.amount;
+}
+
+// Debuffs decrement by 1 at end of the bearer's turn; remove at 0. Powers never
+// tick — decrement-ness is now the TYPE, so no per-effect denylist.
+void tick_debuffs(std::unordered_map<Debuff, int>& debuffs) {
+  for (auto it = debuffs.begin(); it != debuffs.end();) {
+    it->second -= 1;
+    if (it->second <= 0) {
+      it = debuffs.erase(it);
+    } else {
+      ++it;
     }
-    ++it;
   }
 }
 
@@ -163,16 +170,16 @@ void apply_triggered_action(CombatState& state, Enemy& enemy,
       if (enemy.hp > 0) enemy.last_move = fx.move;
       break;
     case TriggeredAction::GainStrength:
-      enemy.status_effects[StatusEffect::Strength] += fx.amount;
+      enemy.powers[Power::Strength] += fx.amount;
       break;
     case TriggeredAction::GainBlock:
       enemy.current_block += fx.amount;
       break;
-    case TriggeredAction::ApplyPlayerStatus:
-      state.character.status_effects[fx.status] += fx.amount;
+    case TriggeredAction::ApplyPlayerDebuff:
+      state.character.debuffs[fx.debuff] += fx.amount;
       break;
-    case TriggeredAction::RemoveSelfStatus:
-      enemy.status_effects.erase(fx.status);
+    case TriggeredAction::RemoveSelfPower:
+      enemy.powers.erase(fx.power);
       break;
     case TriggeredAction::Wake:
       enemy.is_asleep = false;
@@ -247,8 +254,8 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
     Enemy& enemy = state.enemies[target];
     if (data.damage > 0) {
       int hp_before = enemy.hp;
-      int dmg = compute_attack_damage(
-          data.damage, state.character.status_effects, enemy.status_effects);
+      int dmg = compute_attack_damage(data.damage, state.character.powers,
+                                      state.character.debuffs, enemy.debuffs);
       apply_damage_to_hp_block(enemy.hp, enemy.current_block, dmg);
       if (enemy.hp < hp_before) {
         fire_on_damaged(state, target);  // Curl Up / Angry / wake / split interrupt
@@ -262,19 +269,17 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   // 3. Apply block (Dexterity adds, then Frail reduces 25%, floored — StS order).
   if (data.block > 0) {
     int block_gained =
-        data.block + get_status(state.character.status_effects,
-                                StatusEffect::Dexterity);
-    if (get_status(state.character.status_effects, StatusEffect::Frail) > 0) {
+        data.block + get_status(state.character.powers, Power::Dexterity);
+    if (get_status(state.character.debuffs, Debuff::Frail) > 0) {
       block_gained =
           static_cast<int>(std::floor(static_cast<float>(block_gained) * 0.75f));
     }
     if (block_gained > 0) state.character.current_block += block_gained;
   }
 
-  // 4. Apply status effects to the chosen target (enemy-targeted) or self.
-  for (const auto& app : data.applies) {
-    apply_status(state, app, target);
-  }
+  // 4. Apply debuffs/powers to the chosen target (enemy-targeted) or self.
+  for (const auto& app : data.applies_debuffs) apply_debuff(state, app, target);
+  for (const auto& app : data.applies_powers) apply_power(state, app, target);
 
   // 5. Move card from hand to discard or exhaust
   int idx = find_first_in_hand(state.current_hand, card_id);
@@ -343,8 +348,8 @@ void apply_move_to_state(CombatState& state, const Move& move, int actor_slot) {
   Enemy& enemy = state.enemies[actor_slot];
 
   if (move.damage > 0) {
-    int dmg = compute_attack_damage(move.damage, enemy.status_effects,
-                                    state.character.status_effects);
+    int dmg = compute_attack_damage(move.damage, enemy.powers, enemy.debuffs,
+                                    state.character.debuffs);
     apply_damage_to_hp_block(state.character.hp, state.character.current_block,
                              dmg);
   }
@@ -361,8 +366,11 @@ void apply_move_to_state(CombatState& state, const Move& move, int actor_slot) {
   // STS limitation: multi-hit attacks (Twin Strike, Pommel Strike) deal Strength
   // bonus per-hit. Our Move model is one hit per cast; multi-hit needs a `hits`
   // field on Move.
-  for (const auto& app : move.applies) {
-    apply_status(state, app, /*enemy_target=*/actor_slot);
+  for (const auto& app : move.applies_debuffs) {
+    apply_debuff(state, app, /*enemy_target=*/actor_slot);
+  }
+  for (const auto& app : move.applies_powers) {
+    apply_power(state, app, /*enemy_target=*/actor_slot);
   }
   // Status cards the move adds to the player's discard (ROB-72), e.g. a slime
   // spit adding Slimed. Resolves with the move (end of this enemy's action).
@@ -411,8 +419,8 @@ void handle_end_turn(CombatState& state) {
     state.discard_pile.push_back(c);
   }
   state.current_hand.clear();
-  // 1b. Tick character statuses
-  tick_status_effects(state.character.status_effects);
+  // 1b. Tick character debuffs (powers never tick)
+  tick_debuffs(state.character.debuffs);
   // 1c. Discard leftover energy
   state.character.energy = 0;
 
@@ -446,16 +454,14 @@ void handle_end_turn(CombatState& state) {
     // (Cultist). It does NOT tick down. Because Ritual is applied mid-turn when
     // Incantation resolves (after this trigger point), it first fires the turn
     // *after* it's gained — matching StS (ROB-73).
-    int ritual = get_status(state.enemies[slot].status_effects,
-                            StatusEffect::Ritual);
+    int ritual = get_status(state.enemies[slot].powers, Power::Ritual);
     if (ritual > 0) {
-      state.enemies[slot].status_effects[StatusEffect::Strength] += ritual;
+      state.enemies[slot].powers[Power::Strength] += ritual;
     }
     // Metallicize: gain block = stacks at the start of the turn (ROB-65,
     // Lagavulin asleep). Runs AFTER the phase-start block reset, so an asleep
     // enemy shows exactly its Metallicize amount each turn (no accumulation).
-    int metallicize = get_status(state.enemies[slot].status_effects,
-                                 StatusEffect::Metallicize);
+    int metallicize = get_status(state.enemies[slot].powers, Power::Metallicize);
     if (metallicize > 0) {
       state.enemies[slot].current_block += metallicize;
     }
@@ -481,8 +487,8 @@ void handle_end_turn(CombatState& state) {
     // the move instead. Also skip if the actor died some other way (hp <= 0).
     if (move.escapes || move.splits || state.enemies[slot].hp <= 0) continue;
 
-    // 2d. Tick this enemy's statuses.
-    tick_status_effects(state.enemies[slot].status_effects);
+    // 2d. Tick this enemy's debuffs (powers never tick).
+    tick_debuffs(state.enemies[slot].debuffs);
 
     // 2e. Advance this enemy's Markov chain to set its next intent.
     select_next_move(state.enemies[slot], state.rng);
@@ -505,14 +511,15 @@ void handle_end_turn(CombatState& state) {
 
 }  // namespace
 
-int compute_attack_damage(int base,
-                          const std::unordered_map<StatusEffect, int>& attacker,
-                          const std::unordered_map<StatusEffect, int>& defender) {
+int compute_attack_damage(
+    int base, const std::unordered_map<Power, int>& attacker_powers,
+    const std::unordered_map<Debuff, int>& attacker_debuffs,
+    const std::unordered_map<Debuff, int>& defender_debuffs) {
   // Float-internal, truncated once at the end (per the STS wiki rounding rule).
   float d = static_cast<float>(base) +
-            static_cast<float>(get_status(attacker, StatusEffect::Strength));
-  if (get_status(attacker, StatusEffect::Weak) > 0) d *= 0.75f;
-  if (get_status(defender, StatusEffect::Vulnerable) > 0) d *= 1.5f;
+            static_cast<float>(get_status(attacker_powers, Power::Strength));
+  if (get_status(attacker_debuffs, Debuff::Weak) > 0) d *= 0.75f;
+  if (get_status(defender_debuffs, Debuff::Vulnerable) > 0) d *= 1.5f;
   int result = static_cast<int>(std::floor(d));
   return result < 0 ? 0 : result;
 }
@@ -576,7 +583,7 @@ std::vector<bool> valid_actions(const CombatState& state) {
 
   // Entangle (ROB-75): while entangled, the player can't play attack cards.
   const bool entangled =
-      get_status(state.character.status_effects, StatusEffect::Entangle) > 0;
+      get_status(state.character.debuffs, Debuff::Entangle) > 0;
 
   for (int action = 0; action < num_actions - 1; ++action) {
     const DecodedAction d = decode_action(action);
