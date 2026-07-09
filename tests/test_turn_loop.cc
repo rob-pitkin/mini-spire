@@ -1599,3 +1599,53 @@ TEST(TurnLoop, NegativeStrengthFloorsDamageAtZero) {
   ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
   EXPECT_EQ(s.enemies[0].hp, hp_before);  // 6 - 100 floored to 0 damage
 }
+
+// ============================================================================
+// Gremlin Nob Enrage — full-fight behavior (ROB-65)
+// ============================================================================
+
+static CombatState gremlin_nob_state() {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  s.enemies.push_back(make_gremlin_nob(rng));
+  s.character.hp = 200;  // survive its attacks
+  s.character.energy = 3;
+  return s;
+}
+
+TEST(TurnLoop, EnrageGrantsNoStrengthBeforeBellow) {
+  // Turn 1 the Nob hasn't Belowed yet (Enrage = 0), so a Skill grants nothing.
+  CombatState s = gremlin_nob_state();
+  s.current_hand.push_back(Card{CardId::Defend});  // a Skill
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend, 0)));
+  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 0);  // Enrage 0 -> +0
+}
+
+TEST(TurnLoop, EnrageGrantsStrengthPerSkillAfterBellow) {
+  CombatState s = gremlin_nob_state();
+  // Fast-forward past Bellow: end turn so the Nob Bellows (gains Enrage 2).
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  ASSERT_EQ(s.enemies[0].powers[Power::Enrage], 2);
+
+  // Now each Skill played grants +2 Strength (= Enrage stacks).
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Defend});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend, 0)));
+  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 2);
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend, 0)));
+  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 4);  // fires again
+}
+
+TEST(TurnLoop, EnrageDoesNotFireOnAttackCards) {
+  CombatState s = gremlin_nob_state();
+  ASSERT_TRUE(apply_action(s, end_turn_action()));  // Bellow -> Enrage 2
+  ASSERT_EQ(s.enemies[0].powers[Power::Enrage], 2);
+
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Strike});  // an Attack, not a Skill
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 0);  // no Enrage from an attack
+}

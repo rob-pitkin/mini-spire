@@ -172,6 +172,11 @@ void apply_triggered_action(CombatState& state, Enemy& enemy,
     case TriggeredAction::GainStrength:
       enemy.powers[Power::Strength] += fx.amount;
       break;
+    case TriggeredAction::GainStrengthFromPower:
+      // Gain Strength = the enemy's stacks of fx.power (Gremlin Nob Enrage,
+      // mirroring how start-of-turn Ritual grants Strength = Ritual stacks).
+      enemy.powers[Power::Strength] += get_status(enemy.powers, fx.power);
+      break;
     case TriggeredAction::GainBlock:
       enemy.current_block += fx.amount;
       break;

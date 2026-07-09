@@ -760,3 +760,45 @@ TEST(Enemy, LagavulinSelfWakeCountdownThenAttackCycle) {
   EXPECT_EQ(select_next_move(e, rng), MoveName::SiphonSoul);
   EXPECT_EQ(select_next_move(e, rng), MoveName::LagavulinAttack1);  // loops
 }
+
+// ============================================================================
+// Gremlin Nob (ROB-65) — elite
+// ============================================================================
+
+TEST(Enemy, GremlinNobConfig) {
+  std::mt19937 rng(0);
+  Enemy e = make_gremlin_nob(rng);
+  EXPECT_GE(e.hp, 82); EXPECT_LE(e.hp, 86);
+  EXPECT_EQ(*e.last_move, MoveName::Bellow);  // fixed opener
+  // Bellow grants Enrage 2 (a Power, self-buff).
+  const Move& bellow = e.moves.at(MoveName::Bellow);
+  ASSERT_EQ(bellow.applies_powers.size(), 1u);
+  EXPECT_EQ(bellow.applies_powers[0].effect, Power::Enrage);
+  EXPECT_EQ(bellow.applies_powers[0].amount, 2);
+  EXPECT_EQ(e.moves.at(MoveName::Rush).damage, 14);
+  const Move& bash = e.moves.at(MoveName::SkullBash);
+  EXPECT_EQ(bash.damage, 6);
+  EXPECT_EQ(bash.applies_debuffs.at(0).effect, Debuff::Vulnerable);
+  EXPECT_EQ(bash.applies_debuffs.at(0).amount, 2);
+  // Enrage: OnPlayerSkill -> GainStrengthFromPower(Enrage).
+  const TriggeredEffect* enrage = find_trigger(e, Trigger::OnPlayerSkill);
+  ASSERT_NE(enrage, nullptr);
+  EXPECT_EQ(enrage->action, TriggeredAction::GainStrengthFromPower);
+  EXPECT_EQ(enrage->power, Power::Enrage);
+}
+
+TEST(Enemy, GremlinNobNoRushThreeInARow) {
+  // After Bellow, Rush/Skull Bash with no Rush 3x in a row.
+  std::mt19937 rng(0);
+  Enemy e = make_gremlin_nob(rng);
+  MoveName p1 = *e.last_move, p2 = MoveName::None;
+  bool two = false;
+  for (int i = 0; i < 1000; ++i) {
+    MoveName next = select_next_move(e, rng);
+    if (two && next == MoveName::Rush) {
+      EXPECT_FALSE(p1 == MoveName::Rush && p2 == MoveName::Rush)
+          << "Rush three times in a row";
+    }
+    p2 = p1; p1 = next; two = true;
+  }
+}

@@ -912,4 +912,50 @@ Enemy make_lagavulin(std::mt19937& rng) {
   return e;
 }
 
+Enemy make_gremlin_nob(std::mt19937& rng) {
+  // Gremlin Nob (HP 82-86). Bellow turn 1 (gain Enrage 2), then 67% Rush (14) /
+  // 33% Skull Bash (6 + 2 Vulnerable), no Rush 3x in a row. Enrage: gain
+  // Strength = Enrage stacks whenever the player plays a Skill (ROB-65).
+  Enemy e;
+  e.kind = EnemyKind::GremlinNob;
+  std::uniform_int_distribution<int> hp_roll(82, 86);
+  e.max_hp = hp_roll(rng);
+  e.hp = e.max_hp;
+  e.current_block = 0;
+
+  e.moves = {
+      // Bellow: gain Enrage 2 (self-buff via Target::Enemy on a Power).
+      {MoveName::Bellow,
+       {MoveName::Bellow, 0, 0, /*debuffs=*/{},
+        {{Power::Enrage, 2, Target::Enemy}}}},
+      {MoveName::Rush, {MoveName::Rush, 14, 0, {}}},
+      {MoveName::SkullBash,
+       {MoveName::SkullBash, 6, 0,
+        {{Debuff::Vulnerable, 2, Target::Character}}}},
+  };
+
+  const std::vector<MoveTransition> base{{MoveName::Rush, 0.67f},
+                                         {MoveName::SkullBash, 0.33f}};
+  e.transitions = {
+      {{MoveName::Bellow, 1}, base},
+      {{MoveName::Rush, 1}, base},
+      {{MoveName::Rush, 2}, {{MoveName::SkullBash, 1.0f}}},  // no Rush 3x
+      {{MoveName::SkullBash, 1}, base},
+  };
+
+  // Enrage: when the player plays a Skill, gain Strength = Enrage stacks. Before
+  // Bellow resolves the stack is 0, so a turn-1 Skill grants nothing.
+  e.triggered_effects.push_back({.trigger = Trigger::OnPlayerSkill,
+                                 .action = TriggeredAction::GainStrengthFromPower,
+                                 .power = Power::Enrage});
+
+  e.first_turn_move = MoveName::Bellow;  // fixed opener
+  e.last_move = std::nullopt;
+  e.consecutive_count = 0;
+
+  validate_transitions(e);
+  select_next_move(e, rng);  // prime via first_turn_move
+  return e;
+}
+
 }  // namespace minispire

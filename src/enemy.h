@@ -35,6 +35,7 @@ enum class EnemyKind {
   GremlinWizard,
   ShieldGremlin,
   Lagavulin,
+  GremlinNob,
 };
 
 enum class MoveName {
@@ -96,6 +97,9 @@ enum class MoveName {
   Sleep1, Sleep2, Sleep3,  // = Sleep; the 3 self-wake countdown states
   Stunned,          // awake but does nothing this turn (damage-wake target)
   LagavulinAttack1, LagavulinAttack2,  // = LagavulinAttack; cycle states
+  // Gremlin Nob (ROB-65). Bellow (reused) applies Enrage; then Rush/Skull Bash.
+  Rush,       // 14 damage
+  SkullBash,  // 6 damage + 2 Vulnerable
 };
 
 // FUTURE: multi-hit moves (Lagavulin's attacks, Hexaghost) need a `hits`
@@ -162,12 +166,13 @@ enum class Trigger {
 };
 
 enum class TriggeredAction {
-  RewriteIntent,      // set last_move = move (interrupt the queued intent)
-  GainStrength,       // powers[Strength] += amount
-  GainBlock,          // current_block += amount (once=true -> Curl Up)
-  ApplyPlayerDebuff,  // apply `debuff` x amount to the player
-  RemoveSelfPower,    // erase `power` from the acting enemy
-  Wake,               // set is_asleep = false (Lagavulin OnWake)
+  RewriteIntent,         // set last_move = move (interrupt the queued intent)
+  GainStrength,          // powers[Strength] += amount
+  GainStrengthFromPower, // powers[Strength] += powers[power] (Gremlin Nob Enrage)
+  GainBlock,             // current_block += amount (once=true -> Curl Up)
+  ApplyPlayerDebuff,     // apply `debuff` x amount to the player
+  RemoveSelfPower,       // erase `power` from the acting enemy
+  Wake,                  // set is_asleep = false (Lagavulin OnWake)
 };
 
 struct TriggeredEffect {
@@ -262,5 +267,6 @@ Enemy make_sneaky_gremlin(std::mt19937& rng);
 Enemy make_gremlin_wizard(std::mt19937& rng);
 Enemy make_shield_gremlin(std::mt19937& rng);
 Enemy make_lagavulin(std::mt19937& rng);
+Enemy make_gremlin_nob(std::mt19937& rng);
 
 }  // namespace minispire
