@@ -36,6 +36,7 @@ enum class EnemyKind {
   ShieldGremlin,
   Lagavulin,
   GremlinNob,
+  Sentry,
 };
 
 enum class MoveName {
@@ -100,6 +101,9 @@ enum class MoveName {
   // Gremlin Nob (ROB-65). Bellow (reused) applies Enrage; then Rush/Skull Bash.
   Rush,       // 14 damage
   SkullBash,  // 6 damage + 2 Vulnerable
+  // Sentries (ROB-65)
+  Beam,  // 9 damage
+  Bolt,  // 0 damage, shuffles 2 Dazed into the player's discard
 };
 
 // FUTURE: multi-hit moves (Lagavulin's attacks, Hexaghost) need a `hits`
@@ -268,5 +272,7 @@ Enemy make_gremlin_wizard(std::mt19937& rng);
 Enemy make_shield_gremlin(std::mt19937& rng);
 Enemy make_lagavulin(std::mt19937& rng);
 Enemy make_gremlin_nob(std::mt19937& rng);
+Enemy make_bolt_sentry(std::mt19937& rng);
+Enemy make_beam_sentry(std::mt19937& rng);
 
 }  // namespace minispire

@@ -958,4 +958,51 @@ Enemy make_gremlin_nob(std::mt19937& rng) {
   return e;
 }
 
+namespace {
+
+// Shared Sentry factory (ROB-65). HP 38-42, Artifact 1. Beam (9 dmg) / Bolt
+// (0 dmg, adds 2 Dazed), alternating. `opener` is the fixed turn-1 move — the
+// stagger: sentries 1 & 3 open Bolt, sentry 2 opens Beam.
+Enemy make_sentry(std::mt19937& rng, MoveName opener) {
+  Enemy e;
+  e.kind = EnemyKind::Sentry;
+  std::uniform_int_distribution<int> hp_roll(38, 42);
+  e.max_hp = hp_roll(rng);
+  e.hp = e.max_hp;
+  e.current_block = 0;
+  e.powers[Power::Artifact] = 1;
+
+  e.moves = {
+      {MoveName::Beam, {MoveName::Beam, 9, 0, {}}},
+      // Bolt: 0 damage, shuffles 2 Dazed into the player's discard.
+      {MoveName::Bolt,
+       {MoveName::Bolt, 0, 0, /*debuffs=*/{}, /*powers=*/{},
+        {CardId::Dazed, CardId::Dazed}}},
+  };
+
+  // Strict alternation.
+  e.transitions = {
+      {{MoveName::Beam, 1}, {{MoveName::Bolt, 1.0f}}},
+      {{MoveName::Bolt, 1}, {{MoveName::Beam, 1.0f}}},
+  };
+
+  e.first_turn_move = opener;
+  e.last_move = std::nullopt;
+  e.consecutive_count = 0;
+
+  validate_transitions(e);
+  select_next_move(e, rng);  // prime via first_turn_move
+  return e;
+}
+
+}  // namespace
+
+Enemy make_bolt_sentry(std::mt19937& rng) {
+  return make_sentry(rng, MoveName::Bolt);
+}
+
+Enemy make_beam_sentry(std::mt19937& rng) {
+  return make_sentry(rng, MoveName::Beam);
+}
+
 }  // namespace minispire

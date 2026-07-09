@@ -20,7 +20,7 @@ namespace {
 constexpr std::array<CardId, kNumCardTypes> kObsCardOrder = {
     CardId::Strike,     CardId::Defend,     CardId::Bash,
     CardId::StrikePlus, CardId::DefendPlus, CardId::BashPlus,
-    CardId::Slimed,
+    CardId::Slimed,     CardId::Dazed,
 };
 static_assert(kObsCardOrder.size() == kNumCardTypes,
               "kObsCardOrder must list every card type");
@@ -42,6 +42,7 @@ constexpr std::array<Power, kNumPowers> kObsPowerOrder = {
     Power::Ritual,
     Power::Metallicize,
     Power::Enrage,
+    Power::Artifact,
 };
 static_assert(kObsPowerOrder.size() == kNumPowers,
               "kObsPowerOrder must list every power");

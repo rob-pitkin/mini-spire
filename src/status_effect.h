@@ -26,6 +26,7 @@ enum class Power {
   Ritual,       // enemy: gain Strength = stacks at the start of each of its turns
   Metallicize,  // enemy: gain block = stacks at the start of each of its turns
   Enrage,       // enemy: gain Strength = stacks whenever the player plays a Skill
+  Artifact,     // enemy: negates the next `stacks` debuff applications, then decrements
   None,         // sentinel: "no power" (default for unused fields)
 };
 
@@ -33,7 +34,7 @@ enum class Power {
 // [debuffs then powers]. Keep kObsDebuffOrder / kObsPowerOrder in lockstep —
 // static_asserts enforce the counts match. (The None sentinels are excluded.)
 inline constexpr int kNumDebuffs = 4;
-inline constexpr int kNumPowers = 5;
+inline constexpr int kNumPowers = 6;
 inline constexpr int kNumStatusEffects = kNumDebuffs + kNumPowers;
 
 // FUTURE (multi-enemy): Target { Character, Enemy } collapses any "the enemy"

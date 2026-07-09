@@ -802,3 +802,30 @@ TEST(Enemy, GremlinNobNoRushThreeInARow) {
     p2 = p1; p1 = next; two = true;
   }
 }
+
+// ============================================================================
+// Sentries (ROB-65) — elite trio
+// ============================================================================
+
+TEST(Enemy, SentryConfigAndStagger) {
+  std::mt19937 rng(0);
+  Enemy bolt = make_bolt_sentry(rng);
+  Enemy beam = make_beam_sentry(rng);
+  EXPECT_GE(bolt.hp, 38); EXPECT_LE(bolt.hp, 42);
+  EXPECT_EQ(bolt.powers[Power::Artifact], 1);
+  EXPECT_EQ(beam.powers[Power::Artifact], 1);
+  EXPECT_EQ(bolt.moves.at(MoveName::Beam).damage, 9);
+  EXPECT_EQ(bolt.moves.at(MoveName::Bolt).damage, 0);
+  EXPECT_EQ(bolt.moves.at(MoveName::Bolt).adds_to_discard.size(), 2u);  // 2 Dazed
+  // Stagger: bolt-sentry opens Bolt, beam-sentry opens Beam.
+  EXPECT_EQ(*bolt.last_move, MoveName::Bolt);
+  EXPECT_EQ(*beam.last_move, MoveName::Beam);
+}
+
+TEST(Enemy, SentriesAlternate) {
+  std::mt19937 rng(0);
+  Enemy e = make_bolt_sentry(rng);
+  MoveName expected[] = {MoveName::Beam, MoveName::Bolt, MoveName::Beam,
+                         MoveName::Bolt, MoveName::Beam};
+  for (MoveName exp : expected) EXPECT_EQ(select_next_move(e, rng), exp);
+}

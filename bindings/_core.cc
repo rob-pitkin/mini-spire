@@ -73,7 +73,8 @@ PYBIND11_MODULE(_core, m) {
       .value("StrikePlus", CardId::StrikePlus)
       .value("DefendPlus", CardId::DefendPlus)
       .value("BashPlus", CardId::BashPlus)
-      .value("Slimed", CardId::Slimed);
+      .value("Slimed", CardId::Slimed)
+      .value("Dazed", CardId::Dazed);
 
   py::class_<StatePiles>(m, "StatePiles")
       .def_readonly("hand", &StatePiles::hand)
@@ -92,7 +93,8 @@ PYBIND11_MODULE(_core, m) {
       .value("Dexterity", Power::Dexterity)
       .value("Ritual", Power::Ritual)
       .value("Metallicize", Power::Metallicize)
-      .value("Enrage", Power::Enrage);
+      .value("Enrage", Power::Enrage)
+      .value("Artifact", Power::Artifact);
 
   py::enum_<Target>(m, "Target")
       .value("Character", Target::Character)

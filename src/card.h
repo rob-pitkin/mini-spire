@@ -20,12 +20,15 @@ enum class CardId {
   // Status cards (added mid-fight by enemies; not part of any deck). Grouped at
   // the end. Slimed: 1-cost do-nothing that Exhausts on play (ROB-72).
   Slimed,
+  // Dazed (ROB-65 Sentries): UNPLAYABLE (masked, never a legal action) and
+  // Ethereal (exhausts at end of turn if still in hand).
+  Dazed,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
 // action-space size (card x target). Update CARD_DATABASE + kObsCardOrder in
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
-inline constexpr int kNumCardTypes = 7;
+inline constexpr int kNumCardTypes = 8;
 
 // A card's inherent StS type. This is a real property, NOT inferable from
 // damage/block: an Attack can gain block (Body Slam) and a Skill can deal
@@ -52,8 +55,10 @@ struct CardData {
   int block;
   std::vector<DebuffApplication> applies_debuffs;
   std::vector<PowerApplication> applies_powers;
-  bool exhaust = false;
+  bool exhaust = false;  // exhausts when PLAYED (Slimed)
   CardType type = CardType::Attack;
+  bool unplayable = false;  // never a legal action (Dazed) — masked out
+  bool ethereal = false;    // exhausts at end of turn if unplayed in hand (Dazed)
 };
 
 inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
@@ -65,6 +70,9 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     {CardId::BashPlus,   {2, 10, 0, {{Debuff::Vulnerable, 3, Target::Enemy}}, {}, false, CardType::Attack}},
     // Slimed: a status card (ROB-72). 1 energy, does nothing, Exhausts on play.
     {CardId::Slimed,     {1, 0,  0, {}, {}, /*exhaust=*/true, CardType::Status}},
+    // Dazed (ROB-65): unplayable + ethereal. cost is moot (never played).
+    {CardId::Dazed,      {0, 0,  0, {}, {}, false, CardType::Status,
+                          /*unplayable=*/true, /*ethereal=*/true}},
 };
 
 // Whether a card acts on a chosen enemy (vs. the player / self). Derived, not a

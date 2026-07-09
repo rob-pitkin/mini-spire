@@ -61,6 +61,16 @@ void apply_debuff(CombatState& state, const DebuffApplication& app,
                   int enemy_target) {
   auto* m = debuff_map(state, app.target, enemy_target);
   if (!m) return;
+  // Artifact (ROB-65): negates the whole debuff APPLICATION regardless of
+  // stacks, consuming one Artifact charge. Checked on the same target's powers.
+  auto* pm = power_map(state, app.target, enemy_target);
+  if (pm) {
+    auto art = pm->find(Power::Artifact);
+    if (art != pm->end() && art->second > 0) {
+      if (--art->second <= 0) pm->erase(art);
+      return;  // debuff negated
+    }
+  }
   if (app.effect == Debuff::Entangle) {
     (*m)[app.effect] = app.amount;
   } else {
@@ -419,9 +429,14 @@ void apply_move_to_state(CombatState& state, const Move& move, int actor_slot) {
 
 void handle_end_turn(CombatState& state) {
   // 1. End of player turn
-  // 1a. Discard hand
+  // 1a. Empty the hand: unplayed Ethereal cards exhaust (ROB-65 Dazed); the
+  // rest discard.
   for (const Card& c : state.current_hand) {
-    state.discard_pile.push_back(c);
+    if (CARD_DATABASE.at(c.card_id).ethereal) {
+      state.exhaust_pile.push_back(c);
+    } else {
+      state.discard_pile.push_back(c);
+    }
   }
   state.current_hand.clear();
   // 1b. Tick character debuffs (powers never tick)
@@ -596,6 +611,7 @@ std::vector<bool> valid_actions(const CombatState& state) {
     if (card_idx < 0 || card_idx >= num_card_ids) continue;
 
     const CardData& data = CARD_DATABASE.at(d.card);
+    if (data.unplayable) continue;  // Dazed etc. — never a legal action (ROB-65)
     const bool in_hand = find_first_in_hand(state.current_hand, d.card) >= 0;
     const bool affordable = state.character.energy >= data.cost;
     if (!in_hand || !affordable) continue;

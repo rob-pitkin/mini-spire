@@ -1649,3 +1649,94 @@ TEST(TurnLoop, EnrageDoesNotFireOnAttackCards) {
   ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
   EXPECT_EQ(s.enemies[0].powers[Power::Strength], 0);  // no Enrage from an attack
 }
+
+// ============================================================================
+// Sentries: Dazed (unplayable + ethereal), Artifact, Bolt (ROB-65)
+// ============================================================================
+
+TEST(TurnLoop, DazedIsUnplayable) {
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Dazed});
+  auto mask = valid_actions(s);
+  // No target offset for Dazed is ever legal (unplayable).
+  for (int t = 0; t < kMaxEnemies; ++t) {
+    EXPECT_FALSE(mask[card_action(CardId::Dazed, t)]);
+  }
+}
+
+TEST(TurnLoop, EtherealDazedExhaustsAtEndOfTurnUnplayed) {
+  // Exhaust is grow-only (never reshuffled), so a Dazed routed there stays put.
+  CombatState s = make_minimal_state(0);  // starts with empty piles
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Dazed});
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  // Unplayed Ethereal Dazed exhausts, not discards.
+  int dazed_exhaust = 0;
+  for (const Card& c : s.exhaust_pile)
+    if (c.card_id == CardId::Dazed) ++dazed_exhaust;
+  EXPECT_EQ(dazed_exhaust, 1);
+}
+
+TEST(TurnLoop, NonEtherealCardDiscardsAtEndOfTurn) {
+  // Contrast: a normal unplayed card (Strike) does NOT exhaust at end of turn
+  // (it discards, and may be reshuffled/redrawn — so assert it's not exhausted).
+  CombatState s = make_minimal_state(0);  // starts with empty exhaust
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Strike});
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  EXPECT_TRUE(s.exhaust_pile.empty());  // non-ethereal never exhausts
+}
+
+TEST(TurnLoop, ArtifactNegatesOneDebuffApplication) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  s.enemies.push_back(make_bolt_sentry(rng));  // Artifact 1
+  s.character.energy = 4;
+  s.current_hand.push_back(Card{CardId::Bash});    // 8 dmg + Vulnerable 2
+  s.current_hand.push_back(Card{CardId::Bash});
+
+  // First Bash: Vulnerable negated by Artifact (whole application), Artifact consumed.
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bash, 0)));
+  EXPECT_EQ(s.enemies[0].debuffs.count(Debuff::Vulnerable), 0u);
+  EXPECT_EQ(s.enemies[0].powers.count(Power::Artifact), 0u);  // consumed to 0 -> erased
+
+  // Second Bash: no Artifact left -> Vulnerable 2 lands.
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bash, 0)));
+  EXPECT_EQ(s.enemies[0].debuffs[Debuff::Vulnerable], 2);
+}
+
+TEST(TurnLoop, BoltAddsTwoDazedDealsNoDamage) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  s.enemies.push_back(make_bolt_sentry(rng));  // opens Bolt
+  int hp_before = s.character.hp;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));  // sentry Bolts
+
+  EXPECT_EQ(s.character.hp, hp_before);  // Bolt is 0 damage
+  // 2 Dazed added; count across all piles + hand (the new draw may have moved
+  // them around, but they exist somewhere and never exhaust from a Bolt).
+  int dazed = 0;
+  for (const auto* pile : {&s.current_hand, &s.draw_pile, &s.discard_pile,
+                           &s.exhaust_pile}) {
+    for (const Card& c : *pile)
+      if (c.card_id == CardId::Dazed) ++dazed;
+  }
+  EXPECT_EQ(dazed, 2);
+}
+
+TEST(TurnLoop, BeamDealsNineDamage) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  s.enemies.push_back(make_beam_sentry(rng));  // opens Beam
+  int hp_before = s.character.hp;
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  EXPECT_EQ(s.character.hp, hp_before - 9);
+}
