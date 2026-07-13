@@ -115,6 +115,7 @@ def test_select_avatar_ko_at_zero():
 # ---------------------------------------------------------------------------
 
 import numpy as np
+import pytest
 
 from minispire import _core
 from minispire.env import MinispireEnv, make_single_enemy_env
@@ -164,3 +165,50 @@ def test_resolved_action_steps_without_error():
     obs2, _r, term, trunc, _info = env.step(action)
     assert obs2.shape == (MinispireEnv.OBS_SIZE,)
     assert not (term or trunc)  # one Strike doesn't end the fight
+
+
+# --- CLI parse helpers (ROB-79 commit 4) ---
+
+
+def test_parse_pool_maps_names():
+    from minispire.play import _parse_pool
+
+    assert _parse_pool("weak") == _core.EncounterPool.Weak
+    assert _parse_pool("STRONG") == _core.EncounterPool.Strong
+    assert _parse_pool("elite") == _core.EncounterPool.Elite
+    assert _parse_pool(None) is None
+
+
+def test_parse_pool_rejects_unknown():
+    from minispire.play import _parse_pool
+
+    with pytest.raises(SystemExit):
+        _parse_pool("bogus")
+
+
+def test_parse_deck_from_string_and_names():
+    from minispire.play import _parse_deck
+
+    deck = _parse_deck("strike,strike,defend,bash")
+    assert deck == [
+        _core.CardId.Strike,
+        _core.CardId.Strike,
+        _core.CardId.Defend,
+        _core.CardId.Bash,
+    ]
+    # Display names (with '+') and enum names both resolve.
+    assert _parse_deck("strike+") == [_core.CardId.StrikePlus]
+    assert _parse_deck("StrikePlus") == [_core.CardId.StrikePlus]
+    assert _parse_deck(None) is None
+    # YAML gives a list, not a string.
+    assert _parse_deck(["strike", "bash"]) == [
+        _core.CardId.Strike,
+        _core.CardId.Bash,
+    ]
+
+
+def test_parse_deck_rejects_unknown_card():
+    from minispire.play import _parse_deck
+
+    with pytest.raises(SystemExit):
+        _parse_deck("strike,notacard")
