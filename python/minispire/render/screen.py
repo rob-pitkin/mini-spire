@@ -61,25 +61,28 @@ def living_enemy_slots(obs) -> list[int]:
         if obs[enemy_base(s) + ENEMY_OFF_IS_ALIVE] > 0.5
     ]
 
-# Status effect names in obs order.
-STATUS_NAMES = ["Vulnerable", "Weak", "Strength", "Dexterity"]
+# Status names in obs order, derived from the engine enums (ROB-78/79): the obs
+# status block is [debuffs then powers], and each enum is declared in obs order
+# (kObsDebuffOrder / kObsPowerOrder), so the enum member order IS the obs order.
+# Excludes the None sentinels. Deriving this means a new status can't desync the
+# labels from the obs.
+STATUS_NAMES = [d for d in _core.Debuff.__members__ if d != "None"] + [
+    p for p in _core.Power.__members__ if p != "None"
+]
 STATUS_COLORS = {
     "Vulnerable": "orange3",
     "Weak": "purple",
+    "Frail": "cyan",
+    "Entangle": "magenta",
     "Strength": "red",
     "Dexterity": "green",
+    "Ritual": "yellow",
+    "Metallicize": "bright_black",
+    "Enrage": "bright_red",
+    "Artifact": "bright_yellow",
 }
 
 # CardId display names + colors for cost annotation.
-CARD_NAMES = {
-    _core.CardId.Strike: "Strike",
-    _core.CardId.Defend: "Defend",
-    _core.CardId.Bash: "Bash",
-    _core.CardId.StrikePlus: "Strike+",
-    _core.CardId.DefendPlus: "Defend+",
-    _core.CardId.BashPlus: "Bash+",
-}
-
 HP_BAR_WIDTH = 16
 
 
@@ -195,6 +198,7 @@ def render_fight(
 
     turn = int(obs[TURN_NUMBER])
     max_hps = env.enemy_max_hps()
+    kinds = env.enemy_kinds()  # per-slot EnemyKind (ROB-79)
 
     # Character column.
     char = _entity_block(
@@ -212,12 +216,11 @@ def render_fight(
         ],
     )
 
-    # One column per living enemy, labeled with its target index.
-    # TODO(M3): enemy name is hardcoded "JAW WORM" — once multiple enemy kinds
-    # exist, the TUI needs the per-slot kind (obs slot or a debug accessor).
+    # One column per living enemy, labeled with its real per-slot name (ROB-79).
     enemy_columns: list[Group] = []
     for slot in living_enemy_slots(obs):
         base = enemy_base(slot)
+        kind = kinds[slot]
         intent = Text("Intent: ")
         intent.append_text(
             intent_text(
@@ -230,8 +233,8 @@ def render_fight(
         )
         enemy_columns.append(
             _entity_block(
-                f"[{slot}] JAW WORM",
-                "JAW_WORM",
+                f"[{slot}] {_core.enemy_name(kind).upper()}",
+                avatars.avatar_key(kind),
                 int(obs[base + ENEMY_OFF_HP]),
                 int(max_hps[slot]) if slot < len(max_hps) else int(obs[base + ENEMY_OFF_HP]),
                 int(obs[base + ENEMY_OFF_BLOCK]),
@@ -291,11 +294,11 @@ def render_hand(console: Console, env) -> list:
             local = len(action_map)
             action_map.append(card_id)
             entry.append(f"({local}) ", style="bold white")
-            entry.append(f"{CARD_NAMES[card_id]:<8}", style="white")
+            entry.append(f"{_core.card_name(card_id):<8}", style="white")
             entry.append(f"{{{data.cost}}}", style="yellow")
         else:
             entry.append("  -  ", style="dim")
-            entry.append(f"{CARD_NAMES[card_id]:<8}", style="dim")
+            entry.append(f"{_core.card_name(card_id):<8}", style="dim")
             entry.append(f"{{{data.cost}}}", style="dim")
 
         row.append(entry)
@@ -326,7 +329,7 @@ def render_piles(console: Console, env) -> None:
         out = Text()
         for c in cards:
             data = _core.card_data(c)
-            out.append(f"    {CARD_NAMES[c]:<8}", style="white")
+            out.append(f"    {_core.card_name(c):<8}", style="white")
             out.append(f"{{{data.cost}}}\n", style="yellow")
         return out
 
@@ -337,7 +340,7 @@ def render_piles(console: Console, env) -> None:
         # Sort by CardId value for stable display (does not reveal draw order).
         for c in sorted(count_map, key=lambda x: int(x)):
             data = _core.card_data(c)
-            out.append(f"    {CARD_NAMES[c]:<8}", style="white")
+            out.append(f"    {_core.card_name(c):<8}", style="white")
             out.append(f"x{count_map[c]}  ", style="bright_white")
             out.append(f"{{{data.cost}}}\n", style="yellow")
         return out
@@ -385,6 +388,7 @@ def render_end_screen(
 
     char_hp = max(int(obs[CHAR_HP]), 0)
     max_hps = env.enemy_max_hps()
+    kinds = env.enemy_kinds()
     summary = Text()
     summary.append(f"\nIRONCLAD  HP {char_hp}/{int(obs[CHAR_MAX_HP])}\n", style="white")
     living = living_enemy_slots(obs)
@@ -393,7 +397,8 @@ def render_end_screen(
             base = enemy_base(slot)
             hp = max(int(obs[base + ENEMY_OFF_HP]), 0)
             mx = int(max_hps[slot]) if slot < len(max_hps) else hp
-            summary.append(f"JAW WORM  HP {hp}/{mx}\n", style="white")
+            name = _core.enemy_name(kinds[slot]).upper()
+            summary.append(f"{name}  HP {hp}/{mx}\n", style="white")
     else:
         summary.append("All enemies defeated.\n", style="white")
     summary.append(f"\nCombat lasted {int(obs[TURN_NUMBER])} turns.\n", style="white")

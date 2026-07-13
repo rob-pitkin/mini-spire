@@ -113,6 +113,11 @@ class MinispireEnv(gym.Env):
         TUI's enemy HP bars — not used in the training loop."""
         return self._env.enemy_max_hps()
 
+    def enemy_kinds(self):
+        """Per-enemy-slot EnemyKind (ROB-79). For the TUI to name each enemy —
+        not used in the training loop."""
+        return self._env.enemy_kinds()
+
     @property
     def outcome(self):
         return self._env.outcome
