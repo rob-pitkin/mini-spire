@@ -13,6 +13,7 @@
 #include "combat_env.h"
 #include "combat_state.h"
 #include "status_effect.h"
+#include "turn_loop.h"
 
 namespace py = pybind11;
 using namespace minispire;
@@ -134,8 +135,35 @@ PYBIND11_MODULE(_core, m) {
       "True if the card acts on a chosen enemy (deals damage or applies an "
       "enemy status); False for self/untargeted cards like Defend.");
 
+  // A deterministic single-enemy (Jaw Worm) test/debug fixture env. reset()
+  // samples a random encounter (ROB-66), so tests that need a known single-enemy
+  // fight build one from the canonical start_v1_combat state instead.
+  m.def(
+      "single_enemy_fixture_env",
+      [](uint32_t seed) { return CombatEnv(start_v1_combat(seed)); },
+      py::arg("seed") = 0,
+      "A CombatEnv wrapping the canonical deterministic single Jaw Worm fight "
+      "(fixed, not sampled). For tests/debugging that need one known enemy.");
+
+  // Act 1 encounter pool selector (ROB-66) — which table reset() samples from.
+  py::enum_<EncounterPool>(m, "EncounterPool")
+      .value("Weak", EncounterPool::Weak)
+      .value("Strong", EncounterPool::Strong)
+      .value("Elite", EncounterPool::Elite);
+
   py::class_<CombatEnv>(m, "CombatEnv")
-      .def(py::init<float>(), py::arg("hp_reward_coeff") = 0.0f)
+      // deck is a list of CardId (empty -> Ironclad starter); pool selects the
+      // encounter table reset() draws from (ROB-66).
+      .def(py::init([](float hp_reward_coeff, EncounterPool pool,
+                       const std::vector<CardId>& deck) {
+             std::vector<Card> cards;
+             cards.reserve(deck.size());
+             for (CardId id : deck) cards.push_back(Card{id});
+             return CombatEnv(hp_reward_coeff, pool, std::move(cards));
+           }),
+           py::arg("hp_reward_coeff") = 0.0f,
+           py::arg("pool") = EncounterPool::Weak,
+           py::arg("deck") = std::vector<CardId>{})
       .def_readonly_static("OBS_SIZE", &CombatEnv::kObsSize)
       .def_readonly_static("NUM_ACTIONS", &CombatEnv::kNumActions)
       // Max enemy slots — the action target stride (action = card*MAX_ENEMIES +
@@ -178,6 +206,9 @@ PYBIND11_MODULE(_core, m) {
       .def("enemy_max_hps", &CombatEnv::enemy_max_hps,
            "Per-enemy-slot max HP, in slot order (the obs omits enemy max_hp). "
            "Debug accessor for the TUI; not for the training loop.")
+      .def("obs", &obs_view,
+           "Current observation as a zero-copy numpy view (same buffer as "
+           "reset/step return). For inspecting a state without stepping.")
       .def("clone", &CombatEnv::clone,
            "Deep-copy clone of the env (for MCTS).")
       .def_property_readonly("outcome", &CombatEnv::outcome)

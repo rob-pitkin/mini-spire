@@ -12,12 +12,12 @@
 namespace minispire {
 
 // Maximum number of enemy slots in a fight. Fixed so the observation and action
-// space are fixed-size (ROB-59 / ROB-60). N = 4 covers the largest Act 1
-// encounter including post-split (e.g. two Large Slimes each splitting into two,
-// or three Sentries). The `enemies` vector is sized to this; dead enemies keep
-// their slot (stable indices) and a slot is reusable only once its occupant is
-// dead. Invariant: the count of *living* enemies never exceeds kMaxEnemies.
-inline constexpr int kMaxEnemies = 4;
+// space are fixed-size (ROB-59 / ROB-60). N = 5 covers the largest Act 1
+// encounter: "Lots of Slimes" = 3 Spike-S + 2 Acid-S (ROB-66). The `enemies`
+// vector is sized to this; dead enemies keep their slot (stable indices) and a
+// slot is reusable only once its occupant is dead. Invariant: the count of
+// *living* enemies never exceeds kMaxEnemies.
+inline constexpr int kMaxEnemies = 5;
 
 enum class Outcome {
   InProgress,

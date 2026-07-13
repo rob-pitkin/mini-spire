@@ -64,8 +64,12 @@ int pile_count(const std::vector<Card>& pile, CardId id) {
 
 }  // namespace
 
-CombatEnv::CombatEnv(float hp_reward_coeff)
-    : mask_buffer_(kNumActions, 0), hp_reward_coeff_(hp_reward_coeff) {
+CombatEnv::CombatEnv(float hp_reward_coeff, EncounterPool pool,
+                     std::vector<Card> deck)
+    : mask_buffer_(kNumActions, 0),
+      hp_reward_coeff_(hp_reward_coeff),
+      pool_(pool),
+      deck_(deck.empty() ? starter_deck() : std::move(deck)) {
   // Engine invariant: action space is the (card x target) cross-product plus
   // a single end-turn action (ROB-60), sized from kNumCardTypes.
   static_assert(kNumActions == kNumCardTypes * kMaxEnemies + 1,
@@ -89,7 +93,8 @@ CombatEnv::CombatEnv(CombatState state, float hp_reward_coeff)
 }
 
 void CombatEnv::reset(uint32_t seed) {
-  state_ = start_v1_combat(seed);
+  // Copy the deck — start_combat consumes it, and reset() may be called again.
+  state_ = start_combat(seed, pool_, deck_);
   reward_ = 0.0f;
   compute_obs();
   compute_mask();

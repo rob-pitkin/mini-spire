@@ -7,6 +7,7 @@
 
 #include "card.h"
 #include "combat_state.h"
+#include "encounter.h"
 
 namespace minispire {
 
@@ -68,7 +69,13 @@ class CombatEnv {
   // env's lifetime. On a win the reward is 1 + coeff * (final_hp / max_hp);
   // coeff = 0 (default) is the pure sparse +1/-1/0 signal. See ROB-52.
   // Debug builds assert coeff >= 0 (a negative bonus is meaningless).
-  explicit CombatEnv(float hp_reward_coeff = 0.0f);
+  //
+  // `pool` selects which Act 1 encounter table reset() samples from; `deck` is
+  // the player's deck (empty -> the Ironclad starter). Both fixed for the env's
+  // lifetime (ROB-66).
+  explicit CombatEnv(float hp_reward_coeff = 0.0f,
+                     EncounterPool pool = EncounterPool::Weak,
+                     std::vector<Card> deck = {});
 
   // Construct directly from an existing CombatState. Computes the obs/mask
   // buffers from the given state so they're immediately consistent. This is
@@ -123,6 +130,10 @@ class CombatEnv {
   std::vector<uint8_t> mask_buffer_;
   float reward_ = 0.0f;
   float hp_reward_coeff_ = 0.0f;
+  // Encounter pool + deck used by reset() (ROB-66). Fixed for the env's
+  // lifetime, like hp_reward_coeff_.
+  EncounterPool pool_ = EncounterPool::Weak;
+  std::vector<Card> deck_;
 
   void compute_obs();
   void compute_mask();

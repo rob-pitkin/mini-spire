@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "card.h"
+#include "encounter.h"
 #include "enemy.h"
 #include "status_effect.h"
 
@@ -544,7 +545,49 @@ int compute_attack_damage(
   return result < 0 ? 0 : result;
 }
 
+std::vector<Card> starter_deck() {
+  std::vector<Card> deck;
+  for (int i = 0; i < 5; ++i) deck.push_back(Card{CardId::Strike});
+  for (int i = 0; i < 4; ++i) deck.push_back(Card{CardId::Defend});
+  deck.push_back(Card{CardId::Bash});
+  return deck;
+}
+
+CombatState start_combat(uint32_t seed, EncounterPool pool,
+                         std::vector<Card> deck) {
+  CombatState state;
+  state.seed = seed;
+  state.rng = std::mt19937(seed);
+
+  state.character.max_hp = IRONCLAD_MAX_HP;
+  state.character.hp = IRONCLAD_MAX_HP;
+  state.character.energy_per_turn = IRONCLAD_ENERGY_PER_TURN;
+  state.character.energy = IRONCLAD_ENERGY_PER_TURN;
+  state.character.current_block = 0;
+
+  // Sample the encounter (each enemy primed with its turn-1 intent).
+  state.enemies = sample_encounter(pool, state.rng);
+
+  // Shuffle the given deck into the draw pile.
+  state.draw_pile = std::move(deck);
+  std::shuffle(state.draw_pile.begin(), state.draw_pile.end(), state.rng);
+
+  state.turn_number = 1;
+  state.character_turn = true;
+  state.outcome = Outcome::InProgress;
+
+  // Draw the opening hand.
+  for (int i = 0; i < STARTING_HAND_SIZE; ++i) {
+    draw_one(state);
+  }
+
+  return state;
+}
+
 CombatState start_v1_combat(uint32_t seed) {
+  // Backward-compatible v1 fixture: a fixed single Jaw Worm + the starter deck.
+  // Distinct from start_combat (which samples an encounter) so M1 / existing
+  // tests keep their deterministic Jaw Worm fight.
   CombatState state;
   state.seed = seed;
   state.rng = std::mt19937(seed);
@@ -557,21 +600,13 @@ CombatState start_v1_combat(uint32_t seed) {
 
   state.enemies.push_back(make_jaw_worm(state.rng));
 
-  // Build the starter deck and shuffle into draw pile.
-  std::vector<Card> deck;
-  for (int i = 0; i < 5; ++i) deck.push_back(Card{CardId::Strike});
-  for (int i = 0; i < 4; ++i) deck.push_back(Card{CardId::Defend});
-  deck.push_back(Card{CardId::Bash});
-  state.draw_pile = std::move(deck);
+  state.draw_pile = starter_deck();
   std::shuffle(state.draw_pile.begin(), state.draw_pile.end(), state.rng);
 
   state.turn_number = 1;
   state.character_turn = true;
   state.outcome = Outcome::InProgress;
 
-  // (Enemy intent is already primed by make_jaw_worm.)
-
-  // Draw the opening hand.
   for (int i = 0; i < STARTING_HAND_SIZE; ++i) {
     draw_one(state);
   }

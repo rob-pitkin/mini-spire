@@ -4,7 +4,9 @@ from __future__ import annotations
 import gymnasium as gym
 import numpy as np
 
+from minispire._core import CardId
 from minispire._core import CombatEnv as _CombatEnv
+from minispire._core import EncounterPool
 
 
 class MinispireEnv(gym.Env):
@@ -24,7 +26,13 @@ class MinispireEnv(gym.Env):
     OBS_SIZE = _CombatEnv.OBS_SIZE
     NUM_ACTIONS = _CombatEnv.NUM_ACTIONS
 
-    def __init__(self, hp_reward_coeff: float = 0.0, render_mode: str | None = None):
+    def __init__(
+        self,
+        hp_reward_coeff: float = 0.0,
+        render_mode: str | None = None,
+        pool: EncounterPool = EncounterPool.Weak,
+        deck: list[CardId] | None = None,
+    ):
         super().__init__()
         if render_mode is not None and render_mode not in self.metadata["render_modes"]:
             raise ValueError(
@@ -35,7 +43,12 @@ class MinispireEnv(gym.Env):
         # Reward-shaping hyperparameter (ROB-52). 0.0 = sparse +1/-1/0; >0 adds
         # an HP-retention bonus on wins. Fixed for the env's lifetime.
         self.hp_reward_coeff = hp_reward_coeff
-        self._env = _CombatEnv(hp_reward_coeff=hp_reward_coeff)
+        # Encounter pool + deck (ROB-66). deck=None -> Ironclad starter. Both
+        # fixed for the env's lifetime; reset(seed) samples from the pool.
+        self.pool = pool
+        self._env = _CombatEnv(
+            hp_reward_coeff=hp_reward_coeff, pool=pool, deck=deck or []
+        )
         self._last_obs: np.ndarray | None = None
         self._console = None  # lazily created on first human render
         self.observation_space = gym.spaces.Box(
@@ -115,3 +128,20 @@ class MinispireEnv(gym.Env):
     # close() intentionally not overridden — the default no-op is correct
     # (no file handles, no network, no subprocesses). When ROB-45 adds a
     # TUI, close() may need to override to clean up terminal state.
+
+
+def make_single_enemy_env(seed: int = 0) -> tuple[MinispireEnv, np.ndarray]:
+    """A MinispireEnv fixed to the canonical single Jaw Worm fight (ROB-66).
+
+    reset() now samples a random Act 1 encounter, so tests/tools that need a
+    deterministic ONE-enemy fight use this instead. The returned env is already
+    in the fixture state — do NOT call reset() (it would re-sample). Returns
+    (env, obs).
+    """
+    from minispire._core import single_enemy_fixture_env
+
+    env = MinispireEnv()
+    env._env = single_enemy_fixture_env(seed)
+    obs = np.asarray(env._env.obs())
+    env._last_obs = obs
+    return env, obs

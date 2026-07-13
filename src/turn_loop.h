@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "combat_state.h"
+#include "encounter.h"
 #include "status_effect.h"
 
 namespace minispire {
@@ -26,10 +27,18 @@ int compute_attack_damage(
     const std::unordered_map<Debuff, int>& attacker_debuffs,
     const std::unordered_map<Debuff, int>& defender_debuffs);
 
-// Constructs the v1 initial CombatState: seeded RNG, Ironclad starter
-// character (80 HP / 3 energy), one Jaw Worm with rolled HP, starter deck
-// (5 Strike + 4 Defend + 1 Bash) shuffled into draw pile, opening hand of
-// 5 cards drawn, first enemy intent selected.
+// The Ironclad starter deck: 5 Strike + 4 Defend + 1 Bash (unshuffled).
+std::vector<Card> starter_deck();
+
+// Constructs an initial CombatState (ROB-66): seeded RNG, Ironclad starter
+// character (80 HP / 3 energy), an encounter sampled from `pool`, and `deck`
+// shuffled into the draw pile. Draws the opening hand; enemy intents are primed
+// by their factories.
+CombatState start_combat(uint32_t seed, EncounterPool pool,
+                         std::vector<Card> deck);
+
+// Backward-compatible v1 fixture: fixed single Jaw Worm + starter deck. Used by
+// M1 / existing tests that want the deterministic Jaw Worm fight.
 CombatState start_v1_combat(uint32_t seed);
 
 // Action layout (ROB-60): (card x target) cross-product plus end-turn.

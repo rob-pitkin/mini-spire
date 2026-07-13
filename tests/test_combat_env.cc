@@ -22,15 +22,19 @@ constexpr int kEndTurnAction = CombatEnv::kNumActions - 1;
 // Reset / basic shape
 // ============================================================================
 
-TEST(CombatEnv, ResetMatchesStartV1Combat) {
-  CombatEnv env;
-  env.reset(42);
-
-  // Same seed, same construction path → same HP roll.
-  CombatState reference = start_v1_combat(42);
-  EXPECT_EQ(env.state().character.hp, reference.character.hp);
-  EXPECT_EQ(env.state().enemies[0].hp, reference.enemies[0].hp);
-  EXPECT_EQ(env.state().turn_number, reference.turn_number);
+TEST(CombatEnv, ResetIsReproducibleForSameSeed) {
+  // reset() samples an encounter from the pool (ROB-66); the same seed must
+  // produce an identical fight (deterministic).
+  CombatEnv a, b;
+  a.reset(42);
+  b.reset(42);
+  EXPECT_EQ(a.state().character.hp, b.state().character.hp);
+  ASSERT_EQ(a.state().enemies.size(), b.state().enemies.size());
+  for (std::size_t i = 0; i < a.state().enemies.size(); ++i) {
+    EXPECT_EQ(a.state().enemies[i].kind, b.state().enemies[i].kind);
+    EXPECT_EQ(a.state().enemies[i].hp, b.state().enemies[i].hp);
+  }
+  EXPECT_EQ(a.state().turn_number, b.state().turn_number);
 }
 
 TEST(CombatEnv, ObsBufferIsKObsSize) {
@@ -105,8 +109,8 @@ constexpr int kPileBase =
     CombatEnv::kPlayerObsSize + minispire::kMaxEnemies * CombatEnv::kEnemyObsStride;
 
 TEST(CombatEnv, ObsEnemyStatsAfterReset) {
-  CombatEnv env;
-  env.reset(0);
+  // Use the fixed v1 Jaw Worm fixture (reset() now samples a random encounter).
+  CombatEnv env(start_v1_combat(0));
 
   // Enemy 0 alive; HP rolled in [40, 44]; no block. Enemy obs has NO max_hp
   // (ROB-59) — is_alive replaces it.
@@ -117,8 +121,7 @@ TEST(CombatEnv, ObsEnemyStatsAfterReset) {
 }
 
 TEST(CombatEnv, ObsIntentFirstTurnIsChompAttack) {
-  CombatEnv env;
-  env.reset(0);
+  CombatEnv env(start_v1_combat(0));
 
   // Jaw Worm turn 1 is always Chomp = 11 damage, no block, no buff.
   EXPECT_FLOAT_EQ(env.obs()[kEnemy0Base + kIntentOff + 0], 1.0f);   // is_attacking
@@ -128,8 +131,7 @@ TEST(CombatEnv, ObsIntentFirstTurnIsChompAttack) {
 }
 
 TEST(CombatEnv, ObsDeadEnemySlotsAreZero) {
-  CombatEnv env;
-  env.reset(0);
+  CombatEnv env(start_v1_combat(0));
   // v1 has one enemy; slots 1..N-1 are empty -> all zero (incl. is_alive).
   for (int slot = 1; slot < minispire::kMaxEnemies; ++slot) {
     const int base = CombatEnv::kPlayerObsSize + slot * CombatEnv::kEnemyObsStride;
