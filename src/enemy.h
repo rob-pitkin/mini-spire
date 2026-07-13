@@ -275,4 +275,36 @@ Enemy make_gremlin_nob(std::mt19937& rng);
 Enemy make_bolt_sentry(std::mt19937& rng);
 Enemy make_beam_sentry(std::mt19937& rng);
 
+// Display name for an enemy kind (ROB-79) — the single source of truth for the
+// TUI. No `default`: adding an EnemyKind is a compile warning until named here,
+// so this can't silently go stale.
+inline const char* enemy_name(EnemyKind kind) {
+  switch (kind) {
+    case EnemyKind::JawWorm:       return "Jaw Worm";
+    case EnemyKind::Cultist:       return "Cultist";
+    case EnemyKind::RedLouse:      return "Red Louse";
+    case EnemyKind::GreenLouse:    return "Green Louse";
+    case EnemyKind::AcidSlimeS:    return "Acid Slime (S)";
+    case EnemyKind::AcidSlimeM:    return "Acid Slime (M)";
+    case EnemyKind::SpikeSlimeS:   return "Spike Slime (S)";
+    case EnemyKind::SpikeSlimeM:   return "Spike Slime (M)";
+    case EnemyKind::FungiBeast:    return "Fungi Beast";
+    case EnemyKind::BlueSlaver:    return "Blue Slaver";
+    case EnemyKind::RedSlaver:     return "Red Slaver";
+    case EnemyKind::Looter:        return "Looter";
+    case EnemyKind::Mugger:        return "Mugger";
+    case EnemyKind::AcidSlimeL:    return "Acid Slime (L)";
+    case EnemyKind::SpikeSlimeL:   return "Spike Slime (L)";
+    case EnemyKind::FatGremlin:    return "Fat Gremlin";
+    case EnemyKind::MadGremlin:    return "Mad Gremlin";
+    case EnemyKind::SneakyGremlin: return "Sneaky Gremlin";
+    case EnemyKind::GremlinWizard: return "Gremlin Wizard";
+    case EnemyKind::ShieldGremlin: return "Shield Gremlin";
+    case EnemyKind::Lagavulin:     return "Lagavulin";
+    case EnemyKind::GremlinNob:    return "Gremlin Nob";
+    case EnemyKind::Sentry:        return "Sentry";
+  }
+  return "?";
+}
+
 }  // namespace minispire

@@ -120,6 +120,10 @@ class CombatEnv {
   // accessor only — not used during training.
   std::vector<int> enemy_max_hps() const;
 
+  // Per-enemy-slot kind, in slot order (ROB-79). The obs doesn't carry kind
+  // (not a stat); the TUI needs it to show each enemy's real name. Debug only.
+  std::vector<EnemyKind> enemy_kinds() const;
+
  private:
   CombatState state_;
   // Fixed-size array: pointer stays stable for the env's lifetime, so the

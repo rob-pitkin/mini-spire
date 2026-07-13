@@ -77,6 +77,32 @@ PYBIND11_MODULE(_core, m) {
       .value("Slimed", CardId::Slimed)
       .value("Dazed", CardId::Dazed);
 
+  // EnemyKind (ROB-79) — so the TUI can name per-slot enemies via enemy_kinds().
+  py::enum_<EnemyKind>(m, "EnemyKind")
+      .value("JawWorm", EnemyKind::JawWorm)
+      .value("Cultist", EnemyKind::Cultist)
+      .value("RedLouse", EnemyKind::RedLouse)
+      .value("GreenLouse", EnemyKind::GreenLouse)
+      .value("AcidSlimeS", EnemyKind::AcidSlimeS)
+      .value("AcidSlimeM", EnemyKind::AcidSlimeM)
+      .value("SpikeSlimeS", EnemyKind::SpikeSlimeS)
+      .value("SpikeSlimeM", EnemyKind::SpikeSlimeM)
+      .value("FungiBeast", EnemyKind::FungiBeast)
+      .value("BlueSlaver", EnemyKind::BlueSlaver)
+      .value("RedSlaver", EnemyKind::RedSlaver)
+      .value("Looter", EnemyKind::Looter)
+      .value("Mugger", EnemyKind::Mugger)
+      .value("AcidSlimeL", EnemyKind::AcidSlimeL)
+      .value("SpikeSlimeL", EnemyKind::SpikeSlimeL)
+      .value("FatGremlin", EnemyKind::FatGremlin)
+      .value("MadGremlin", EnemyKind::MadGremlin)
+      .value("SneakyGremlin", EnemyKind::SneakyGremlin)
+      .value("GremlinWizard", EnemyKind::GremlinWizard)
+      .value("ShieldGremlin", EnemyKind::ShieldGremlin)
+      .value("Lagavulin", EnemyKind::Lagavulin)
+      .value("GremlinNob", EnemyKind::GremlinNob)
+      .value("Sentry", EnemyKind::Sentry);
+
   py::class_<StatePiles>(m, "StatePiles")
       .def_readonly("hand", &StatePiles::hand)
       .def_readonly("draw", &StatePiles::draw)
@@ -134,6 +160,16 @@ PYBIND11_MODULE(_core, m) {
       py::arg("card_id"),
       "True if the card acts on a chosen enemy (deals damage or applies an "
       "enemy status); False for self/untargeted cards like Defend.");
+
+  // Display names, engine-sourced (ROB-79) — the TUI reads these so it never
+  // maintains its own name maps.
+  m.def(
+      "card_name", [](CardId id) { return std::string(card_name(id)); },
+      py::arg("card_id"), "Display name for a card.");
+  m.def(
+      "enemy_name",
+      [](EnemyKind kind) { return std::string(enemy_name(kind)); },
+      py::arg("kind"), "Display name for an enemy kind.");
 
   // A deterministic single-enemy (Jaw Worm) test/debug fixture env. reset()
   // samples a random encounter (ROB-66), so tests that need a known single-enemy
@@ -206,6 +242,9 @@ PYBIND11_MODULE(_core, m) {
       .def("enemy_max_hps", &CombatEnv::enemy_max_hps,
            "Per-enemy-slot max HP, in slot order (the obs omits enemy max_hp). "
            "Debug accessor for the TUI; not for the training loop.")
+      .def("enemy_kinds", &CombatEnv::enemy_kinds,
+           "Per-enemy-slot EnemyKind, in slot order. For the TUI to name each "
+           "enemy; not for the training loop.")
       .def("obs", &obs_view,
            "Current observation as a zero-copy numpy view (same buffer as "
            "reset/step return). For inspecting a state without stepping.")

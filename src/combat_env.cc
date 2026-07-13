@@ -250,4 +250,11 @@ std::vector<int> CombatEnv::enemy_max_hps() const {
   return out;
 }
 
+std::vector<EnemyKind> CombatEnv::enemy_kinds() const {
+  std::vector<EnemyKind> out;
+  out.reserve(state_.enemies.size());
+  for (const Enemy& e : state_.enemies) out.push_back(e.kind);
+  return out;
+}
+
 }  // namespace minispire

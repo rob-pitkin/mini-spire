@@ -50,6 +50,7 @@ struct Card {
 };
 
 struct CardData {
+  const char* name;  // display name — single source of truth (ROB-79)
   int cost;
   int damage;
   int block;
@@ -62,16 +63,16 @@ struct CardData {
 };
 
 inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
-    {CardId::Strike,     {1, 6,  0, {}, {}, false, CardType::Attack}},
-    {CardId::StrikePlus, {1, 9,  0, {}, {}, false, CardType::Attack}},
-    {CardId::Defend,     {1, 0,  5, {}, {}, false, CardType::Skill}},
-    {CardId::DefendPlus, {1, 0,  8, {}, {}, false, CardType::Skill}},
-    {CardId::Bash,       {2, 8,  0, {{Debuff::Vulnerable, 2, Target::Enemy}}, {}, false, CardType::Attack}},
-    {CardId::BashPlus,   {2, 10, 0, {{Debuff::Vulnerable, 3, Target::Enemy}}, {}, false, CardType::Attack}},
+    {CardId::Strike,     {"Strike",  1, 6,  0, {}, {}, false, CardType::Attack}},
+    {CardId::StrikePlus, {"Strike+", 1, 9,  0, {}, {}, false, CardType::Attack}},
+    {CardId::Defend,     {"Defend",  1, 0,  5, {}, {}, false, CardType::Skill}},
+    {CardId::DefendPlus, {"Defend+", 1, 0,  8, {}, {}, false, CardType::Skill}},
+    {CardId::Bash,       {"Bash",    2, 8,  0, {{Debuff::Vulnerable, 2, Target::Enemy}}, {}, false, CardType::Attack}},
+    {CardId::BashPlus,   {"Bash+",   2, 10, 0, {{Debuff::Vulnerable, 3, Target::Enemy}}, {}, false, CardType::Attack}},
     // Slimed: a status card (ROB-72). 1 energy, does nothing, Exhausts on play.
-    {CardId::Slimed,     {1, 0,  0, {}, {}, /*exhaust=*/true, CardType::Status}},
+    {CardId::Slimed,     {"Slimed",  1, 0,  0, {}, {}, /*exhaust=*/true, CardType::Status}},
     // Dazed (ROB-65): unplayable + ethereal. cost is moot (never played).
-    {CardId::Dazed,      {0, 0,  0, {}, {}, false, CardType::Status,
+    {CardId::Dazed,      {"Dazed",   0, 0,  0, {}, {}, false, CardType::Status,
                           /*unplayable=*/true, /*ethereal=*/true}},
 };
 
@@ -96,5 +97,9 @@ inline bool card_targets_enemy(const CardData& data) {
   }
   return false;
 }
+
+// Display name for a card (ROB-79) — reads CardData::name, the single source of
+// truth. The TUI uses this so it never maintains its own name map.
+inline const char* card_name(CardId id) { return CARD_DATABASE.at(id).name; }
 
 }  // namespace minispire
