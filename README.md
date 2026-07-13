@@ -29,16 +29,29 @@ using a standard Gymnasium interface — action masking included.
   [sb3-contrib `MaskablePPO`](https://sb3-contrib.readthedocs.io) expects.
 - 🎲 **Deterministic & reproducible** — every shuffle and enemy move draws from a
   single seeded RNG, so any fight replays exactly from its seed.
-- 🕹️ **Human-playable** — a `rich` terminal UI (`minispire-play`) to play the
-  same fight the agent trains on.
+- 🕹️ **Human-playable** — a `rich` terminal UI (`minispire-play`) with per-enemy
+  ASCII avatars, intents, and status readouts: a faithful terminal Slay the
+  Spire you can point at any Act 1 pool or custom deck.
 
-## Scope (v1)
+## Scope
 
-A single combat encounter: **Ironclad starter deck vs. the Jaw Worm**, one fight,
-fixed deck, one enemy. This is intentional — the combat alone is a non-trivial RL
-problem (energy management, card sequencing, blocking vs. attacking, deck
-stochasticity) without the orthogonal complexity of map traversal, shops, or
-relics. Those are on the [roadmap](roadmap.md).
+A **single combat encounter**, but the full Act 1 fight — no map, shops, or
+relics (yet). The combat alone is a rich RL problem (energy management, card
+sequencing, blocking vs. attacking, deck & enemy stochasticity, multi-enemy
+targeting), and it now spans the whole Act 1 roster:
+
+- **Every Act 1 enemy** — normal enemies, both slime sizes + splitting Large
+  slimes, the 5-gremlin gang, and all three elites (Gremlin Nob, Lagavulin, the
+  3 Sentries) — faithfully modeled from the wiki (Ascension 0): exact AI,
+  HP ranges, moves, powers (Ritual, Metallicize, Enrage, Artifact), status
+  cards (Slimed, Dazed), split/wake/enrage mechanics.
+- **Faithful weighted encounter selection** — `reset()` samples an Act 1
+  encounter from the real Weak / Strong / Elite pools (single enemies *and*
+  multi-enemy groups).
+- **Configurable** — pick the encounter pool and the player's deck at env
+  construction, so it doubles as a pure combat sandbox.
+
+Map traversal, card rewards, and relics are on the roadmap.
 
 ## Install
 
@@ -57,24 +70,37 @@ Requires Python 3.12, a C++17 compiler, and CMake ≥ 3.16.
 
 ## Quickstart
 
-**Play a fight yourself** (terminal UI):
+**Play a fight yourself** (terminal UI — a faithful terminal Slay the Spire):
 
 ```bash
-uv run minispire-play 0           # optional seed
+uv run minispire-play 0                      # seed (positional, optional)
+uv run minispire-play --pool elite 3         # draw an elite fight
+uv run minispire-play --deck "strike,strike,strike,defend,bash"   # custom deck
+uv run minispire-play --config fights/nob.yaml                    # saved scenario
 ```
+
+Flags (`--pool weak|strong|elite`, `--deck`, `--seed`) are the quick path; a
+`--config <yaml>` file (keys `seed` / `pool` / `deck`) is the reusable-scenario
+layer, and CLI flags override it.
 
 **Use the environment in Python** — it's a standard Gymnasium env:
 
 ```python
 import numpy as np
 from minispire.env import MinispireEnv
+from minispire._core import EncounterPool, CardId
 
-env = MinispireEnv()                     # or hp_reward_coeff=0.5 for HP shaping
-obs, info = env.reset(seed=0)
+# Defaults to the Weak Act 1 pool + Ironclad starter deck. Configure both:
+env = MinispireEnv(
+    pool=EncounterPool.Elite,            # Weak / Strong / Elite
+    deck=[CardId.Strike] * 4 + [CardId.Bash],   # or None for the starter
+    hp_reward_coeff=0.5,                 # optional HP-retention shaping
+)
+obs, info = env.reset(seed=0)            # samples an encounter from the pool
 
 done = False
 while not done:
-    mask = env.action_masks()            # bool[7] of legal actions
+    mask = env.action_masks()            # bool[NUM_ACTIONS] of legal actions
     action = int(np.random.choice(np.flatnonzero(mask)))
     obs, reward, terminated, truncated, info = env.step(action)
     done = terminated or truncated
@@ -92,20 +118,27 @@ otherwise).
 
 ## Environment specification
 
-**Observation** — a flat `float32[45]` vector, colored here by semantic group:
+**Observation** — a flat `float32[133]` vector, colored here by semantic group.
+It's fixed-size: always 5 enemy slots (an `is_alive` flag zeroes empty/dead
+ones), so the same vector fits a lone Cultist and a 5-slime swarm.
 
 ![Observation space layout](assets/obs_layout.png)
 
-Pile slices are *counts per card type* (not ordered lists), so the vector is
-fixed-width and order-invariant — and draw order stays hidden, just as a human
-player sees only which cards are in the pile, not their order.
+Statuses split into **debuffs** (Vulnerable/Weak/Frail/Entangle — tick down) and
+**powers** (Strength/Dexterity/Ritual/Metallicize/Enrage/Artifact — persistent),
+per entity. Pile slices are *counts per card type* (not ordered lists), so the
+vector stays fixed-width and order-invariant — draw order is hidden, just as a
+human sees only which cards are in a pile, not their order.
 
-**Action** — `Discrete(7)`: play one of six card types, or end the turn.
+**Action** — `Discrete(41)`: an 8-card-type × 5-target-slot cross-product, plus
+end-turn. `action = card × 5 + target`; untargeted cards (Defend) use slot 0.
 
 ![Action space](assets/action_space.png)
 
-Invalid actions (card not in hand, or insufficient energy) are masked each step;
-end-turn is always legal.
+Invalid actions (card not in hand, insufficient energy, dead target, or an
+unplayable status card like Dazed) are masked each step; end-turn is always
+legal. Obs/action sizes are exposed as `CombatEnv.OBS_SIZE` / `NUM_ACTIONS` so
+they never drift.
 
 **Reward** — `+1` win / `-1` loss, `0` otherwise. An optional terminal HP-shaping
 bonus (`hp_reward_coeff * current_hp / max_hp`, added on a win) rewards winning
@@ -141,7 +174,7 @@ analysis/    blog/figure-generation tooling
 ## Development
 
 ```bash
-uv run pytest python/tests        # Python tests (82)
+uv run pytest python/tests        # Python tests
 
 cmake -S . -B build               # C++ build + GoogleTest
 cmake --build build
@@ -150,10 +183,14 @@ ctest --test-dir build
 
 ## Roadmap
 
-- **M2** — throughput benchmark: steps/sec vs. batch size, episode stats.
-- **M3** — PPO vs. DQN vs. MCTS on the fixed benchmark (`clone()` exists for MCTS).
-- **Beyond** — harder enemies, randomized intents, larger card pool; then map
-  generation and persisting state between fights.
+Phase 1 (a hard, faithful environment) is done: the full Act 1 combat roster,
+multi-enemy fights, and weighted encounter selection. Next:
+
+- **Throughput benchmark** — steps/sec vs. batch size, episode stats.
+- **RL comparison** — PPO vs. DQN vs. MCTS on the fixed benchmark (`clone()`
+  exists for MCTS).
+- **Beyond combat** — larger card pool + card rewards, sequential fights, then
+  Act 1 map generation and persisting state between fights.
 
 Full detail in [roadmap.md](roadmap.md).
 

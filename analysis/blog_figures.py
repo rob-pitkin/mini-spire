@@ -80,50 +80,73 @@ ENV_STEPS_PER_SEC = 145_000
 TRAIN_FPS_BEST = 4_300
 TRAIN_FPS_CONTENDED = 1_135
 
-# --- Observation layout (src/combat_env.cc::compute_obs, 45 floats) ------------
-# (label, start_idx, count, color_key)
-_OBS_BLOCKS = [
-    ("Character\nhp, max_hp,\nblock, energy,\nenergy/turn", 0, 5, "agent"),
-    ("Char\nstatus\nV/W/S/D", 5, 4, "agent"),
-    ("Enemy\nhp, max,\nblock", 9, 3, "enemy"),
-    ("Enemy\nstatus\nV/W/S/D", 12, 4, "enemy"),
-    ("Enemy\nintent\natk/dmg/\nblk/buff", 16, 4, "enemy"),
-    ("Hand\ncounts", 20, 6, "deck"),
-    ("Draw\ncounts", 26, 6, "deck"),
-    ("Discard\ncounts", 32, 6, "deck"),
-    ("Exhaust\ncounts", 38, 6, "deck"),
-    ("Turn", 44, 1, "meta"),
-]
-
 # Dark fills want dark text on them; light fills (gold/tan) want dark text too.
 # A single dark ink for the on-block labels keeps them readable on every fill.
 _BLOCK_TEXT = "#222129"
 
 
+def _obs_blocks():
+    """Obs-layout blocks, widths DERIVED from the engine constants (ROB-79) so
+    the figure can't drift as statuses/cards are added. Abbreviated: the 5 enemy
+    slots collapse to one 'x5' block and the 4 piles to one block.
+    (label, width, color_key)."""
+    from minispire._core import CombatEnv as C
+    nd, npw = C.NUM_DEBUFFS, C.NUM_POWERS
+    stride, n = C.ENEMY_OBS_STRIDE, C.MAX_ENEMIES
+    cards = C.NUM_CARD_TYPES
+    return [
+        (f"Character\nstats (5)", 5, "agent"),
+        (f"Char\ndebuffs\n({nd})", nd, "agent"),
+        (f"Char\npowers\n({npw})", npw, "agent"),
+        (f"Enemy slot  x{n}\nstats(3) debuffs({nd})\npowers({npw}) intent(4)\n"
+         f"= {stride} each", stride * n, "enemy"),
+        (f"Pile counts  x4\n(hand/draw/discard/\nexhaust) x {cards} cards\n"
+         f"= {4 * cards}", 4 * cards, "deck"),
+        ("Turn", 1, "meta"),
+    ]
+
+
 def plot_obs_layout(out_dir: pathlib.Path) -> None:
-    """A linear band showing how the 45-float observation vector is carved up."""
+    """A linear band showing how the observation vector is carved up.
+
+    Abbreviated: the enemy slots and pile blocks are summarized rather than
+    enumerated (the point is the structure, not every individual cell). Widths
+    and the total are derived from the engine so this never goes stale."""
+    blocks = _obs_blocks()
+    total = sum(w for _, w, _ in blocks)
     with _theme():
-        fig, ax = plt.subplots(figsize=(11, 2.8))
-        for label, start, count, key in _OBS_BLOCKS:
+        fig, ax = plt.subplots(figsize=(12, 3.4))
+        start = 0
+        for label, width, key in blocks:
             ax.add_patch(
                 mpatches.Rectangle(
-                    (start, 0), count, 1, facecolor=PALETTE[key],
+                    (start, 0), width, 1, facecolor=PALETTE[key],
                     edgecolor=PALETTE["ink"], linewidth=1.5,
                 )
             )
-            ax.text(start + count / 2, 0.5, label, ha="center", va="center",
-                    fontsize=7, color=_BLOCK_TEXT)
-            ax.text(start + count / 2, 1.12, f"[{start}:{start + count}]",
-                    ha="center", va="bottom", fontsize=6.5, color=PALETTE["ink"])
-        ax.set_xlim(0, 45)
-        ax.set_ylim(-0.7, 1.4)
+            # Wide blocks fit the label inside; narrow blocks put it above with a
+            # short leader so the text doesn't overflow neighbors.
+            cx = start + width / 2
+            if width >= 12:
+                ax.text(cx, 0.5, label, ha="center", va="center",
+                        fontsize=7.5, color=_BLOCK_TEXT)
+            else:
+                ax.plot([cx, cx], [1.0, 1.18], color=PALETTE["ink"], linewidth=0.8)
+                ax.text(cx, 1.22, label, ha="center", va="bottom",
+                        fontsize=6.5, color=PALETTE["ink"])
+            start += width
+        ax.set_xlim(0, total)
+        ax.set_ylim(-0.9, 2.1)
         ax.set_yticks([])
-        ax.set_xticks(range(0, 46, 5))
-        ax.set_xlabel("float32 index")
-        ax.set_title("Observation space: a flat 45-float vector")
-        ax.text(0, -0.6, "V/W/S/D = Vulnerable, Weak, Strength, Dexterity stacks",
+        ax.set_xticks([])
+        from minispire._core import CombatEnv as _C
+        ax.set_title(f"Observation space: a flat {total}-float vector "
+                     f"({_C.MAX_ENEMIES} enemy slots, fixed size)")
+        ax.text(0, -0.75,
+                "debuffs = Vulnerable/Weak/Frail/Entangle   ·   "
+                "powers = Strength/Dexterity/Ritual/Metallicize/Enrage/Artifact",
                 fontsize=6.5, color=PALETTE["ink"])
-        for s in ("top", "right", "left"):
+        for s in ("top", "right", "left", "bottom"):
             ax.spines[s].set_visible(False)
         fig.tight_layout()
         fig.savefig(out_dir / "obs_layout.png", dpi=150)
@@ -131,23 +154,42 @@ def plot_obs_layout(out_dir: pathlib.Path) -> None:
 
 
 def plot_action_space(out_dir: pathlib.Path) -> None:
-    """The 7 discrete actions, with a note on masking."""
-    actions = ["Strike", "Defend", "Bash", "Strike+", "Defend+", "Bash+", "End turn"]
-    colors = [PALETTE["accent"]] * 6 + [PALETTE["meta"]]
+    """The Discrete(41) action space = 8 card types x 5 targets + end turn.
+
+    Abbreviated as a card x target grid rather than 41 individual boxes."""
+    cards = ["Strike", "Defend", "Bash", "Strike+", "Defend+", "Bash+",
+             "Slimed", "Dazed"]
+    n_targets = 5
     with _theme():
-        fig, ax = plt.subplots(figsize=(8, 2.4))
-        for i, (a, c) in enumerate(zip(actions, colors)):
-            ax.add_patch(mpatches.Rectangle(
-                (i, 0), 0.9, 1, facecolor=c, edgecolor=PALETTE["ink"], linewidth=1.5))
-            ax.text(i + 0.45, 0.5, f"{i}\n{a}", ha="center", va="center",
-                    fontsize=8, color=_BLOCK_TEXT)
-        ax.set_xlim(-0.1, 7)
-        ax.set_ylim(-0.5, 1.2)
+        fig, ax = plt.subplots(figsize=(9, 3.6))
+        # A grid: rows = card types, columns = target slots. Cell (r,c) is the
+        # action card_r * 5 + target_c.
+        for r, card in enumerate(cards):
+            for c in range(n_targets):
+                ax.add_patch(mpatches.Rectangle(
+                    (c, len(cards) - 1 - r), 0.92, 0.92,
+                    facecolor=PALETTE["accent"], edgecolor=PALETTE["ink"],
+                    linewidth=1.0))
+            ax.text(-0.2, len(cards) - 1 - r + 0.46, card, ha="right",
+                    va="center", fontsize=7.5, color=PALETTE["ink"])
+        # End-turn action sits apart.
+        ax.add_patch(mpatches.Rectangle(
+            (n_targets + 0.4, len(cards) / 2 - 0.5), 0.92, 0.92,
+            facecolor=PALETTE["meta"], edgecolor=PALETTE["ink"], linewidth=1.0))
+        ax.text(n_targets + 0.86, len(cards) / 2 - 0.02, "40\nEnd\nturn",
+                ha="center", va="center", fontsize=6.5, color=_BLOCK_TEXT)
+        for c in range(n_targets):
+            ax.text(c + 0.46, len(cards) + 0.15, f"→ enemy {c}", ha="center",
+                    va="bottom", fontsize=6.5, color=PALETTE["ink"])
+        ax.set_xlim(-2.2, n_targets + 1.6)
+        ax.set_ylim(-0.9, len(cards) + 0.7)
         ax.axis("off")
-        ax.set_title("Action space: Discrete(7) — play a card type, or end turn")
-        ax.text(3.5, -0.35,
-                "Invalid actions (not in hand / not enough energy) are masked each step.",
-                ha="center", fontsize=7.5, color=PALETTE["ink"])
+        ax.set_title("Action space: Discrete(41) = 8 card types x 5 target slots "
+                     "+ end turn")
+        ax.text((n_targets) / 2, -0.7,
+                "action = card x 5 + target.  Untargeted cards use slot 0; "
+                "invalid actions are masked each step.",
+                ha="center", fontsize=7, color=PALETTE["ink"])
         fig.tight_layout()
         fig.savefig(out_dir / "action_space.png", dpi=150)
         plt.close(fig)
