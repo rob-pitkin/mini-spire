@@ -42,6 +42,165 @@ JAW_WORM_CRITICAL = r"""
    |||||
 """.strip("\n")
 
+# --- Per-enemy avatars (ROB-79). Keyed by EnemyKind name (avatar_key). Enemies
+# without a specific avatar fall back to their category silhouette. Size/color
+# variants that look alike share one frame (mapped in _NORMAL/_CRITICAL below).
+
+# Cultist — hooded figure with glowing eyes.
+CULTIST_NORMAL = r"""
+   /###\
+  ( 0 0 )
+  /|~~~|\
+   |___|
+""".strip("\n")
+CULTIST_CRITICAL = r"""
+   /###\
+  ( x x )
+  /|~~~|\
+   |___|
+""".strip("\n")
+
+# Louse — a curled bug with legs.
+LOUSE_NORMAL = r"""
+   ,---.
+  ( o o )
+  <(===)>
+   ^^ ^^
+""".strip("\n")
+LOUSE_CRITICAL = r"""
+   ,---.
+  ( x x )
+  <(~~~)>
+   ^^ ^^
+""".strip("\n")
+
+# Acid slime — a drippy blob.
+ACID_SLIME_NORMAL = r"""
+   _____
+  / o o \
+ ( \___/ )
+  \~~~~~/
+   ' ' '
+""".strip("\n")
+ACID_SLIME_CRITICAL = r"""
+   _____
+  / x x \
+ ( \___/ )
+  \.....//
+""".strip("\n")
+
+# Spike slime — a blob with spikes.
+SPIKE_SLIME_NORMAL = r"""
+  /\ /\ /\
+ < o   o >
+  \ \_/ /
+   \___/
+""".strip("\n")
+SPIKE_SLIME_CRITICAL = r"""
+  /\ /\ /\
+ < x   x >
+  \ \_/ /
+   \...//
+""".strip("\n")
+
+# Fungi Beast — a spore-topped fungus.
+FUNGI_NORMAL = r"""
+   .-^-.
+  ( ooo )
+   \| |/
+   /| |\
+""".strip("\n")
+FUNGI_CRITICAL = r"""
+   .-^-.
+  ( xxx )
+   \| |/
+   /| |\
+""".strip("\n")
+
+# Slaver — a whip-wielding humanoid.
+SLAVER_NORMAL = r"""
+   ,==.
+  ( -- )~~
+  /|  |\
+  _|  |_
+""".strip("\n")
+SLAVER_CRITICAL = r"""
+   ,==.
+  ( xx )
+  /|  |\
+  _|  |_
+""".strip("\n")
+
+# Thief (Looter / Mugger) — a masked bandit.
+THIEF_NORMAL = r"""
+   ,--.
+  (=..=)
+  /|  |\
+  '|  |'
+""".strip("\n")
+THIEF_CRITICAL = r"""
+   ,--.
+  (=xx=)
+  /|  |\
+  '|  |'
+""".strip("\n")
+
+# Gremlin Wizard — a pointy-hatted caster.
+WIZARD_NORMAL = r"""
+    /\
+   /--\
+  ( >< )*
+  /|  |\
+""".strip("\n")
+WIZARD_CRITICAL = r"""
+    /\
+   /--\
+  ( xx )
+  /|  |\
+""".strip("\n")
+
+# Gremlin Nob — a hulking brute.
+NOB_NORMAL = r"""
+  __/\__
+ ( >  < )
+ /| || |\
+  |_||_|
+""".strip("\n")
+NOB_CRITICAL = r"""
+  __/\__
+ ( x  x )
+ /| || |\
+  |_||_|
+""".strip("\n")
+
+# Lagavulin — a shelled, sleeping beast.
+LAGAVULIN_NORMAL = r"""
+  .------.
+ ( zzzzzz )
+ | (____)|
+  \______/
+""".strip("\n")
+LAGAVULIN_CRITICAL = r"""
+  .------.
+ ( x  x  )
+ | (____)|
+  \______/
+""".strip("\n")
+
+# Sentry — a floating orb-turret.
+SENTRY_NORMAL = r"""
+   .====.
+  { (##) }
+   '===='
+    |  |
+""".strip("\n")
+SENTRY_CRITICAL = r"""
+   .====.
+  { (xx) }
+   '===='
+    |  |
+""".strip("\n")
+
 # Shared knockout frame.
 KO = r"""
 
@@ -51,13 +210,52 @@ KO = r"""
 
 """.strip("\n")
 
+# EnemyKind name (avatar_key) -> avatar frame. Look-alike variants share one:
+# all slimes by color, all louses, all slavers, both thieves.
 _NORMAL = {
     "IRONCLAD": IRONCLAD_NORMAL,
-    "JAW_WORM": JAW_WORM_NORMAL,
+    "JawWorm": JAW_WORM_NORMAL,
+    "Cultist": CULTIST_NORMAL,
+    "RedLouse": LOUSE_NORMAL,
+    "GreenLouse": LOUSE_NORMAL,
+    "AcidSlimeS": ACID_SLIME_NORMAL,
+    "AcidSlimeM": ACID_SLIME_NORMAL,
+    "AcidSlimeL": ACID_SLIME_NORMAL,
+    "SpikeSlimeS": SPIKE_SLIME_NORMAL,
+    "SpikeSlimeM": SPIKE_SLIME_NORMAL,
+    "SpikeSlimeL": SPIKE_SLIME_NORMAL,
+    "FungiBeast": FUNGI_NORMAL,
+    "BlueSlaver": SLAVER_NORMAL,
+    "RedSlaver": SLAVER_NORMAL,
+    "Looter": THIEF_NORMAL,
+    "Mugger": THIEF_NORMAL,
+    "GremlinWizard": WIZARD_NORMAL,
+    "GremlinNob": NOB_NORMAL,
+    "Lagavulin": LAGAVULIN_NORMAL,
+    "Sentry": SENTRY_NORMAL,
+    # Fat/Mad/Sneaky/Shield gremlins use the gremlin category fallback.
 }
 _CRITICAL = {
     "IRONCLAD": IRONCLAD_CRITICAL,
-    "JAW_WORM": JAW_WORM_CRITICAL,
+    "JawWorm": JAW_WORM_CRITICAL,
+    "Cultist": CULTIST_CRITICAL,
+    "RedLouse": LOUSE_CRITICAL,
+    "GreenLouse": LOUSE_CRITICAL,
+    "AcidSlimeS": ACID_SLIME_CRITICAL,
+    "AcidSlimeM": ACID_SLIME_CRITICAL,
+    "AcidSlimeL": ACID_SLIME_CRITICAL,
+    "SpikeSlimeS": SPIKE_SLIME_CRITICAL,
+    "SpikeSlimeM": SPIKE_SLIME_CRITICAL,
+    "SpikeSlimeL": SPIKE_SLIME_CRITICAL,
+    "FungiBeast": FUNGI_CRITICAL,
+    "BlueSlaver": SLAVER_CRITICAL,
+    "RedSlaver": SLAVER_CRITICAL,
+    "Looter": THIEF_CRITICAL,
+    "Mugger": THIEF_CRITICAL,
+    "GremlinWizard": WIZARD_CRITICAL,
+    "GremlinNob": NOB_CRITICAL,
+    "Lagavulin": LAGAVULIN_CRITICAL,
+    "Sentry": SENTRY_CRITICAL,
 }
 
 # Category silhouettes — the graceful fallback (ROB-79). An enemy with no
