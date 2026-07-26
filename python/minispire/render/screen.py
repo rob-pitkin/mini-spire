@@ -82,8 +82,13 @@ STATUS_COLORS = {
     "Artifact": "bright_yellow",
 }
 
-# CardId display names + colors for cost annotation.
 HP_BAR_WIDTH = 16
+
+
+def cost_str(cost: int) -> str:
+    """Display a card cost: 'X' for X-cost cards (kXCost sentinel, ROB-80),
+    else the number."""
+    return "X" if cost < 0 else str(cost)
 
 
 def format_hp_bar(hp: int, max_hp: int, width: int = HP_BAR_WIDTH) -> Text:
@@ -295,11 +300,11 @@ def render_hand(console: Console, env) -> list:
             action_map.append(card_id)
             entry.append(f"({local}) ", style="bold white")
             entry.append(f"{_core.card_name(card_id):<8}", style="white")
-            entry.append(f"{{{data.cost}}}", style="yellow")
+            entry.append(f"{{{cost_str(data.cost)}}}", style="yellow")
         else:
             entry.append("  -  ", style="dim")
             entry.append(f"{_core.card_name(card_id):<8}", style="dim")
-            entry.append(f"{{{data.cost}}}", style="dim")
+            entry.append(f"{{{cost_str(data.cost)}}}", style="dim")
 
         row.append(entry)
         if len(row) == 3:
@@ -330,7 +335,7 @@ def render_piles(console: Console, env) -> None:
         for c in cards:
             data = _core.card_data(c)
             out.append(f"    {_core.card_name(c):<8}", style="white")
-            out.append(f"{{{data.cost}}}\n", style="yellow")
+            out.append(f"{{{cost_str(data.cost)}}}\n", style="yellow")
         return out
 
     def fmt_counts(count_map) -> Text:
@@ -342,7 +347,7 @@ def render_piles(console: Console, env) -> None:
             data = _core.card_data(c)
             out.append(f"    {_core.card_name(c):<8}", style="white")
             out.append(f"x{count_map[c]}  ", style="bright_white")
-            out.append(f"{{{data.cost}}}\n", style="yellow")
+            out.append(f"{{{cost_str(data.cost)}}}\n", style="yellow")
         return out
 
     draw_total = sum(piles.draw.values())

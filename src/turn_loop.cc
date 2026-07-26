@@ -250,34 +250,53 @@ void fire_on_damaged(CombatState& state, int slot) {
   fire_triggers(state, slot, Trigger::HpAtOrBelow);
 }
 
+// Damage one enemy slot once, firing on_damaged and recording a death into
+// `died_slots`. Shared by single-target and AoE / multi-hit cards (ROB-80).
+void hit_enemy_once(CombatState& state, int slot, int base_damage,
+                    std::vector<int>& died_slots) {
+  Enemy& enemy = state.enemies[slot];
+  if (enemy.hp <= 0) return;
+  int hp_before = enemy.hp;
+  int dmg = compute_attack_damage(base_damage, state.character.powers,
+                                  state.character.debuffs, enemy.debuffs);
+  apply_damage_to_hp_block(enemy.hp, enemy.current_block, dmg);
+  if (enemy.hp < hp_before) fire_on_damaged(state, slot);
+  if (hp_before > 0 && enemy.hp <= 0) died_slots.push_back(slot);
+}
+
 void handle_play_card(CombatState& state, CardId card_id, int target) {
   const CardData& data = CARD_DATABASE.at(card_id);
 
-  // 1. Pay energy
-  state.character.energy -= data.cost;
+  // 1. Pay energy. X-cost cards (Whirlwind) spend ALL energy; X = the amount
+  // spent, used as the hit count.
+  int x = 0;
+  if (data.cost == kXCost) {
+    x = state.character.energy;
+    state.character.energy = 0;
+  } else {
+    state.character.energy -= data.cost;
+  }
+  // hits: -1 means "X hits" (Whirlwind); otherwise the literal count.
+  const int hits = (data.hits < 0) ? x : data.hits;
 
-  // Track an enemy that died from this card's damage so its on_death hook can
-  // fire *after* the card fully resolves (deferred — Split mutates the vector).
-  int died_slot = -1;
+  // The set of enemy slots this card resolves against.
+  std::vector<int> target_slots;
+  if (data.target == CardTarget::AllEnemies) {
+    for (std::size_t i = 0; i < state.enemies.size(); ++i) {
+      if (state.enemies[i].hp > 0) target_slots.push_back(static_cast<int>(i));
+    }
+  } else if (data.target == CardTarget::Enemy && target >= 0 &&
+             target < static_cast<int>(state.enemies.size())) {
+    target_slots.push_back(target);
+  }
 
-  // 2. Apply damage to the targeted enemy (ROB-60: target is the decoded enemy
-  // slot). The mask guarantees `target` is a living enemy for damage/enemy-
-  // status cards; guard defensively anyway.
-  // LIMITATION (multi-enemy): cards that hit *all* enemies (Cleave, Whirlwind)
-  // will iterate all living enemies instead of a single target — revisit when
-  // AoE cards land (ROB-60 FUTURE note in card.h).
-  if (target >= 0 && target < static_cast<int>(state.enemies.size())) {
-    Enemy& enemy = state.enemies[target];
-    if (data.damage > 0) {
-      int hp_before = enemy.hp;
-      int dmg = compute_attack_damage(data.damage, state.character.powers,
-                                      state.character.debuffs, enemy.debuffs);
-      apply_damage_to_hp_block(enemy.hp, enemy.current_block, dmg);
-      if (enemy.hp < hp_before) {
-        fire_on_damaged(state, target);  // Curl Up / Angry / wake / split interrupt
-      }
-      if (hp_before > 0 && enemy.hp <= 0) {
-        died_slot = target;  // defer on_death until the card resolves
+  // 2. Damage: `hits` times, to each target slot. Deaths deferred (on_death may
+  // mutate state.enemies via a split).
+  std::vector<int> died_slots;
+  if (data.damage > 0) {
+    for (int h = 0; h < hits; ++h) {
+      for (int slot : target_slots) {
+        hit_enemy_once(state, slot, data.damage, died_slots);
       }
     }
   }
@@ -293,9 +312,22 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
     if (block_gained > 0) state.character.current_block += block_gained;
   }
 
-  // 4. Apply debuffs/powers to the chosen target (enemy-targeted) or self.
-  for (const auto& app : data.applies_debuffs) apply_debuff(state, app, target);
-  for (const auto& app : data.applies_powers) apply_power(state, app, target);
+  // 4. Apply debuffs/powers. Self/None applications route to the player (their
+  // Target::Character); enemy applications go to each target slot (AoE loops).
+  for (const auto& app : data.applies_debuffs) {
+    if (app.target == Target::Character) {
+      apply_debuff(state, app, -1);
+    } else {
+      for (int slot : target_slots) apply_debuff(state, app, slot);
+    }
+  }
+  for (const auto& app : data.applies_powers) {
+    if (app.target == Target::Character) {
+      apply_power(state, app, -1);
+    } else {
+      for (int slot : target_slots) apply_power(state, app, slot);
+    }
+  }
 
   // 5. Move card from hand to discard or exhaust
   int idx = find_first_in_hand(state.current_hand, card_id);
@@ -319,14 +351,15 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
     }
   }
 
-  // 6. Deferred on_death hook (ROB-62). Fires after the card fully resolves so
-  // a Split can safely mutate state.enemies. Runs before the terminal check so
-  // a split's spawned children prevent a premature "all enemies dead" win.
-  if (died_slot >= 0) {
-    fire_on_death(state, died_slot);
+  // 6. Deferred on_death hooks (ROB-62). Fire after the card fully resolves so a
+  // Split can safely mutate state.enemies. Runs before the terminal check so a
+  // split's spawned children prevent a premature "all enemies dead" win. An AoE
+  // card can kill several enemies at once (ROB-80) — fire each.
+  if (!died_slots.empty()) {
+    for (int slot : died_slots) fire_on_death(state, slot);
 
     // 6b. BecameLastEnemy triggers (ROB-77 via ROB-65). Checked AFTER on_death
-    // (a split could have added enemies). If a kill left exactly one living
+    // (a split could have added enemies). If the kills left exactly one living
     // enemy, fire its BecameLastEnemy effects — e.g. the Shield Gremlin rewrites
     // its queued Protect to attack once alone.
     if (count_living(state) == 1) {
@@ -648,7 +681,10 @@ std::vector<bool> valid_actions(const CombatState& state) {
     const CardData& data = CARD_DATABASE.at(d.card);
     if (data.unplayable) continue;  // Dazed etc. — never a legal action (ROB-65)
     const bool in_hand = find_first_in_hand(state.current_hand, d.card) >= 0;
-    const bool affordable = state.character.energy >= data.cost;
+    // X-cost cards (ROB-80) are always affordable (X = current energy, may be 0);
+    // fixed-cost cards need enough energy.
+    const bool affordable =
+        data.cost == kXCost || state.character.energy >= data.cost;
     if (!in_hand || !affordable) continue;
     // Entangle blocks all Attack-type cards for a turn (ROB-75).
     if (entangled && data.type == CardType::Attack) continue;

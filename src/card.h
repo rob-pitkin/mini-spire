@@ -17,18 +17,50 @@ enum class CardId {
   StrikePlus,
   DefendPlus,
   BashPlus,
-  // Status cards (added mid-fight by enemies; not part of any deck). Grouped at
-  // the end. Slimed: 1-cost do-nothing that Exhausts on play (ROB-72).
+  // Status cards (added mid-fight by enemies; not part of any deck). Slimed:
+  // 1-cost do-nothing that Exhausts on play (ROB-72).
   Slimed,
-  // Dazed (ROB-65 Sentries): UNPLAYABLE (masked, never a legal action) and
-  // Ethereal (exhausts at end of turn if still in hand).
+  // Dazed (ROB-65 Sentries): UNPLAYABLE + Ethereal.
   Dazed,
+  // Ironclad card pool, Tier A (ROB-80) — pure-data cards (AoE / multi-hit /
+  // X-cost). Appended (CardId values are action indices; append-only).
+  // Generated from data/ironclad_cards.csv via analysis/gen_cards.py.
+  Cleave,
+  CleavePlus,
+  Clothesline,
+  ClotheslinePlus,
+  Flex,
+  FlexPlus,
+  IronWave,
+  IronWavePlus,
+  Thunderclap,
+  ThunderclapPlus,
+  TwinStrike,
+  TwinStrikePlus,
+  Carnage,
+  CarnagePlus,
+  Disarm,
+  DisarmPlus,
+  GhostlyArmor,
+  GhostlyArmorPlus,
+  Intimidate,
+  IntimidatePlus,
+  Pummel,
+  PummelPlus,
+  Shockwave,
+  ShockwavePlus,
+  Uppercut,
+  UppercutPlus,
+  Whirlwind,
+  WhirlwindPlus,
+  Bludgeon,
+  BludgeonPlus,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
 // action-space size (card x target). Update CARD_DATABASE + kObsCardOrder in
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
-inline constexpr int kNumCardTypes = 8;
+inline constexpr int kNumCardTypes = 38;
 
 // A card's inherent StS type. This is a real property, NOT inferable from
 // damage/block: an Attack can gain block (Body Slam) and a Skill can deal
@@ -42,9 +74,22 @@ enum class CardType {
   Curse,
 };
 
+// How a card is targeted (ROB-80). Replaces the old derived predicate: an AoE
+// card "targets an enemy" but picks none, so targeting must be an explicit
+// property.
+enum class CardTarget {
+  None,        // no target (Defend) — canonical action slot 0
+  Enemy,       // pick one living enemy (Strike, Bash)
+  AllEnemies,  // hits every living enemy, no pick (Cleave) — canonical slot 0
+  Self,        // affects the player (Flex) — canonical slot 0
+};
+
+// X-cost sentinel (ROB-80): playing an X-cost card (Whirlwind) spends ALL
+// current energy; X = the energy spent. Stored in CardData::cost.
+inline constexpr int kXCost = -2;
+
 // FUTURE: per-instance card state (e.g. Ritual Dagger's accumulated damage,
 // Searing Blow's cumulative upgrades) will require widening this struct.
-// v1 cards don't need it.
 struct Card {
   CardId card_id;
 };
@@ -53,49 +98,71 @@ struct CardData {
   const char* name;  // display name — single source of truth (ROB-79)
   int cost;
   int damage;
-  int block;
+  int hits = 1;  // multi-hit: total damage = damage x hits (Strength per hit).
+                 // -1 = X hits (Whirlwind: hits == energy spent).
+  int block = 0;
+  CardTarget target = CardTarget::Enemy;
   std::vector<DebuffApplication> applies_debuffs;
   std::vector<PowerApplication> applies_powers;
-  bool exhaust = false;  // exhausts when PLAYED (Slimed)
   CardType type = CardType::Attack;
-  bool unplayable = false;  // never a legal action (Dazed) — masked out
+  bool exhaust = false;     // exhausts when PLAYED (Slimed)
   bool ethereal = false;    // exhausts at end of turn if unplayed in hand (Dazed)
+  bool unplayable = false;  // never a legal action (Dazed) — masked out
 };
 
+// CardData row order: name, cost, damage, hits, block, target, debuffs, powers,
+// type, exhaust, ethereal, unplayable.
 inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
-    {CardId::Strike,     {"Strike",  1, 6,  0, {}, {}, false, CardType::Attack}},
-    {CardId::StrikePlus, {"Strike+", 1, 9,  0, {}, {}, false, CardType::Attack}},
-    {CardId::Defend,     {"Defend",  1, 0,  5, {}, {}, false, CardType::Skill}},
-    {CardId::DefendPlus, {"Defend+", 1, 0,  8, {}, {}, false, CardType::Skill}},
-    {CardId::Bash,       {"Bash",    2, 8,  0, {{Debuff::Vulnerable, 2, Target::Enemy}}, {}, false, CardType::Attack}},
-    {CardId::BashPlus,   {"Bash+",   2, 10, 0, {{Debuff::Vulnerable, 3, Target::Enemy}}, {}, false, CardType::Attack}},
-    // Slimed: a status card (ROB-72). 1 energy, does nothing, Exhausts on play.
-    {CardId::Slimed,     {"Slimed",  1, 0,  0, {}, {}, /*exhaust=*/true, CardType::Status}},
-    // Dazed (ROB-65): unplayable + ethereal. cost is moot (never played).
-    {CardId::Dazed,      {"Dazed",   0, 0,  0, {}, {}, false, CardType::Status,
-                          /*unplayable=*/true, /*ethereal=*/true}},
+    // Starter deck.
+    {CardId::Strike,     {"Strike",  1, 6, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack}},
+    {CardId::StrikePlus, {"Strike+", 1, 9, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack}},
+    {CardId::Defend,     {"Defend",  1, 0, 1, 5, CardTarget::None,  {}, {}, CardType::Skill}},
+    {CardId::DefendPlus, {"Defend+", 1, 0, 1, 8, CardTarget::None,  {}, {}, CardType::Skill}},
+    {CardId::Bash,       {"Bash",    2, 8, 1, 0, CardTarget::Enemy, {{Debuff::Vulnerable, 2, Target::Enemy}}, {}, CardType::Attack}},
+    {CardId::BashPlus,   {"Bash+",   2, 10, 1, 0, CardTarget::Enemy, {{Debuff::Vulnerable, 3, Target::Enemy}}, {}, CardType::Attack}},
+    // Status cards (enemy-added, not in the CSV). Slimed: exhausts on play.
+    {CardId::Slimed,     {"Slimed",  1, 0, 1, 0, CardTarget::None, {}, {}, CardType::Status, /*exhaust=*/true}},
+    // Dazed: unplayable + ethereal.
+    {CardId::Dazed,      {"Dazed",   0, 0, 1, 0, CardTarget::None, {}, {}, CardType::Status, /*exhaust=*/false, /*ethereal=*/true, /*unplayable=*/true}},
+    // --- Ironclad Tier A (ROB-80), generated from data/ironclad_cards.csv ---
+    {CardId::Cleave, {"Cleave", 1, 8, 1, 0, CardTarget::AllEnemies, {}, {}, CardType::Attack, false, false}},
+    {CardId::CleavePlus, {"Cleave+", 1, 11, 1, 0, CardTarget::AllEnemies, {}, {}, CardType::Attack, false, false}},
+    {CardId::Clothesline, {"Clothesline", 2, 12, 1, 0, CardTarget::Enemy, {{Debuff::Weak, 2, Target::Enemy}}, {}, CardType::Attack, false, false}},
+    {CardId::ClotheslinePlus, {"Clothesline+", 2, 14, 1, 0, CardTarget::Enemy, {{Debuff::Weak, 3, Target::Enemy}}, {}, CardType::Attack, false, false}},
+    {CardId::Flex, {"Flex", 0, 0, 0, 0, CardTarget::Self, {}, {{Power::Strength, 2, Target::Character}}, CardType::Skill, false, false}},
+    {CardId::FlexPlus, {"Flex+", 0, 0, 0, 0, CardTarget::Self, {}, {{Power::Strength, 4, Target::Character}}, CardType::Skill, false, false}},
+    {CardId::IronWave, {"Iron Wave", 1, 5, 1, 5, CardTarget::Enemy, {}, {}, CardType::Attack, false, false}},
+    {CardId::IronWavePlus, {"Iron Wave+", 1, 7, 1, 7, CardTarget::Enemy, {}, {}, CardType::Attack, false, false}},
+    {CardId::Thunderclap, {"Thunderclap", 1, 4, 1, 0, CardTarget::AllEnemies, {{Debuff::Vulnerable, 1, Target::Enemy}}, {}, CardType::Attack, false, false}},
+    {CardId::ThunderclapPlus, {"Thunderclap+", 1, 7, 1, 0, CardTarget::AllEnemies, {{Debuff::Vulnerable, 1, Target::Enemy}}, {}, CardType::Attack, false, false}},
+    {CardId::TwinStrike, {"Twin Strike", 1, 5, 2, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false}},
+    {CardId::TwinStrikePlus, {"Twin Strike+", 1, 7, 2, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false}},
+    {CardId::Carnage, {"Carnage", 2, 20, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, true}},
+    {CardId::CarnagePlus, {"Carnage+", 2, 28, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, true}},
+    {CardId::Disarm, {"Disarm", 1, 0, 1, 0, CardTarget::Enemy, {}, {{Power::Strength, -2, Target::Enemy}}, CardType::Skill, true, false}},
+    {CardId::DisarmPlus, {"Disarm+", 1, 0, 1, 0, CardTarget::Enemy, {}, {{Power::Strength, -3, Target::Enemy}}, CardType::Skill, true, false}},
+    {CardId::GhostlyArmor, {"Ghostly Armor", 1, 0, 0, 10, CardTarget::None, {}, {}, CardType::Skill, false, true}},
+    {CardId::GhostlyArmorPlus, {"Ghostly Armor+", 1, 0, 0, 13, CardTarget::None, {}, {}, CardType::Skill, false, true}},
+    {CardId::Intimidate, {"Intimidate", 0, 0, 0, 0, CardTarget::AllEnemies, {{Debuff::Weak, 1, Target::Enemy}}, {}, CardType::Skill, true, false}},
+    {CardId::IntimidatePlus, {"Intimidate+", 0, 0, 0, 0, CardTarget::AllEnemies, {{Debuff::Weak, 2, Target::Enemy}}, {}, CardType::Skill, true, false}},
+    {CardId::Pummel, {"Pummel", 1, 2, 4, 0, CardTarget::Enemy, {}, {}, CardType::Attack, true, false}},
+    {CardId::PummelPlus, {"Pummel+", 1, 2, 5, 0, CardTarget::Enemy, {}, {}, CardType::Attack, true, false}},
+    {CardId::Shockwave, {"Shockwave", 2, 0, 0, 0, CardTarget::AllEnemies, {{Debuff::Weak, 3, Target::Enemy}, {Debuff::Vulnerable, 3, Target::Enemy}}, {}, CardType::Skill, true, false}},
+    {CardId::ShockwavePlus, {"Shockwave+", 2, 0, 0, 0, CardTarget::AllEnemies, {{Debuff::Weak, 5, Target::Enemy}, {Debuff::Vulnerable, 5, Target::Enemy}}, {}, CardType::Skill, true, false}},
+    {CardId::Uppercut, {"Uppercut", 2, 13, 1, 0, CardTarget::Enemy, {{Debuff::Weak, 1, Target::Enemy}, {Debuff::Vulnerable, 1, Target::Enemy}}, {}, CardType::Attack, false, false}},
+    {CardId::UppercutPlus, {"Uppercut+", 2, 13, 1, 0, CardTarget::Enemy, {{Debuff::Weak, 2, Target::Enemy}, {Debuff::Vulnerable, 2, Target::Enemy}}, {}, CardType::Attack, false, false}},
+    {CardId::Whirlwind, {"Whirlwind", kXCost, 5, -1, 0, CardTarget::AllEnemies, {}, {}, CardType::Attack, false, false}},
+    {CardId::WhirlwindPlus, {"Whirlwind+", kXCost, 8, -1, 0, CardTarget::AllEnemies, {}, {}, CardType::Attack, false, false}},
+    {CardId::Bludgeon, {"Bludgeon", 3, 32, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false}},
+    {CardId::BludgeonPlus, {"Bludgeon+", 3, 42, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false}},
 };
 
-// Whether a card acts on a chosen enemy (vs. the player / self). Derived, not a
-// stored field: a card is enemy-targeting iff it deals damage or applies a
-// status to an enemy. This drives the (card x target) action space (ROB-60) —
-// targeted cards get a target index and are masked on the target being alive;
-// untargeted cards (Defend) use the canonical offset-0 slot.
-//
-// FUTURE (AoE): a card that hits *all* enemies (Cleave, Whirlwind) is still
-// "targeting an enemy" by this predicate, but it does not *pick* one. When such
-// cards land, "targets an enemy" and "needs a specific target index" diverge —
-// AoE cards should resolve over all living enemies and not consume a target
-// index. Revisit the masking/decoding fork then.
+// Whether a card needs the player to PICK a specific enemy slot (ROB-80). Only
+// CardTarget::Enemy does — it gets a target index and is masked on that slot
+// being alive. None / AllEnemies / Self all resolve without a pick and use the
+// canonical action slot 0 (AoE loops all living enemies at resolve time).
 inline bool card_targets_enemy(const CardData& data) {
-  if (data.damage > 0) return true;
-  for (const DebuffApplication& app : data.applies_debuffs) {
-    if (app.target == Target::Enemy) return true;
-  }
-  for (const PowerApplication& app : data.applies_powers) {
-    if (app.target == Target::Enemy) return true;
-  }
-  return false;
+  return data.target == CardTarget::Enemy;
 }
 
 // Display name for a card (ROB-79) — reads CardData::name, the single source of

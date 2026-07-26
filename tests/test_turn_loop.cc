@@ -1740,3 +1740,90 @@ TEST(TurnLoop, BeamDealsNineDamage) {
   ASSERT_TRUE(apply_action(s, end_turn_action()));
   EXPECT_EQ(s.character.hp, hp_before - 9);
 }
+
+// ============================================================================
+// Ironclad Tier A: AoE, multi-hit, X-cost (ROB-80)
+// ============================================================================
+
+// Two Jaw Worms in slots 0 and 1, player at full energy.
+static CombatState two_enemy_state() {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  s.enemies.push_back(make_jaw_worm(rng));
+  s.enemies.push_back(make_jaw_worm(rng));
+  s.character.energy = 3;
+  return s;
+}
+
+TEST(TurnLoop, CleaveHitsAllEnemies) {
+  CombatState s = two_enemy_state();
+  int hp0 = s.enemies[0].hp, hp1 = s.enemies[1].hp;
+  s.current_hand.push_back(Card{CardId::Cleave});  // 8 dmg to ALL
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Cleave, 0)));
+
+  EXPECT_EQ(s.enemies[0].hp, hp0 - 8);
+  EXPECT_EQ(s.enemies[1].hp, hp1 - 8);  // both hit
+}
+
+TEST(TurnLoop, ThunderclapAoeDamageAndVulnerable) {
+  CombatState s = two_enemy_state();
+  s.current_hand.push_back(Card{CardId::Thunderclap});  // 4 dmg + 1 Vuln to ALL
+  int hp0 = s.enemies[0].hp, hp1 = s.enemies[1].hp;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Thunderclap, 0)));
+
+  EXPECT_EQ(s.enemies[0].hp, hp0 - 4);
+  EXPECT_EQ(s.enemies[1].hp, hp1 - 4);
+  EXPECT_EQ(s.enemies[0].debuffs[Debuff::Vulnerable], 1);
+  EXPECT_EQ(s.enemies[1].debuffs[Debuff::Vulnerable], 1);
+}
+
+TEST(TurnLoop, TwinStrikeHitsTwice) {
+  CombatState s = two_enemy_state();
+  int hp0 = s.enemies[0].hp;
+  s.current_hand.push_back(Card{CardId::TwinStrike});  // 5 dmg x 2
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::TwinStrike, 0)));
+  EXPECT_EQ(s.enemies[0].hp, hp0 - 10);   // 5 x 2, single target
+  EXPECT_EQ(s.enemies[1].hp, s.enemies[1].max_hp);  // not an AoE
+}
+
+TEST(TurnLoop, MultiHitAppliesStrengthPerHit) {
+  // Twin Strike (5x2) with +3 Strength -> (5+3)x2 = 16, not 5x2+3.
+  CombatState s = two_enemy_state();
+  s.character.powers[Power::Strength] = 3;
+  int hp0 = s.enemies[0].hp;
+  s.current_hand.push_back(Card{CardId::TwinStrike});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::TwinStrike, 0)));
+  EXPECT_EQ(s.enemies[0].hp, hp0 - 16);
+}
+
+TEST(TurnLoop, WhirlwindXCostHitsPerEnergy) {
+  CombatState s = two_enemy_state();
+  s.character.energy = 3;  // X = 3
+  int hp0 = s.enemies[0].hp, hp1 = s.enemies[1].hp;
+  s.current_hand.push_back(Card{CardId::Whirlwind});  // 5 dmg x X to ALL
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Whirlwind, 0)));
+
+  EXPECT_EQ(s.character.energy, 0);       // spent all energy
+  EXPECT_EQ(s.enemies[0].hp, hp0 - 15);   // 5 x 3
+  EXPECT_EQ(s.enemies[1].hp, hp1 - 15);   // AoE, both
+}
+
+TEST(TurnLoop, FlexGivesPlayerStrength) {
+  CombatState s = two_enemy_state();
+  s.current_hand.push_back(Card{CardId::Flex});  // +2 Strength to self
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Flex, 0)));
+  EXPECT_EQ(s.character.powers[Power::Strength], 2);
+}
+
+TEST(TurnLoop, DisarmReducesEnemyStrength) {
+  CombatState s = two_enemy_state();
+  s.current_hand.push_back(Card{CardId::Disarm});  // -2 Strength to target
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Disarm, 0)));
+  EXPECT_EQ(s.enemies[0].powers[Power::Strength], -2);
+  EXPECT_EQ(s.enemies[1].powers.count(Power::Strength), 0u);  // single target
+}

@@ -1,0 +1,151 @@
+id,name,type,rarity,cost,target,damage,hits,block,draw,energy,applies,exhaust,ethereal,innate,retain,special,upgrade_of
+Bash,Bash,Attack,Starter,2,Enemy,8,1,0,0,0,Vulnerable:2@Enemy,FALSE,FALSE,FALSE,FALSE,n/a,n/a
+BashPlus,Bash+,Attack,Starter,2,Enemy,10,1,0,0,0,Vulnerable:3@Enemy,FALSE,FALSE,FALSE,FALSE,n/a,Bash
+Strike,Strike,Attack,Starter,1,Enemy,6,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,n/a
+StrikePlus,Strike+,Attack,Starter,1,Enemy,9,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,Strike
+Defend,Defend,Skill,Starter,1,None,0,0,5,0,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,n/a
+DefendPlus,Defend+,Skill,Starter,1,None,0,0,8,0,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,Defend
+Anger,Anger,Attack,Common,0,Enemy,6,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Add a copy of this card to your discard pile.,n/a
+AngerPlus,Anger+,Attack,Common,0,Enemy,8,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Add a copy of this card to your discard pile.,Anger
+Armaments,Armaments,Skill,Common,1,None,0,0,5,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Upgrade a card in your hand for the rest of combat,n/a
+ArmamentsPlus,Armaments+,Skill,Common,1,None,0,0,5,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Upgrade all cards in your hand for the rest of combat,Armaments
+BodySlam,Body Slam,Attack,Common,1,Enemy,0,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Deal damage equal to your current block,n/a
+BodySlamPlus,Body Slam+,Attack,Common,0,Enemy,0,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Deal damage equal to your current block,BodySlam
+Clash,Clash,Attack,Common,0,Enemy,14,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Can only be played if every card in your hand is an Attack,n/a
+ClashPlus,Clash+,Attack,Common,0,Enemy,18,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Can only be played if every card in your hand is an Attack,Clash
+Cleave,Cleave,Attack,Common,1,AllEnemies,8,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,n/a
+CleavePlus,Cleave+,Attack,Common,1,AllEnemies,11,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,Cleave
+Clothesline,Clothesline,Attack,Common,2,Enemy,12,1,0,0,0,Weak:2@Enemy,FALSE,FALSE,FALSE,FALSE,n/a,n/a
+ClotheslinePlus,Clothesline+,Attack,Common,2,Enemy,14,1,0,0,0,Weak:3@Enemy,FALSE,FALSE,FALSE,FALSE,n/a,Clothesline
+Flex,Flex,Skill,Common,0,Self,0,0,0,0,0,Strength:2@Self,FALSE,FALSE,FALSE,FALSE,n/a,n/a
+FlexPlus,Flex+,Skill,Common,0,Self,0,0,0,0,0,Strength:4@Self,FALSE,FALSE,FALSE,FALSE,n/a,Flex
+Havoc,Havoc,Skill,Common,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Play the top card of your draw pile and exhaust it,n/a
+HavocPlus,Havoc+,Skill,Common,0,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Play the top card of your draw pile and exhaust it,Havoc
+Headbutt,Headbutt,Attack,Common,1,Enemy,9,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Put a card from your discard pile on top of your draw pile,n/a
+HeadbuttPlus,Headbutt+,Attack,Common,1,Enemy,12,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Put a card from your discard pile on top of your draw pile,Headbutt
+HeavyBlade,Heavy Blade,Attack,Common,2,Enemy,14,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Strength affects Heavy Blade 3 times,n/a
+HeavyBladePlus,Heavy Blade+,Attack,Common,2,Enemy,14,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Strength affects Heavy Blade 5 times,HeavyBlade
+IronWave,Iron Wave,Attack,Common,1,Enemy/None,5,1,5,0,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,n/a
+IronWavePlus,Iron Wave+,Attack,Common,1,Enemy/None,7,1,7,0,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,IronWave
+PerfectedStrike,Perfected Strike,Attack,Common,2,Enemy,6,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Deals 2 additional damage for ALL your cards containing ""Strike""",n/a
+PerfectedStrikePlus,Perfected Strike+,Attack,Common,2,Enemy,6,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Deals 3 additional damage for ALL your cards containing ""Strike""",PerfectedStrike
+PommelStrike,Pommel Strike,Attack,Common,1,Enemy,9,1,0,1,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,n/a
+PommelStrikePlus,Pommel Strike+,Attack,Common,1,Enemy,10,1,0,2,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,PommelStrike
+ShrugItOff,Shrug It Off,Skill,Common,1,None,0,0,8,1,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,n/a
+ShrugItOffPlus,Shrug It Off+,Skill,Common,1,None,0,0,11,1,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,ShrugItOff
+SwordBoomerang,Sword Boomerang,Attack,Common,1,Enemy,3,3,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Deal 3 damage to a random enemy 3 times,n/a
+SwordBoomerangPlus,Sword Boomerang+,Attack,Common,1,Enemy,3,4,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Deal 3 damage to a random enemy 4 times,SwordBoomerang
+Thunderclap,Thunderclap,Attack,Common,1,AllEnemies,4,1,0,0,0,Vulnerable:1@AllEnemies,FALSE,FALSE,FALSE,FALSE,n/a,n/a
+ThunderclapPlus,Thunderclap+,Attack,Common,1,AllEnemies,7,1,0,0,0,Vulnerable:1@AllEnemies,FALSE,FALSE,FALSE,FALSE,n/a,Thunderclap
+TrueGrit,True Grit,Skill,Common,1,None,0,0,7,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Exhaust a random card from your hand,n/a
+TrueGritPlus,True Grit+,Skill,Common,1,None,0,0,9,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Exhaust a card from your hand,TrueGrit
+TwinStrike,Twin Strike,Attack,Common,1,Enemy,5,2,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,n/a
+TwinStrikePlus,Twin Strike+,Attack,Common,1,Enemy,7,2,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,TwinStrike
+Warcry,Warcry,Skill,Common,0,None,0,0,0,1,0,n/a,TRUE,FALSE,FALSE,FALSE,Put a card from your hand onto the top of your draw pile,n/a
+WarcryPlus,Warcry+,Skill,Common,0,None,0,0,0,2,0,n/a,TRUE,FALSE,FALSE,FALSE,Put a card from your hand onto the top of your draw pile,Warcry
+WildStrike,Wild Strike,Attack,Common,1,Enemy,12,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Shuffle a Wound into your draw pile,n/a
+WildStrikePlus,Wild Strike+,Attack,Common,1,Enemy,17,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Shuffle a Wound into your draw pile,WildStrike
+BattleTrance,Battle Trance,Skill,Uncommon,0,None,0,0,0,3,0,n/a,FALSE,FALSE,FALSE,FALSE,You cannot draw additional cards this turn,n/a
+BattleTrancePlus,Battle Trance+,Skill,Uncommon,0,None,0,0,0,4,0,n/a,FALSE,FALSE,FALSE,FALSE,You cannot draw additional cards this turn,BattleTrance
+BloodForBlood,Blood For Blood,Attack,Uncommon,4,Enemy,18,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Costs 1 less energy for each time you lose HP in combat.,n/a
+BloodForBloodPlus,Blood For Blood+,Attack,Uncommon,3,Enemy,22,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Costs 1 less energy for each time you lose HP in combat.,BloodForBlood
+Bloodletting,Bloodletting,Skill,Uncommon,0,None,0,0,0,0,2,n/a,FALSE,FALSE,FALSE,FALSE,Lose 3 HP,n/a
+BloodlettingPlus,Bloodletting+,Skill,Uncommon,0,None,0,0,0,0,3,n/a,FALSE,FALSE,FALSE,FALSE,Lose 3 HP,Bloodletting
+BurningPact,Burning Pact,Skill,Uncommon,1,None,0,0,0,2,0,n/a,FALSE,FALSE,FALSE,FALSE,Exhaust 1 card,n/a
+BurningPactPlus,Burning Pact+,Skill,Uncommon,1,None,0,0,0,3,0,n/a,FALSE,FALSE,FALSE,FALSE,Exhaust 1 card,BurningPact
+Carnage,Carnage,Attack,Uncommon,2,Enemy,20,1,0,0,0,n/a,FALSE,TRUE,FALSE,FALSE,n/a,n/a
+CarnagePlus,Carnage+,Attack,Uncommon,2,Enemy,28,1,0,0,0,n/a,FALSE,TRUE,FALSE,FALSE,n/a,Carnage
+Combust,Combust,Power,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"At the end of your turn, lose 1 HP and deal 5 damage to ALL enemies",n/a
+CombustPlus,Combust+,Power,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"At the end of your turn, lose 1 HP and deal 7 damage to ALL enemies.",Combust
+DarkEmbrace,Dark Embrace,Power,Uncommon,2,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever a card is exhausted, draw 1 card",n/a
+DarkEmbracePlus,Dark Embrace+,Power,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever a card is exhausted, draw 1 card",DarkEmbrace
+Disarm,Disarm,Skill,Uncommon,1,Enemy,0,1,0,0,0,Strength:-2@Enemy,TRUE,FALSE,FALSE,FALSE,n/a,n/a
+DisarmPlus,Disarm+,Skill,Uncommon,1,Enemy,0,1,0,0,0,Strength:-3@Enemy,TRUE,FALSE,FALSE,FALSE,n/a,Disarm
+Dropkick,Dropkick,Attack,Uncommon,1,Enemy,5,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"If the enemy is vulnerable, gain 1 energy and draw 1 card",n/a
+DropkickPlus,Dropkick+,Attack,Uncommon,1,Enemy,8,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"If the enemy is vulnerable, gain 1 energy and draw 1 card",Dropkick
+DualWield,Dual Wield,Skill,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Choose an attack or power card. Add a copy of that card into your hand.,n/a
+DualWieldPlus,Dual Wield+,Skill,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Choose an attack or power card. Add 2 copies of that card into your hand.,DualWield
+Entrench,Entrench,Skill,Uncommon,2,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Double your current block.,n/a
+EntrenchPlus,Entrench+,Skill,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Double your current block.,Entrench
+Evolve,Evolve,Power,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Whenever you draw a status card draw 1 card.,n/a
+EvolvePlus,Evolve+,Power,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Whenever you draw a status card draw 2 cards.,Evolve
+FeelNoPain,Feel No Pain,Power,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever a card is exhausted, gain 3 block.",n/a
+FeelNoPainPlus,Feel No Pain+,Power,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever a card is exhausted, gain 4 block.",FeelNoPain
+FireBreathing,Fire Breathing,Power,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever you draw a Curse or Status card, deal 6 damage to all enemies.",n/a
+FireBreathingPlus,Fire Breathing+,Power,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever you draw a Curse or Status card, deal 10 damage to all enemies.",FireBreathing
+FlameBarrier,Flame Barrier,Skill,Uncommon,2,None,0,0,12,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever you are attacked this turn, deal 4 damage back.",n/a
+FlameBarrierPlus,Flame Barrier+,Skill,Uncommon,2,None,0,0,16,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever you are attacked this turn, deal 6 damage back.",FlameBarrier
+GhostlyArmor,Ghostly Armor,Skill,Uncommon,1,None,0,0,10,0,0,n/a,FALSE,TRUE,FALSE,FALSE,n/a,n/a
+GhostlyArmorPlus,Ghostly Armor+,Skill,Uncommon,1,None,0,0,13,0,0,n/a,FALSE,TRUE,FALSE,FALSE,n/a,GhostlyArmor
+Hemokinesis,Hemokinesis,Attack,Uncommon,1,Enemy,15,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Lose 2 HP.,n/a
+HemokinesisPlus,Hemokinesis+,Attack,Uncommon,1,Enemy,20,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Lose 2 HP.,Hemokinesis
+InfernalBlade,Infernal Blade,Skill,Uncommon,1,None,0,0,0,0,0,n/a,TRUE,FALSE,FALSE,FALSE,Add a random attack into your hand. It costs 0 this turn.,n/a
+InfernalBladePlus,Infernal Blade+,Skill,Uncommon,0,None,0,0,0,0,0,n/a,TRUE,FALSE,FALSE,FALSE,Add a random attack into your hand. It costs 0 this turn.,InfernalBlade
+Inflame,Inflame,Power,Uncommon,1,Self,0,0,0,0,0,Strength:2@Self,FALSE,FALSE,FALSE,FALSE,n/a,n/a
+InflamePlus,Inflame+,Power,Uncommon,1,Self,0,0,0,0,0,Strength:3@Self,FALSE,FALSE,FALSE,FALSE,n/a,Inflame
+Intimidate,Intimidate,Skill,Uncommon,0,AllEnemies,0,0,0,0,0,Weak:1@AllEnemies,TRUE,FALSE,FALSE,FALSE,n/a,n/a
+IntimidatePlus,Intimidate+,Skill,Uncommon,0,AllEnemies,0,0,0,0,0,Weak:2@AllEnemies,TRUE,FALSE,FALSE,FALSE,n/a,Intimidate
+Metallicize,Metallicize,Power,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,At the end of your turn gain 3 block.,n/a
+MetallicizePlus,Metallicize+,Power,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,At the end of your turn gain 4 block.,Metallicize
+PowerThrough,Power Through,Skill,Uncommon,1,None,0,0,15,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Add 2 wounds to your hand.,n/a
+PowerThroughPlus,Power Through+,Skill,Uncommon,1,None,0,0,20,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Add 2 wounds to your hand.,PowerThrough
+Pummel,Pummel,Attack,Uncommon,1,Enemy,2,4,0,0,0,n/a,TRUE,FALSE,FALSE,FALSE,n/a,n/a
+PummelPlus,Pummel+,Attack,Uncommon,1,Enemy,2,5,0,0,0,n/a,TRUE,FALSE,FALSE,FALSE,n/a,Pummel
+Rage,Rage,Skill,Uncommon,0,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever you play an Attack this turn, gain 3 block",n/a
+RagePlus,Rage+,Skill,Uncommon,0,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever you play an Attack this turn, gain 5 block",Rage
+Rampage,Rampage,Attack,Uncommon,1,Enemy,8,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Increase this card's damage by 5 this combat,n/a
+RampagePlus,Rampage+,Attack,Uncommon,1,Enemy,8,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Increase this card's damage by 8 this combat,Rampage
+RecklessCharge,RecklessCharge,Attack,Uncommon,0,Enemy,7,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Shuffle a Dazed into your draw pile.,n/a
+RecklessChargePlus,RecklessCharge+,Attack,Uncommon,0,Enemy,10,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Shuffle a Dazed into your draw pile.,RecklessCharge
+Rupture,Rupture,Power,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever you lose HP on your turn, gain 1 strength.",n/a
+RupturePlus,Rupture+,Power,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever you lose HP on your turn, gain 2 strength.",Rupture
+SearingBlow,Searing Blow,Attack,Uncommon,2,Enemy,1,12,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Can be upgraded any number of times. Greater than 1 upgrade is modeled as: n = upgrade number, damage = n(n+7)/2 + 12, damage increase = n + 3",n/a
+SearingBlowPlus,Searing Blow+,Attack,Uncommon,2,Enemy,1,16,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Can be upgraded any number of times. Greater than 1 upgrade is modeled as: n = upgrade number, damage = n(n+7)/2 + 12, damage increase = n + 3",SearingBlow
+SecondWind,Second Wind,Skill,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Exhaust all non-Attack cards in your hand and gain 5 block for each card exhausted.,n/a
+SecondWindPlus,Second Wind+,Skill,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Exhaust all non-Attack cards in your hand and gain 7 block for each card exhausted.,SecondWind
+SeeingRed,Seeing Red,Skill,Uncommon,1,None,0,0,0,0,2,n/a,TRUE,FALSE,FALSE,FALSE,n/a,n/a
+SeeingRedPlus,Seeing Red+,Skill,Uncommon,0,None,0,0,0,0,2,n/a,TRUE,FALSE,FALSE,FALSE,n/a,SeeingRed
+Sentinel,Sentinel,Skill,Uncommon,1,None,0,0,5,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"If this card is exhausted, gain 2 energy",n/a
+SentinelPlus,Sentinel+,Skill,Uncommon,1,None,0,0,8,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"If this card is exhausted, gain 3 energy",Sentinel
+SeverSoul,Sever Soul,Attack,Uncommon,2,Enemy,16,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Exhaust all non-Attack cards in your hand.,n/a
+SeverSoulPlus,Sever Soul+,Attack,Uncommon,2,Enemy,22,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Exhaust all non-Attack cards in your hand.,SeverSoul
+Shockwave,Shockwave,Skill,Uncommon,2,AllEnemies,0,0,0,0,0,Weak:3@AllEnemies; Vulnerable:3@AllEnemies,TRUE,FALSE,FALSE,FALSE,n/a,n/a
+ShockwavePlus,Shockwave+,Skill,Uncommon,2,AllEnemies,0,0,0,0,0,Weak:5@AllEnemies; Vulnerable:5@AllEnemies,TRUE,FALSE,FALSE,FALSE,n/a,Shockwave
+SpotWeakness,Spot Weakness,Skill,Uncommon,1,Enemy,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"If the enemy intends to attack, gain 3 strength.",n/a
+SpotWeaknessPlus,Spot Weakness+,Skill,Uncommon,1,Enemy,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"If the enemy intends to attack, gain 4 strength.",SpotWeakness
+Uppercut,Uppercut,Attack,Uncommon,2,Enemy,13,1,0,0,0,Weak:1@Enemy; Vulnerable:1@Enemy,FALSE,FALSE,FALSE,FALSE,n/a,n/a
+UppercutPlus,Uppercut+,Attack,Uncommon,2,Enemy,13,1,0,0,0,Weak:2@Enemy; Vulnerable:2@Enemy,FALSE,FALSE,FALSE,FALSE,n/a,Uppercut
+Whirlwind,Whirlwind,Attack,Uncommon,X,AllEnemies,5,X,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,n/a
+WhirlwindPlus,Whirlwind+,Attack,Uncommon,X,AllEnemies,8,X,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,Whirlwind
+Barricade,Barricade,Power,Rare,3,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Block is not removed at the start of your turn.,n/a
+BarricadePlus,Barricade+,Power,Rare,2,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Block is not removed at the start of your turn.,Barricade
+Berserk,Berserk,Power,Rare,0,Self,0,0,0,0,0,Vulnerable:2@Self,FALSE,FALSE,FALSE,FALSE,"At the start of your turn, gain 1 energy.",n/a
+BerserkPlus,Berserk+,Power,Rare,0,Self,0,0,0,0,0,Vulnerable:1@Self,FALSE,FALSE,FALSE,FALSE,"At the start of your turn, gain 1 energy.",Berserk
+Bludgeon,Bludgeon,Attack,Rare,3,Enemy,32,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,n/a
+BludgeonPlus,Bludgeon+,Attack,Rare,3,Enemy,42,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,n/a,Bludgeon
+Brutality,Brutality,Power,Rare,0,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"At the start of your turn, lost 1 HP and draw 1 card.",n/a
+BrutalityPlus,Brutality+,Power,Rare,0,None,0,0,0,0,0,n/a,FALSE,FALSE,TRUE,FALSE,"At the start of your turn, lost 1 HP and draw 1 card.",Brutality
+Corruption,Corruption,Power,Rare,3,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Skills cost 0. Whenever you play a skill, exhaust it.",n/a
+CorruptionPlus,Corruption+,Power,Rare,2,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Skills cost 0. Whenever you play a skill, exhaust it.",Corruption
+DemonForm,Demon Form,Power,Rare,3,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"At the start of your turn, gain 2 strength.",n/a
+DemonFormPlus,Demon Form+,Power,Rare,3,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"At the start of your turn, gain 3 strength.",DemonForm
+DoubleTap,Double Tap,Skill,Rare,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"This turn, your next attack is played twice.",n/a
+DoubleTapPlus,Double Tap+,Skill,Rare,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"This turn, your next 2 attacks are played twice.",DoubleTap
+Exhume,Exhume,Skill,Rare,1,None,0,0,0,0,0,n/a,TRUE,FALSE,FALSE,FALSE,Put a card from your exhaust pile into your hand.,n/a
+ExhumePlus,Exhume+,Skill,Rare,0,None,0,0,0,0,0,n/a,TRUE,FALSE,FALSE,FALSE,Put a card from your exhaust pile into your hand.,Exhume
+Feed,Feed,Attack,Rare,1,Enemy,10,1,0,0,0,n/a,TRUE,FALSE,FALSE,FALSE,"If this attack kills an enemy, gain 3 permanent max HP.",n/a
+FeedPlus,Feed+,Attack,Rare,1,Enemy,12,1,0,0,0,n/a,TRUE,FALSE,FALSE,FALSE,"If this attack kills an enemy, gain 4 permanent max HP.",Feed
+FiendFire,Fiend Fire,Attack,Rare,2,Enemy,0,0,0,0,0,n/a,TRUE,FALSE,FALSE,FALSE,Exhaust all cards in your hand. Deal 7 damage for each card exhausted.,n/a
+FiendFirePlus,Fiend Fire+,Attack,Rare,2,Enemy,0,0,0,0,0,n/a,TRUE,FALSE,FALSE,FALSE,Exhaust all cards in your hand. Deal 10 damage for each card exhausted.,FiendFire
+Immolate,Immolate,Attack,Rare,2,AllEnemies,21,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Add a burn into your discard pile.,n/a
+ImmolatePlus,Immolate+,Attack,Rare,2,AllEnemies,28,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Add a burn into your discard pile.,Immolate
+Impervious,Impervious,Power,Rare,2,None,0,0,30,0,0,n/a,TRUE,FALSE,FALSE,FALSE,n/a,n/a
+ImperviousPlus,Impervious+,Power,Rare,2,None,0,0,40,0,0,n/a,TRUE,FALSE,FALSE,FALSE,n/a,Impervious
+Juggernaut,Juggernaut,Power,Rare,2,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever you gain block, deal 5 damage to a random enemy.",n/a
+JuggernautPlus,Juggernaut+,Power,Rare,2,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever you gain block, deal 7 damage to a random enemy.",Juggernaut
+LimitBreak,Limit Break,Skill,Rare,1,None,0,0,0,0,0,n/a,TRUE,FALSE,FALSE,FALSE,Double your strength.,n/a
+LimitBreakPlus,Limit Break+,Skill,Rare,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Double your strength.,LimitBreak
+Offering,Offering,Skill,Rare,0,None,0,0,0,3,2,n/a,TRUE,FALSE,FALSE,FALSE,Lose 6 HP.,n/a
+OfferingPlus,Offering+,Skill,Rare,0,None,0,0,0,5,2,n/a,TRUE,FALSE,FALSE,FALSE,Lose 6 HP.,Offering
+Reaper,Reaper,Attack,Rare,2,AllEnemies,4,1,0,0,0,n/a,TRUE,FALSE,FALSE,FALSE,Heal HP equal to unblocked damage.,n/a
+ReaperPlus,Reaper+,Attack,Rare,2,AllEnemies,5,1,0,0,0,n/a,TRUE,FALSE,FALSE,FALSE,Heal HP equal to unblocked damage.,Reaper
