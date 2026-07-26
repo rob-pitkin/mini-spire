@@ -1935,3 +1935,320 @@ TEST(TurnLoop, DeathTakesPrecedenceOverVictory) {
   EXPECT_EQ(s.character.hp, 0);         // and so did the player
   EXPECT_EQ(s.outcome, Outcome::Lost);  // death takes precedence
 }
+
+// ============================================================================
+// Tier C / Stage 4a: player powers via the static registry.
+// Each test pins ONE hook of the registry (effects-architecture §4.4).
+// ============================================================================
+
+namespace {
+// A state with one big-HP enemy and full energy, for power tests that need the
+// fight to survive several turns.
+CombatState make_power_test_state(int enemy_hp = 200) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy e = make_jaw_worm(rng);
+  e.hp = enemy_hp;
+  e.max_hp = enemy_hp;
+  s.enemies.push_back(std::move(e));
+  s.character.energy = 3;
+  return s;
+}
+}  // namespace
+
+TEST(TurnLoop, PowerCardVanishesIntoNoPile) {
+  // A played Power card enters NO pile (StS): not discard, not exhaust — so it
+  // can never be Exhumed or replayed.
+  CombatState s = make_power_test_state();
+  s.current_hand.push_back(Card{CardId::Inflame});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Inflame, 0)));
+
+  EXPECT_EQ(s.character.powers[Power::Strength], 2);
+  EXPECT_TRUE(s.discard_pile.empty());
+  EXPECT_TRUE(s.exhaust_pile.empty());
+  EXPECT_TRUE(s.current_hand.empty());
+}
+
+TEST(TurnLoop, DemonFormGrantsStrengthAtTurnStart) {
+  CombatState s = make_power_test_state();
+  s.current_hand.push_back(Card{CardId::DemonForm});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::DemonForm, 0)));
+  // The power is applied, but does NOT fire on the turn it's played.
+  EXPECT_EQ(s.character.powers[Power::DemonForm], 2);
+  EXPECT_EQ(s.character.powers[Power::Strength], 0);
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));  // -> next player turn
+  EXPECT_EQ(s.character.powers[Power::Strength], 2);
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  EXPECT_EQ(s.character.powers[Power::Strength], 4);  // ramps every turn
+}
+
+TEST(TurnLoop, FeelNoPainGrantsBlockWhenACardExhausts) {
+  CombatState s = make_power_test_state();
+  s.current_hand.push_back(Card{CardId::FeelNoPain});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::FeelNoPain, 0)));
+  ASSERT_EQ(s.character.current_block, 0);
+
+  // Seeing Red exhausts on play -> Feel No Pain grants 3 block.
+  s.current_hand.push_back(Card{CardId::SeeingRed});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::SeeingRed, 0)));
+  EXPECT_EQ(s.character.current_block, 3);
+  EXPECT_EQ(s.exhaust_pile.size(), 1u);
+}
+
+TEST(TurnLoop, EtherealExhaustAtEndOfTurnTriggersFeelNoPain) {
+  // StS handles the hand BEFORE end-of-turn powers, so an ethereal card
+  // exhausting at end of turn IS seen by Feel No Pain — the block it grants
+  // must be there in time to absorb the enemy's attack.
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::FeelNoPain] = 100;   // enough to absorb the attack
+  s.current_hand.push_back(Card{CardId::Dazed});  // ethereal, unplayable
+  const int hp_before = s.character.hp;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_EQ(s.exhaust_pile.size(), 1u);  // Dazed exhausted, not discarded
+  EXPECT_EQ(s.character.hp, hp_before);  // its block absorbed the enemy turn
+}
+
+TEST(TurnLoop, RuptureTriggersOnSelfInflictedHpLossOnly) {
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::Rupture] = 1;
+  s.character.energy = 3;
+
+  // Bloodletting: lose 3 HP (a card effect) -> Rupture grants 1 Strength.
+  s.current_hand.push_back(Card{CardId::Bloodletting});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bloodletting, 0)));
+  EXPECT_EQ(s.character.powers[Power::Strength], 1);
+}
+
+TEST(TurnLoop, RuptureDoesNotTriggerOnEnemyDamage) {
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::Rupture] = 1;
+  const int hp_before = s.character.hp;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));  // enemy attacks
+
+  ASSERT_LT(s.character.hp, hp_before);  // the player DID lose HP
+  EXPECT_EQ(s.character.powers[Power::Strength], 0);  // but Rupture stayed off
+}
+
+TEST(TurnLoop, JuggernautDealsDamageWheneverBlockIsGained) {
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::Juggernaut] = 5;
+  const int enemy_hp = s.enemies[0].hp;
+
+  s.current_hand.push_back(Card{CardId::Defend});  // 5 block
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend, 0)));
+
+  EXPECT_EQ(s.character.current_block, 5);
+  EXPECT_EQ(s.enemies[0].hp, enemy_hp - 5);  // fixed damage, unmodified
+}
+
+TEST(TurnLoop, JuggernautFixedDamageIgnoresStrengthAndVulnerable) {
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::Juggernaut] = 5;
+  s.character.powers[Power::Strength] = 10;          // must NOT apply
+  s.enemies[0].debuffs[Debuff::Vulnerable] = 3;      // must NOT apply
+  const int enemy_hp = s.enemies[0].hp;
+
+  s.current_hand.push_back(Card{CardId::Defend});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend, 0)));
+
+  EXPECT_EQ(s.enemies[0].hp, enemy_hp - 5);  // exactly 5, no modifiers
+}
+
+TEST(TurnLoop, FixedDamageIsAbsorbedByEnemyBlock) {
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::Juggernaut] = 5;
+  s.enemies[0].current_block = 3;
+  const int enemy_hp = s.enemies[0].hp;
+
+  s.current_hand.push_back(Card{CardId::Defend});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend, 0)));
+
+  EXPECT_EQ(s.enemies[0].current_block, 0);   // 3 block soaked up
+  EXPECT_EQ(s.enemies[0].hp, enemy_hp - 2);   // only 2 reached HP
+}
+
+TEST(TurnLoop, CombustLosesHpAndDamagesAllEnemiesAtEndOfTurn) {
+  CombatState s = make_power_test_state();
+  s.current_hand.push_back(Card{CardId::Combust});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Combust, 0)));
+  ASSERT_EQ(s.character.powers[Power::Combust], 5);
+  ASSERT_EQ(s.character.combust_casts, 1);
+
+  const int enemy_hp = s.enemies[0].hp;
+  const int player_hp = s.character.hp;
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_EQ(s.enemies[0].hp, enemy_hp - 5);
+  // The player lost 1 HP to Combust, plus whatever the enemy dealt.
+  EXPECT_LT(s.character.hp, player_hp);
+}
+
+TEST(TurnLoop, CombustStacksDamageButCountsCastsSeparately) {
+  // Mixed upgrades: Combust (5) + Combust+ (7) = lose 2 HP, deal 12 damage.
+  // One stack count can't express both, hence Character::combust_casts.
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Combust});
+  s.current_hand.push_back(Card{CardId::CombustPlus});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Combust, 0)));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::CombustPlus, 0)));
+
+  EXPECT_EQ(s.character.powers[Power::Combust], 12);  // accumulated damage
+  EXPECT_EQ(s.character.combust_casts, 2);            // HP lost per cast
+}
+
+TEST(TurnLoop, PlayerMetallicizeGrantsBlockAtEndOfTurn) {
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::Metallicize] = 3;
+  // Block gained at end of turn must survive the enemy phase: the enemy's
+  // attack should be absorbed by it.
+  const int player_hp = s.character.hp;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  // The Jaw Worm's opener (Chomp, 11) exceeds 3 block, so HP still drops — but
+  // by 3 less than the raw damage. Pin the mechanism instead: with a huge
+  // Metallicize the player takes nothing.
+  CombatState s2 = make_power_test_state();
+  s2.character.powers[Power::Metallicize] = 100;
+  const int hp2 = s2.character.hp;
+  ASSERT_TRUE(apply_action(s2, end_turn_action()));
+  EXPECT_EQ(s2.character.hp, hp2);  // fully absorbed
+  (void)player_hp;
+}
+
+TEST(TurnLoop, RageGrantsBlockOnAttacksAndExpiresAtEndOfTurn) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Rage});  // 0-cost, +3 block per Attack
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Rage, 0)));
+  ASSERT_EQ(s.character.powers[Power::Rage], 3);
+
+  s.current_hand.push_back(Card{CardId::Strike});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+  EXPECT_EQ(s.character.current_block, 3);  // Attack -> Rage block
+
+  // A Skill does NOT trigger Rage.
+  s.current_hand.push_back(Card{CardId::Defend});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend, 0)));
+  EXPECT_EQ(s.character.current_block, 8);  // 3 + Defend's 5, no extra Rage
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  EXPECT_EQ(s.character.powers.count(Power::Rage), 0u);  // expired
+}
+
+TEST(TurnLoop, FlameBarrierRetaliatesAgainstAttackerEvenWhenBlocked) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::FlameBarrier});  // 12 block, 4 thorns
+  ASSERT_TRUE(apply_action(s, card_action(CardId::FlameBarrier, 0)));
+  ASSERT_EQ(s.character.powers[Power::FlameBarrier], 4);
+
+  const int enemy_hp = s.enemies[0].hp;
+  ASSERT_TRUE(apply_action(s, end_turn_action()));  // enemy attacks once
+
+  EXPECT_EQ(s.enemies[0].hp, enemy_hp - 4);  // retaliation landed
+}
+
+TEST(TurnLoop, FlameBarrierExpiresAtTheStartOfTheNextTurn) {
+  // It must SURVIVE the enemy phase (to retaliate) and be gone once the
+  // player's next turn begins.
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::FlameBarrier] = 4;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_EQ(s.character.powers.count(Power::FlameBarrier), 0u);
+}
+
+TEST(TurnLoop, BerserkGrantsEnergyAtTurnStart) {
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::Berserk] = 1;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  // Turn-start refill (3) plus Berserk's +1.
+  EXPECT_EQ(s.character.energy, s.character.energy_per_turn + 1);
+}
+
+TEST(TurnLoop, BrutalityLosesHpAndDrawsAtTurnStart) {
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::Brutality] = 1;
+  // Give the draw pile enough cards for the opening draw plus Brutality's.
+  for (int i = 0; i < 12; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+  const int hp_before = s.character.hp;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  // Lost HP to the enemy AND to Brutality; drew the normal hand plus 1.
+  EXPECT_LT(s.character.hp, hp_before);
+  EXPECT_EQ(s.current_hand.size(), static_cast<std::size_t>(STARTING_HAND_SIZE) + 1);
+}
+
+TEST(TurnLoop, EvolveDrawsWhenAStatusCardIsDrawn) {
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::Evolve] = 1;
+  s.character.energy = 3;
+  // Draw pile: a Slimed (Status) on top, then normal cards.
+  for (int i = 0; i < 6; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+  s.draw_pile.push_back(Card{CardId::Slimed});  // back = drawn first
+
+  s.current_hand.push_back(Card{CardId::PommelStrike});  // draw 1
+  ASSERT_TRUE(apply_action(s, card_action(CardId::PommelStrike, 0)));
+
+  // Pommel Strike drew the Slimed; Evolve then drew 1 more.
+  EXPECT_EQ(s.current_hand.size(), 2u);
+}
+
+TEST(TurnLoop, FireBreathingDamagesAllEnemiesWhenAStatusIsDrawn) {
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::FireBreathing] = 6;
+  s.character.energy = 3;
+  for (int i = 0; i < 6; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+  s.draw_pile.push_back(Card{CardId::Slimed});
+  const int enemy_hp = s.enemies[0].hp;
+
+  s.current_hand.push_back(Card{CardId::PommelStrike});  // 9 dmg, draw 1
+  ASSERT_TRUE(apply_action(s, card_action(CardId::PommelStrike, 0)));
+
+  // Pommel Strike's 9 (attack) plus Fire Breathing's 6 (fixed).
+  EXPECT_EQ(s.enemies[0].hp, enemy_hp - 9 - 6);
+}
+
+TEST(TurnLoop, FixedDamageDoesNotTriggerCurlUp) {
+  // Curl Up is "on taking ATTACK damage" in StS — thorns-type damage from
+  // Juggernaut must not fire it (verified against the wiki).
+  Enemy e = make_test_enemy(50);
+  e.triggered_effects.push_back(curl_up(9));
+  CombatState s = make_hook_test_state(std::move(e));
+  s.character.powers[Power::Juggernaut] = 5;
+  s.current_hand.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend, 0)));
+
+  EXPECT_EQ(s.enemies[0].hp, 45);            // took the 5 fixed damage
+  EXPECT_EQ(s.enemies[0].current_block, 0);  // but Curl Up never fired
+}
+
+TEST(TurnLoop, InnateCardStartsInTheOpeningHand) {
+  // Brutality+ is Innate: it's in the opening hand and counts toward it.
+  std::vector<Card> deck;
+  deck.push_back(Card{CardId::BrutalityPlus});
+  for (int i = 0; i < 9; ++i) deck.push_back(Card{CardId::Strike});
+
+  CombatState s = start_combat(0, EncounterPool::Weak, deck);
+
+  EXPECT_EQ(s.current_hand.size(), static_cast<std::size_t>(STARTING_HAND_SIZE));
+  bool found = false;
+  for (const Card& c : s.current_hand) {
+    if (c.card_id == CardId::BrutalityPlus) found = true;
+  }
+  EXPECT_TRUE(found) << "Innate card must start in the opening hand";
+}

@@ -119,7 +119,38 @@ PYBIND11_MODULE(_core, m) {
       .value("SeeingRed", CardId::SeeingRed)
       .value("SeeingRedPlus", CardId::SeeingRedPlus)
       .value("Offering", CardId::Offering)
-      .value("OfferingPlus", CardId::OfferingPlus);
+      .value("OfferingPlus", CardId::OfferingPlus)
+      // Tier C (Stage 4a) — player powers.
+      .value("Inflame", CardId::Inflame)
+      .value("InflamePlus", CardId::InflamePlus)
+      .value("Impervious", CardId::Impervious)
+      .value("ImperviousPlus", CardId::ImperviousPlus)
+      .value("DemonForm", CardId::DemonForm)
+      .value("DemonFormPlus", CardId::DemonFormPlus)
+      .value("Combust", CardId::Combust)
+      .value("CombustPlus", CardId::CombustPlus)
+      .value("FeelNoPain", CardId::FeelNoPain)
+      .value("FeelNoPainPlus", CardId::FeelNoPainPlus)
+      .value("DarkEmbrace", CardId::DarkEmbrace)
+      .value("DarkEmbracePlus", CardId::DarkEmbracePlus)
+      .value("Evolve", CardId::Evolve)
+      .value("EvolvePlus", CardId::EvolvePlus)
+      .value("FireBreathing", CardId::FireBreathing)
+      .value("FireBreathingPlus", CardId::FireBreathingPlus)
+      .value("Rupture", CardId::Rupture)
+      .value("RupturePlus", CardId::RupturePlus)
+      .value("Juggernaut", CardId::Juggernaut)
+      .value("JuggernautPlus", CardId::JuggernautPlus)
+      .value("Rage", CardId::Rage)
+      .value("RagePlus", CardId::RagePlus)
+      .value("FlameBarrier", CardId::FlameBarrier)
+      .value("FlameBarrierPlus", CardId::FlameBarrierPlus)
+      .value("Brutality", CardId::Brutality)
+      .value("BrutalityPlus", CardId::BrutalityPlus)
+      .value("Berserk", CardId::Berserk)
+      .value("BerserkPlus", CardId::BerserkPlus)
+      .value("Metallicize", CardId::Metallicize)
+      .value("MetallicizePlus", CardId::MetallicizePlus);
 
   // EnemyKind (ROB-79) — so the TUI can name per-slot enemies via enemy_kinds().
   py::enum_<EnemyKind>(m, "EnemyKind")
@@ -165,7 +196,21 @@ PYBIND11_MODULE(_core, m) {
       .value("Ritual", Power::Ritual)
       .value("Metallicize", Power::Metallicize)
       .value("Enrage", Power::Enrage)
-      .value("Artifact", Power::Artifact);
+      .value("Artifact", Power::Artifact)
+      // Player powers (Stage 4a). Order matters: the Python side derives the
+      // obs status labels from __members__, and enum order IS obs order.
+      .value("DemonForm", Power::DemonForm)
+      .value("Combust", Power::Combust)
+      .value("FeelNoPain", Power::FeelNoPain)
+      .value("DarkEmbrace", Power::DarkEmbrace)
+      .value("Evolve", Power::Evolve)
+      .value("FireBreathing", Power::FireBreathing)
+      .value("Rupture", Power::Rupture)
+      .value("Juggernaut", Power::Juggernaut)
+      .value("Rage", Power::Rage)
+      .value("FlameBarrier", Power::FlameBarrier)
+      .value("Brutality", Power::Brutality)
+      .value("Berserk", Power::Berserk);
 
   py::enum_<Target>(m, "Target")
       .value("Character", Target::Character)
@@ -254,9 +299,11 @@ PYBIND11_MODULE(_core, m) {
       // of truth across the C++/Python boundary.
       .def_readonly_static("PLAYER_OBS_SIZE", &CombatEnv::kPlayerObsSize)
       .def_readonly_static("ENEMY_OBS_STRIDE", &CombatEnv::kEnemyObsStride)
-      .def_readonly_static("NUM_STATUS_EFFECTS", &kNumStatusEffects)
+      .def_readonly_static("PLAYER_STATUS_SIZE", &CombatEnv::kPlayerStatusSize)
+      .def_readonly_static("ENEMY_STATUS_SIZE", &CombatEnv::kEnemyStatusSize)
       .def_readonly_static("NUM_DEBUFFS", &kNumDebuffs)
-      .def_readonly_static("NUM_POWERS", &kNumPowers)
+      .def_readonly_static("NUM_ENEMY_POWERS", &kNumEnemyPowers)
+      .def_readonly_static("NUM_PLAYER_POWERS", &kNumPlayerPowers)
       .def_readonly_static("NUM_CARD_TYPES", &kNumCardTypes)
       .def(
           "reset",

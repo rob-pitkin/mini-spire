@@ -40,19 +40,25 @@ class CombatEnv {
  public:
   // Observation layout (ROB-40 + ROB-59 multi-enemy). Flat float32 vector:
   //   player        [0:5]   hp, max_hp, block, energy, energy_per_turn
-  //   player status [5 : 5 + kNumStatusEffects]   per-status stacks
+  //   player status [5 : 5 + kPlayerStatusSize]   debuffs then ALL powers
   //   enemies       [.. : .. + kMaxEnemies*kEnemyObsStride]  kMaxEnemies blocks
   //   piles         [.. : .. + 4*kNumCardTypes]  hand/draw/discard/exhaust
   //   turn          [last]
   // Each enemy block (kEnemyObsStride floats): is_alive, hp, block,
-  // status(kNumStatusEffects), intent(4: is_attacking, atk_dmg, is_blocking,
+  // status(kEnemyStatusSize), intent(4: is_attacking, atk_dmg, is_blocking,
   // is_buffing). NOTE: enemies intentionally omit max_hp (redundant for the
   // policy — current hp gives lethality, intent gives threat; ROB-59). The
   // player keeps max_hp (fixed run-level anchor + HP-shaping reward).
-  static constexpr int kPlayerObsSize = 5 + kNumStatusEffects;
+  //
+  // Per-entity status widths (Stage 4a): both blocks are [debuffs then
+  // powers], but only the player carries the player-only powers (Demon Form,
+  // Juggernaut, ...) — in an enemy block those would be always-zero floats.
+  static constexpr int kPlayerStatusSize = kNumDebuffs + kNumPlayerPowers;
+  static constexpr int kEnemyStatusSize = kNumDebuffs + kNumEnemyPowers;
+  static constexpr int kPlayerObsSize = 5 + kPlayerStatusSize;
   static constexpr int kEnemyIntentSize = 4;
   static constexpr int kEnemyObsStride =
-      3 + kNumStatusEffects + kEnemyIntentSize;  // is_alive,hp,block + status + intent
+      3 + kEnemyStatusSize + kEnemyIntentSize;  // is_alive,hp,block + status + intent
   // 4 piles (hand/draw/discard/exhaust), each a per-card-type count vector.
   static constexpr int kPileObsSize = 4 * kNumCardTypes;
   static constexpr int kObsSize =

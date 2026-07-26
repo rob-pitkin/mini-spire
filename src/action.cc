@@ -62,16 +62,19 @@ void move_to_discard(CombatState& state, Card card) {
   state.discard_pile.push_back(card);
 }
 
-void draw_one(CombatState& state) {
+std::optional<CardId> draw_one(CombatState& state) {
   if (state.draw_pile.empty()) {
-    if (state.discard_pile.empty()) return;
+    if (state.discard_pile.empty()) return std::nullopt;
     state.draw_pile = std::move(state.discard_pile);
     state.discard_pile.clear();
     std::shuffle(state.draw_pile.begin(), state.draw_pile.end(), state.rng);
   }
-  if (static_cast<int>(state.current_hand.size()) >= HAND_SIZE_LIMIT) return;
+  if (static_cast<int>(state.current_hand.size()) >= HAND_SIZE_LIMIT) {
+    return std::nullopt;
+  }
   state.current_hand.push_back(state.draw_pile.back());
   state.draw_pile.pop_back();
+  return state.current_hand.back().card_id;
 }
 
 namespace {
@@ -251,6 +254,7 @@ void fire_enemy_hooks(CombatState& state, int slot, Hook hook, ActionQueue& q) {
   switch (hook) {
     case Hook::CardPlayed:      which = Trigger::OnPlayerSkill; break;
     case Hook::EnemyDamaged:    which = Trigger::OnDamaged; break;
+    case Hook::OnAnyDamage:     which = Trigger::OnAnyDamage; break;
     case Hook::EnemyHpThreshold: which = Trigger::HpAtOrBelow; break;
     case Hook::EnemyDeath:      which = Trigger::OnDeath; break;
     case Hook::EnemyWake:       which = Trigger::OnWake; break;
@@ -262,6 +266,7 @@ void fire_enemy_hooks(CombatState& state, int slot, Hook hook, ActionQueue& q) {
     case Hook::BlockGainedPlayer:
     case Hook::HpLostPlayer:
     case Hook::CardDrawn:
+    case Hook::PlayerAttacked:
       return;
   }
 
@@ -314,6 +319,148 @@ void fire_enemy_power_hooks(CombatState& state, int slot, Hook hook,
   }
 }
 
+namespace {
+
+// Push one player-power response. Small helpers keep the registry switch flat.
+void push_player_block(ActionQueue& q, int amount) {
+  Action a = make_action(ActionKind::GainBlock);
+  a.target = kPlayerSlot;
+  a.amount = amount;
+  q.push_back(a);
+}
+void push_player_strength(ActionQueue& q, int amount) {
+  Action a = make_action(ActionKind::ApplyPower);
+  a.target = kPlayerSlot;
+  a.power = Power::Strength;
+  a.amount = amount;
+  q.push_back(a);
+}
+void push_draw(ActionQueue& q, int amount) {
+  Action a = make_action(ActionKind::DrawCards);
+  a.amount = amount;
+  q.push_back(a);
+}
+void push_remove_player_power(ActionQueue& q, Power p) {
+  Action a = make_action(ActionKind::RemovePower);
+  a.target = kPlayerSlot;
+  a.power = p;
+  q.push_back(a);
+}
+
+}  // namespace
+
+void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
+                             CardId card, int attacker_slot) {
+  const auto& powers = state.character.powers;
+  // Canonical firing order = Power enum order (§4.4 determinism rule). Each
+  // arm reads its stacks and pushes; nothing mutates here.
+  const int demon_form = get_status(powers, Power::DemonForm);
+  const int combust = get_status(powers, Power::Combust);
+  const int feel_no_pain = get_status(powers, Power::FeelNoPain);
+  const int dark_embrace = get_status(powers, Power::DarkEmbrace);
+  const int evolve = get_status(powers, Power::Evolve);
+  const int fire_breathing = get_status(powers, Power::FireBreathing);
+  const int rupture = get_status(powers, Power::Rupture);
+  const int juggernaut = get_status(powers, Power::Juggernaut);
+  const int rage = get_status(powers, Power::Rage);
+  const int flame_barrier = get_status(powers, Power::FlameBarrier);
+  const int brutality = get_status(powers, Power::Brutality);
+  const int berserk = get_status(powers, Power::Berserk);
+  const int metallicize = get_status(powers, Power::Metallicize);
+
+  switch (hook) {
+    case Hook::TurnStartPlayer:
+      if (demon_form > 0) push_player_strength(q, demon_form);
+      if (brutality > 0) {
+        Action a = make_action(ActionKind::LoseHp);
+        a.amount = brutality;
+        q.push_back(a);
+        push_draw(q, brutality);
+      }
+      if (berserk > 0) {
+        Action a = make_action(ActionKind::GainEnergy);
+        a.amount = berserk;
+        q.push_back(a);
+      }
+      // Flame Barrier is "this turn" from the play until the START of the next
+      // player turn — it must survive the enemy phase to retaliate (ROB wiki
+      // ruling), so it expires here rather than at end of turn.
+      if (flame_barrier > 0) push_remove_player_power(q, Power::FlameBarrier);
+      break;
+    case Hook::TurnEndPlayer:
+      if (combust > 0) {
+        // Lose 1 HP per cast, then fixed damage to all enemies. `stacks` is the
+        // accumulated damage; casts are counted separately (mixed upgrades).
+        if (state.character.combust_casts > 0) {
+          Action a = make_action(ActionKind::LoseHp);
+          a.amount = state.character.combust_casts;
+          q.push_back(a);
+        }
+        Action a = make_action(ActionKind::DamageAllEnemies);
+        a.amount = combust;
+        q.push_back(a);
+      }
+      if (metallicize > 0) push_player_block(q, metallicize);
+      // Rage lasts only the player's own turn.
+      if (rage > 0) push_remove_player_power(q, Power::Rage);
+      break;
+    case Hook::CardPlayed:
+      // Rage: block whenever an Attack is played this turn.
+      if (rage > 0 && CARD_DATABASE.at(card).type == CardType::Attack) {
+        push_player_block(q, rage);
+      }
+      break;
+    case Hook::CardExhausted:
+      if (feel_no_pain > 0) push_player_block(q, feel_no_pain);
+      if (dark_embrace > 0) push_draw(q, dark_embrace);
+      break;
+    case Hook::BlockGainedPlayer:
+      // Juggernaut: fixed damage to a random enemy, rolled per trigger at
+      // execution time.
+      if (juggernaut > 0) {
+        Action a = make_action(ActionKind::DamageRandomEnemy);
+        a.amount = juggernaut;
+        q.push_back(a);
+      }
+      break;
+    case Hook::HpLostPlayer:
+      // Rupture: only self-inflicted HP loss reaches this hook (it fires from
+      // the LoseHp executor; enemy attack damage goes through DealDamage).
+      if (rupture > 0) push_player_strength(q, rupture);
+      break;
+    case Hook::CardDrawn: {
+      const CardType type = CARD_DATABASE.at(card).type;
+      // Evolve: Status only. Fire Breathing: Status AND Curse.
+      if (evolve > 0 && type == CardType::Status) push_draw(q, evolve);
+      if (fire_breathing > 0 &&
+          (type == CardType::Status || type == CardType::Curse)) {
+        Action a = make_action(ActionKind::DamageAllEnemies);
+        a.amount = fire_breathing;
+        q.push_back(a);
+      }
+      break;
+    }
+    case Hook::PlayerAttacked:
+      // Flame Barrier retaliates against THE ATTACKER (`attacker_slot`) on
+      // every attack, whether or not the damage got through block.
+      if (flame_barrier > 0 && attacker_slot >= 0) {
+        Action a = make_action(ActionKind::DealFixedDamage);
+        a.target = attacker_slot;
+        a.amount = flame_barrier;
+        q.push_back(a);
+      }
+      break;
+    case Hook::TurnStartEnemy:
+    case Hook::EnemyDamaged:
+    case Hook::OnAnyDamage:
+    case Hook::EnemyHpThreshold:
+    case Hook::EnemyDeath:
+    case Hook::EnemyWake:
+    case Hook::BecameLastEnemy:
+      break;  // enemy-side hooks
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Executors + drain
 // ---------------------------------------------------------------------------
@@ -324,6 +471,27 @@ bool valid_enemy_slot(const CombatState& state, int slot) {
   return slot >= 0 && slot < static_cast<int>(state.enemies.size());
 }
 
+// Apply fixed (thorns-type) damage to one enemy: no Strength/Weak/Vulnerable
+// modifiers, but block still absorbs it (verified: the wiki speaks of
+// "unblocked damage" from such sources). Fires the ANY-damage hook family —
+// the HP threshold interrupt, Lagavulin's wake — but NOT Hook::EnemyDamaged,
+// whose listeners (Curl Up, Angry) are attack-only in StS.
+void apply_fixed_damage(CombatState& state, int slot, int amount,
+                        ActionQueue& q, ResolutionContext& ctx) {
+  if (!valid_enemy_slot(state, slot) || amount <= 0) return;
+  Enemy& e = state.enemies[slot];
+  if (e.hp <= 0) return;
+  const int hp_before = e.hp;
+  apply_damage_to_hp_block(e.hp, e.current_block, amount);
+  if (e.hp < hp_before) {
+    const bool was_asleep = e.is_asleep;
+    fire_enemy_hooks(state, slot, Hook::OnAnyDamage, q);
+    if (was_asleep) fire_enemy_hooks(state, slot, Hook::EnemyWake, q);
+    fire_enemy_hooks(state, slot, Hook::EnemyHpThreshold, q);
+  }
+  if (hp_before > 0 && state.enemies[slot].hp <= 0) ctx.record_death(slot);
+}
+
 void execute(CombatState& state, const Action& a, ActionQueue& q,
              ResolutionContext& ctx) {
   switch (a.kind) {
@@ -332,13 +500,17 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // Strength applies per hit (TwinStrike + Flex parity), and an enemy's
       // start-of-turn Ritual Strength (queued ahead of its attack) is visible.
       if (a.target == kPlayerSlot) {
-        // Enemy -> player (Stage 3). (Stage 4: HpLostPlayer fires here.)
+        // Enemy -> player. Note this does NOT fire HpLostPlayer: Rupture keys
+        // on self-inflicted HP loss only, never on enemy damage.
         if (!valid_enemy_slot(state, a.actor)) break;
         const int dmg = compute_attack_damage(
             a.amount, state.enemies[a.actor].powers,
             state.enemies[a.actor].debuffs, state.character.debuffs);
         apply_damage_to_hp_block(state.character.hp,
                                  state.character.current_block, dmg);
+        // Flame Barrier retaliates on being attacked, even if fully blocked.
+        fire_player_power_hooks(state, Hook::PlayerAttacked, q, a.card,
+                                a.actor);
         break;
       }
       // Player -> enemy.
@@ -357,6 +529,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         // still asleep; then the wake itself; then HP-threshold interrupts.
         const bool was_asleep = state.enemies[a.target].is_asleep;
         fire_enemy_hooks(state, a.target, Hook::EnemyDamaged, q);
+        fire_enemy_hooks(state, a.target, Hook::OnAnyDamage, q);
         if (was_asleep) fire_enemy_hooks(state, a.target, Hook::EnemyWake, q);
         fire_enemy_hooks(state, a.target, Hook::EnemyHpThreshold, q);
       }
@@ -365,8 +538,37 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       }
       break;
     }
+    case ActionKind::DealFixedDamage:
+      apply_fixed_damage(state, a.target, a.amount, q, ctx);
+      break;
+    case ActionKind::DamageAllEnemies: {
+      // Expand at execution so the target set is current (an earlier action in
+      // this same drain may have killed or spawned an enemy).
+      for (std::size_t i = 0; i < state.enemies.size(); ++i) {
+        if (state.enemies[i].hp > 0) {
+          apply_fixed_damage(state, static_cast<int>(i), a.amount, q, ctx);
+        }
+      }
+      break;
+    }
+    case ActionKind::DamageRandomEnemy: {
+      // Juggernaut: a fresh uniform roll per trigger, at execution time.
+      std::vector<int> living;
+      for (std::size_t i = 0; i < state.enemies.size(); ++i) {
+        if (state.enemies[i].hp > 0) living.push_back(static_cast<int>(i));
+      }
+      if (living.empty()) break;
+      std::uniform_int_distribution<int> pick(
+          0, static_cast<int>(living.size()) - 1);
+      apply_fixed_damage(state, living[pick(state.rng)], a.amount, q, ctx);
+      break;
+    }
     case ActionKind::LoseHp:
-      lose_player_hp(state, a.amount);
+      if (a.amount > 0) {
+        lose_player_hp(state, a.amount);
+        // Rupture: HP lost from a card or power (never from enemy damage).
+        fire_player_power_hooks(state, Hook::HpLostPlayer, q);
+      }
       break;
     case ActionKind::GainBlock: {
       int amount = a.amount;
@@ -380,13 +582,23 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         }
       }
       gain_block(state, a.target, amount);
+      // Juggernaut: whenever the PLAYER gains block, from any source.
+      if (a.target == kPlayerSlot && amount > 0) {
+        fire_player_power_hooks(state, Hook::BlockGainedPlayer, q);
+      }
       break;
     }
     case ActionKind::GainEnergy:
       gain_energy(state, a.amount);
       break;
     case ActionKind::DrawCards:
-      for (int i = 0; i < a.amount; ++i) draw_one(state);
+      for (int i = 0; i < a.amount; ++i) {
+        const std::optional<CardId> drawn = draw_one(state);
+        // Evolve / Fire Breathing key on the drawn card's type.
+        if (drawn.has_value()) {
+          fire_player_power_hooks(state, Hook::CardDrawn, q, *drawn);
+        }
+      }
       break;
     case ActionKind::ApplyDebuff:
       if (a.target == kPlayerSlot) {
@@ -401,13 +613,20 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       if (a.target == kPlayerSlot) {
         apply_power(state, PowerApplication{a.power, a.amount,
                                             Target::Character}, kNoSlot);
+        // Combust's second counter: stacks hold the accumulated damage, so the
+        // per-cast 1 HP loss is counted here (Combust + Combust+ = 2 HP, 12 dmg).
+        if (a.power == Power::Combust) state.character.combust_casts += 1;
       } else {
         apply_power(state, PowerApplication{a.power, a.amount, Target::Enemy},
                     a.target);
       }
       break;
     case ActionKind::RemovePower:
-      if (valid_enemy_slot(state, a.target)) {
+      // Either side: enemy (Lagavulin dropping Metallicize on wake) or player
+      // (Rage / Flame Barrier expiring at their turn boundary).
+      if (a.target == kPlayerSlot) {
+        state.character.powers.erase(a.power);
+      } else if (valid_enemy_slot(state, a.target)) {
         state.enemies[a.target].powers.erase(a.power);
       }
       break;
@@ -425,6 +644,8 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       break;
     case ActionKind::ExhaustCard:
       move_to_exhaust(state, Card{a.card});
+      // Feel No Pain / Dark Embrace: whenever a card is exhausted.
+      fire_player_power_hooks(state, Hook::CardExhausted, q, a.card);
       break;
     case ActionKind::DiscardCard:
       move_to_discard(state, Card{a.card});
@@ -459,10 +680,12 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       break;
     }
     case ActionKind::CardPlayedHook:
-      // Playing a Skill fires every living enemy's OnPlayerSkill effects (the
-      // Gremlin Nob's Enrage), independent of whether the card dealt damage or
-      // killed anything (ROB-65). Fires mid-drain, after the card's own
-      // effects — the pre-queue 5b position.
+      // Player powers first (Rage: block when an Attack is played), then the
+      // enemy side: playing a Skill fires every living enemy's OnPlayerSkill
+      // effects (the Gremlin Nob's Enrage), independent of whether the card
+      // dealt damage or killed anything (ROB-65). Fires mid-drain, after the
+      // card's own effects — the pre-queue 5b position.
+      fire_player_power_hooks(state, Hook::CardPlayed, q, a.card);
       if (CARD_DATABASE.at(a.card).type == CardType::Skill) {
         for (std::size_t i = 0; i < state.enemies.size(); ++i) {
           if (state.enemies[i].hp > 0) {
@@ -470,6 +693,20 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
           }
         }
       }
+      break;
+    case ActionKind::DiscardHand:
+      // End of the player's turn: unplayed Ethereal cards exhaust (ROB-65
+      // Dazed), the rest discard. Routed through the executors so an ethereal
+      // exhaust is seen by Feel No Pain / Dark Embrace — StS handles the hand
+      // before end-of-turn powers, so those responses queue ahead of Combust.
+      for (const Card& c : state.current_hand) {
+        Action move = make_action(CARD_DATABASE.at(c.card_id).ethereal
+                                      ? ActionKind::ExhaustCard
+                                      : ActionKind::DiscardCard);
+        move.card = c.card_id;
+        q.push_back(move);
+      }
+      state.current_hand.clear();
       break;
     case ActionKind::CheckDeath:
       // Deferred death processing (ROB-62): on-death hooks fire after the

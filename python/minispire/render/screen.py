@@ -25,7 +25,8 @@ CHAR_ENERGY = 3
 CHAR_ENERGY_PER_TURN = 4
 # Layout sizes are read from the engine (single source of truth) so they track
 # obs changes as statuses/cards are added — never hardcode the stride.
-_NUM_STATUS = _core.CombatEnv.NUM_STATUS_EFFECTS
+_NUM_STATUS = _core.CombatEnv.PLAYER_STATUS_SIZE
+_NUM_ENEMY_STATUS = _core.CombatEnv.ENEMY_STATUS_SIZE
 MAX_ENEMIES = _core.CombatEnv.MAX_ENEMIES
 
 CHAR_STATUS = slice(5, 5 + _NUM_STATUS)  # per-status stacks (V/W/S/D/Frail/Ritual)
@@ -37,8 +38,8 @@ ENEMY_STRIDE = _core.CombatEnv.ENEMY_OBS_STRIDE
 ENEMY_OFF_IS_ALIVE = 0
 ENEMY_OFF_HP = 1
 ENEMY_OFF_BLOCK = 2
-ENEMY_OFF_STATUS = slice(3, 3 + _NUM_STATUS)
-_INTENT = 3 + _NUM_STATUS  # intent block start
+ENEMY_OFF_STATUS = slice(3, 3 + _NUM_ENEMY_STATUS)
+_INTENT = 3 + _NUM_ENEMY_STATUS  # intent block start
 ENEMY_OFF_INTENT_IS_ATTACKING = _INTENT + 0
 ENEMY_OFF_INTENT_ATTACK_DAMAGE = _INTENT + 1
 ENEMY_OFF_INTENT_IS_BLOCKING = _INTENT + 2
@@ -66,9 +67,14 @@ def living_enemy_slots(obs) -> list[int]:
 # (kObsDebuffOrder / kObsPowerOrder), so the enum member order IS the obs order.
 # Excludes the None sentinels. Deriving this means a new status can't desync the
 # labels from the obs.
-STATUS_NAMES = [d for d in _core.Debuff.__members__ if d != "None"] + [
-    p for p in _core.Power.__members__ if p != "None"
-]
+_DEBUFF_NAMES = [d for d in _core.Debuff.__members__ if d != "None"]
+_POWER_NAMES = [p for p in _core.Power.__members__ if p != "None"]
+# The player block carries every power; the enemy block only the enemy-relevant
+# prefix (Stage 4a), so the two blocks need different label lists.
+STATUS_NAMES = _DEBUFF_NAMES + _POWER_NAMES
+ENEMY_STATUS_NAMES = (
+    _DEBUFF_NAMES + _POWER_NAMES[: _core.CombatEnv.NUM_ENEMY_POWERS]
+)
 STATUS_COLORS = {
     "Vulnerable": "orange3",
     "Weak": "purple",
@@ -80,6 +86,19 @@ STATUS_COLORS = {
     "Metallicize": "bright_black",
     "Enrage": "bright_red",
     "Artifact": "bright_yellow",
+    # Player powers (Stage 4a). Unlisted names fall back to white.
+    "DemonForm": "bright_red",
+    "Combust": "orange3",
+    "FeelNoPain": "cyan",
+    "DarkEmbrace": "purple",
+    "Evolve": "bright_green",
+    "FireBreathing": "orange3",
+    "Rupture": "red",
+    "Juggernaut": "bright_magenta",
+    "Rage": "bright_red",
+    "FlameBarrier": "orange1",
+    "Brutality": "red",
+    "Berserk": "bright_yellow",
 }
 
 HP_BAR_WIDTH = 16
@@ -120,12 +139,18 @@ def format_hp_bar(hp: int, max_hp: int, width: int = HP_BAR_WIDTH) -> Text:
     return bar
 
 
-def _status_line(obs: np.ndarray, status_slice: slice) -> Text:
-    """Build a colored status-effects line. Empty Text if no statuses."""
+def _status_line(
+    obs: np.ndarray, status_slice: slice, names: list[str] | None = None
+) -> Text:
+    """Build a colored status-effects line. Empty Text if no statuses.
+
+    `names` labels the block: the player block carries every power, an enemy
+    block only the enemy-relevant prefix (Stage 4a).
+    """
     stacks = obs[status_slice]
     out = Text()
     first = True
-    for name, value in zip(STATUS_NAMES, stacks):
+    for name, value in zip(names or STATUS_NAMES, stacks):
         n = int(value)
         if n <= 0:
             continue
@@ -155,6 +180,7 @@ def _entity_block(
     obs: np.ndarray,
     status_slice: slice,
     extra_lines: list[Text] | None = None,
+    status_names: list[str] | None = None,
 ) -> Group:
     """Render one entity: avatar, name, HP bar, block, plus extra lines."""
     lines: list = []
@@ -172,7 +198,7 @@ def _entity_block(
         blk.append(f"  {block}", style="white")
         lines.append(blk)
 
-    status = _status_line(obs, status_slice)
+    status = _status_line(obs, status_slice, status_names)
     if status.plain:
         lines.append(status)
 
@@ -246,6 +272,7 @@ def render_fight(
                 obs,
                 _enemy_status_slice(slot),
                 extra_lines=[intent],
+                status_names=ENEMY_STATUS_NAMES,
             )
         )
 

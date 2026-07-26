@@ -37,6 +37,17 @@ constexpr std::array<CardId, kNumCardTypes> kObsCardOrder = {
     CardId::ShrugItOffPlus, CardId::Bloodletting, CardId::BloodlettingPlus,
     CardId::Hemokinesis, CardId::HemokinesisPlus, CardId::SeeingRed,
     CardId::SeeingRedPlus, CardId::Offering, CardId::OfferingPlus,
+    // Ironclad Tier C (Stage 4a) — player powers.
+    CardId::Inflame, CardId::InflamePlus, CardId::Impervious,
+    CardId::ImperviousPlus, CardId::DemonForm, CardId::DemonFormPlus,
+    CardId::Combust, CardId::CombustPlus, CardId::FeelNoPain,
+    CardId::FeelNoPainPlus, CardId::DarkEmbrace, CardId::DarkEmbracePlus,
+    CardId::Evolve, CardId::EvolvePlus, CardId::FireBreathing,
+    CardId::FireBreathingPlus, CardId::Rupture, CardId::RupturePlus,
+    CardId::Juggernaut, CardId::JuggernautPlus, CardId::Rage,
+    CardId::RagePlus, CardId::FlameBarrier, CardId::FlameBarrierPlus,
+    CardId::Brutality, CardId::BrutalityPlus, CardId::Berserk,
+    CardId::BerserkPlus, CardId::Metallicize, CardId::MetallicizePlus,
 };
 static_assert(kObsCardOrder.size() == kNumCardTypes,
               "kObsCardOrder must list every card type");
@@ -52,7 +63,11 @@ constexpr std::array<Debuff, kNumDebuffs> kObsDebuffOrder = {
 };
 static_assert(kObsDebuffOrder.size() == kNumDebuffs,
               "kObsDebuffOrder must list every debuff");
-constexpr std::array<Power, kNumPowers> kObsPowerOrder = {
+// Per-entity power orders (Stage 4a): the player block lists EVERY power, the
+// enemy block only the enemy-relevant prefix — player powers would be 15
+// always-zero floats in each of the 5 enemy slots. Both arrays must match the
+// Power enum's declaration order (static_asserts below).
+constexpr std::array<Power, kNumEnemyPowers> kObsEnemyPowerOrder = {
     Power::Strength,
     Power::Dexterity,
     Power::Ritual,
@@ -60,8 +75,23 @@ constexpr std::array<Power, kNumPowers> kObsPowerOrder = {
     Power::Enrage,
     Power::Artifact,
 };
-static_assert(kObsPowerOrder.size() == kNumPowers,
-              "kObsPowerOrder must list every power");
+static_assert(kObsEnemyPowerOrder.size() == kNumEnemyPowers,
+              "kObsEnemyPowerOrder must list every enemy power");
+constexpr std::array<Power, kNumPlayerPowers> kObsPlayerPowerOrder = {
+    Power::Strength,     Power::Dexterity,     Power::Ritual,
+    Power::Metallicize,  Power::Enrage,        Power::Artifact,
+    Power::DemonForm,    Power::Combust,       Power::FeelNoPain,
+    Power::DarkEmbrace,  Power::Evolve,        Power::FireBreathing,
+    Power::Rupture,      Power::Juggernaut,    Power::Rage,
+    Power::FlameBarrier, Power::Brutality,     Power::Berserk,
+};
+static_assert(kObsPlayerPowerOrder.size() == kNumPlayerPowers,
+              "kObsPlayerPowerOrder must list every power");
+// The enemy order must be a prefix of the player order (the Power enum's
+// layout contract) so a stack means the same thing in both blocks.
+static_assert(kObsEnemyPowerOrder[kNumEnemyPowers - 1] ==
+                  kObsPlayerPowerOrder[kNumEnemyPowers - 1],
+              "enemy power order must prefix the player power order");
 
 template <typename Effect>
 float status_stacks(const std::unordered_map<Effect, int>& effects, Effect e) {
@@ -170,8 +200,8 @@ void CombatEnv::compute_obs() {
   for (std::size_t i = 0; i < kObsDebuffOrder.size(); ++i) {
     o[5 + i] = status_stacks(c.debuffs, kObsDebuffOrder[i]);
   }
-  for (std::size_t i = 0; i < kObsPowerOrder.size(); ++i) {
-    o[5 + kNumDebuffs + i] = status_stacks(c.powers, kObsPowerOrder[i]);
+  for (std::size_t i = 0; i < kObsPlayerPowerOrder.size(); ++i) {
+    o[5 + kNumDebuffs + i] = status_stacks(c.powers, kObsPlayerPowerOrder[i]);
   }
 
   // --- Enemies: kMaxEnemies blocks of kEnemyObsStride floats each ---
@@ -180,7 +210,7 @@ void CombatEnv::compute_obs() {
   // derived from constants so adding a status can't drift the layout.
   constexpr int kEnemyBase = kPlayerObsSize;
   constexpr int kStatusOff = 3;
-  constexpr int kIntentOff = kStatusOff + kNumStatusEffects;
+  constexpr int kIntentOff = kStatusOff + CombatEnv::kEnemyStatusSize;
   for (std::size_t slot = 0; slot < kMaxEnemies; ++slot) {
     const int base = kEnemyBase + static_cast<int>(slot) * kEnemyObsStride;
     if (slot >= state_.enemies.size()) continue;  // empty slot: leave zeros
@@ -194,9 +224,9 @@ void CombatEnv::compute_obs() {
     for (std::size_t i = 0; i < kObsDebuffOrder.size(); ++i) {
       o[base + kStatusOff + i] = status_stacks(e.debuffs, kObsDebuffOrder[i]);
     }
-    for (std::size_t i = 0; i < kObsPowerOrder.size(); ++i) {
+    for (std::size_t i = 0; i < kObsEnemyPowerOrder.size(); ++i) {
       o[base + kStatusOff + kNumDebuffs + i] =
-          status_stacks(e.powers, kObsPowerOrder[i]);
+          status_stacks(e.powers, kObsEnemyPowerOrder[i]);
     }
     // Intent. last_move is primed at combat start and each enemy turn, but
     // guard defensively (a freshly-spawned split child may not be primed yet).

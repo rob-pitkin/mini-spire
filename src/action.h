@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cassert>
+#include <optional>
 #include <unordered_map>
 
 #include "card.h"
@@ -42,6 +43,14 @@ int get_status(const std::unordered_map<Effect, int>& m, Effect e) {
 enum class ActionKind {
   // Mutations
   DealDamage,   // actor attacks target for `amount` base damage (one hit)
+  DealFixedDamage,  // thorns-type damage (Juggernaut, Combust, Fire Breathing,
+                    // Flame Barrier): ignores Strength/Weak/Vulnerable, but IS
+                    // absorbed by block. Fires no attack-only enemy triggers.
+  DamageAllEnemies,   // fan out fixed damage to every living enemy (Combust,
+                      // Fire Breathing) — expands at execution so the target
+                      // set is current
+  DamageRandomEnemy,  // fixed damage to one uniformly-random living enemy
+                      // (Juggernaut) — rolled at execution, per trigger
   LoseHp,       // direct player HP loss — bypasses block, can kill (ROB-80)
   GainBlock,    // target gains `amount` block; card_block applies Dex/Frail
   GainEnergy,   // player gains `amount` energy
@@ -57,9 +66,12 @@ enum class ActionKind {
   EnemySplit,     // target dies and spawns its split_children at its current
                   // HP (ROB-64) — the reallocation is one flat executor step
   // Bookkeeping
-  CardPlayedHook,  // fire Hook::CardPlayed listeners for `card` (Enrage)
+  CardPlayedHook,  // fire Hook::CardPlayed listeners for `card` (Enrage, Rage)
   CheckDeath,      // process deaths recorded this resolution (on-death,
                    // became-last) — replaces the hand-rolled died_slots deferral
+  DiscardHand,     // end of turn: ethereal cards exhaust, the rest discard
+                   // (routed through the executors so Feel No Pain / Dark
+                   // Embrace see the exhausts)
 };
 
 // A small, clone-safe tagged value. No closures, no pointers into state —
@@ -134,15 +146,17 @@ struct ResolutionContext {
 // ---------------------------------------------------------------------------
 
 enum class Hook {
-  TurnStartPlayer,    // Demon Form, Brutality, Berserk (Stage 4)
-  TurnEndPlayer,      // Combust, player Metallicize, Rage expiry (Stage 4)
-  TurnStartEnemy,     // enemy Ritual / Metallicize (Stage 3)
-  CardPlayed,         // enemy OnPlayerSkill today; Rage keys off CardType later
-  CardExhausted,      // Feel No Pain, Dark Embrace (Stage 4)
-  BlockGainedPlayer,  // Juggernaut (Stage 4)
-  HpLostPlayer,       // Rupture (Stage 4)
-  CardDrawn,          // Evolve, Fire Breathing (Stage 4)
-  EnemyDamaged,       // Curl Up, Angry, Lagavulin damage-wake
+  TurnStartPlayer,    // Demon Form, Brutality, Berserk, Flame Barrier expiry
+  TurnEndPlayer,      // Combust, player Metallicize, Rage expiry
+  TurnStartEnemy,     // enemy Ritual / Metallicize
+  CardPlayed,         // enemy OnPlayerSkill; Rage (Attack played)
+  CardExhausted,      // Feel No Pain, Dark Embrace
+  BlockGainedPlayer,  // Juggernaut
+  HpLostPlayer,       // Rupture — self-inflicted HP loss only, never enemy damage
+  CardDrawn,          // Evolve (Status), Fire Breathing (Status/Curse)
+  PlayerAttacked,     // Flame Barrier retaliation
+  EnemyDamaged,       // Curl Up, Angry — ATTACK damage only
+  OnAnyDamage,        // Lagavulin damage-wake — any damage, incl. fixed/thorns
   EnemyHpThreshold,   // Large Slime split interrupt
   EnemyDeath,         // Spore Cloud
   EnemyWake,          // Lagavulin Metallicize removal
@@ -163,6 +177,16 @@ void fire_enemy_hooks(CombatState& state, int slot, Hook hook, ActionQueue& q);
 // player-power registry arrives at Stage 4 as its sibling.
 void fire_enemy_power_hooks(CombatState& state, int slot, Hook hook,
                             ActionQueue& q);
+
+// Fire the PLAYER's power behaviors for `hook`, pushing response actions
+// (Stage 4a). The static registry (§4.4): a switch over character.powers in a
+// fixed canonical order (Power enum order), no state beyond the stacks — so
+// clone() stays a plain deep copy. `card` carries the CardPlayed / CardDrawn
+// payload; `attacker_slot` the PlayerAttacked attacker (Flame Barrier's
+// retaliation target). Both are ignored by hooks that don't use them.
+void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
+                             CardId card = CardId::Strike,
+                             int attacker_slot = kNoSlot);
 
 // Drain the queue to completion: pop-execute until empty, short-circuiting on
 // a terminal outcome. Executors may push more actions. The queue must be empty
@@ -201,8 +225,9 @@ void move_to_exhaust(CombatState& state, Card card);
 void move_to_discard(CombatState& state, Card card);
 
 // Move all of discard_pile into draw_pile (if needed), shuffle, draw one card
-// to the hand. Silent no-op if draw+discard empty or hand at limit.
-void draw_one(CombatState& state);
+// to the hand. Returns the drawn card, or nullopt if nothing was drawn
+// (draw+discard empty, or hand at limit) — the CardDrawn hook needs the id.
+std::optional<CardId> draw_one(CombatState& state);
 
 // Apply one debuff/power application to its target ('enemy_target' = decoded
 // enemy slot; ignored for Target::Character). Artifact negates a whole debuff

@@ -161,7 +161,10 @@ struct TransitionKey {
 // fires the matching effects at each trigger site (damage / hp / alone / card
 // play / death).
 enum class Trigger {
-  OnDamaged,        // the enemy took attack damage
+  OnDamaged,        // the enemy took ATTACK damage (Curl Up / Angry — StS wording
+                    // is "when attacked"; fixed/thorns damage does NOT fire this)
+  OnAnyDamage,      // the enemy lost HP from ANY damage source, attack or fixed
+                    // (Lagavulin's damage-wake: "if it takes any damage")
   HpAtOrBelow,      // the enemy's hp <= param (checked after damage)
   BecameLastEnemy,  // this enemy is now the only living one
   OnPlayerSkill,    // the player played a Skill-type card

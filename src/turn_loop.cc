@@ -28,6 +28,27 @@ void tick_debuffs(std::unordered_map<Debuff, int>& debuffs) {
   }
 }
 
+// Draw the opening hand. Innate cards (Brutality+) are pulled from the draw
+// pile into the hand FIRST and count toward the opening draw, so the hand is
+// still STARTING_HAND_SIZE. Combat-start powers don't exist yet, so this needs
+// no queue — the CardDrawn hook can't have a listener on turn 1.
+void draw_opening_hand(CombatState& state) {
+  int drawn = 0;
+  for (auto it = state.draw_pile.begin();
+       it != state.draw_pile.end() && drawn < STARTING_HAND_SIZE;) {
+    if (CARD_DATABASE.at(it->card_id).innate) {
+      state.current_hand.push_back(*it);
+      it = state.draw_pile.erase(it);
+      ++drawn;
+    } else {
+      ++it;
+    }
+  }
+  for (; drawn < STARTING_HAND_SIZE; ++drawn) {
+    draw_one(state);
+  }
+}
+
 void check_enemy_terminal(CombatState& state) {
   for (const auto& e : state.enemies) {
     if (e.hp > 0) return;
@@ -157,7 +178,10 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
     q.push_back(a);
   }
   // The played card lands in its pile after the card's own effects resolve.
-  {
+  // A Power card VANISHES (StS): it enters no pile at all, so it can never be
+  // Exhumed or replayed — and, not being exhausted, it doesn't trigger Feel No
+  // Pain / Dark Embrace.
+  if (data.type != CardType::Power) {
     Action a;
     a.kind = data.exhaust ? ActionKind::ExhaustCard : ActionKind::DiscardCard;
     a.card = card_id;
@@ -286,17 +310,22 @@ void translate_enemy_move(CombatState& state, const Move& move, int actor_slot,
 }
 
 void handle_end_turn(CombatState& state) {
-  // 1. End of player turn
-  // 1a. Empty the hand: unplayed Ethereal cards exhaust (ROB-65 Dazed); the
-  // rest discard.
-  for (const Card& c : state.current_hand) {
-    if (CARD_DATABASE.at(c.card_id).ethereal) {
-      move_to_exhaust(state, c);
-    } else {
-      move_to_discard(state, c);
-    }
+  // 1. End of player turn — one translate + drain (Stage 4a). StS order:
+  // the hand is handled FIRST (ethereal exhausts, rest discards), so an
+  // ethereal exhaust's Feel No Pain block queues ahead of the end-of-turn
+  // powers; then Combust / player Metallicize / Rage expiry.
+  {
+    ActionQueue q;
+    ResolutionContext ctx;
+    q.push_back(Action{ActionKind::DiscardHand});
+    fire_player_power_hooks(state, Hook::TurnEndPlayer, q);
+    drain(state, q, ctx);
+    // Combust can kill the player, and can clear the room.
+    check_character_terminal(state);
+    if (state.outcome != Outcome::InProgress) return;
+    check_enemy_terminal(state);
+    if (state.outcome != Outcome::InProgress) return;
   }
-  state.current_hand.clear();
   // 1b. Tick character debuffs (powers never tick)
   tick_debuffs(state.character.debuffs);
   // 1c. Discard leftover energy
@@ -367,14 +396,28 @@ void handle_end_turn(CombatState& state) {
   check_enemy_terminal(state);
   if (state.outcome != Outcome::InProgress) return;
 
-  // 3. Start new player turn
+  // 3. Start new player turn. Block reset and the energy refill are upkeep;
+  // the start-of-turn powers (Demon Form, Brutality, Berserk, Flame Barrier
+  // expiry) and the draw are a translate + drain, so drawn Statuses can fire
+  // Evolve / Fire Breathing.
   state.character.current_block = 0;
   state.character.energy = state.character.energy_per_turn;
-  for (int i = 0; i < STARTING_HAND_SIZE; ++i) {
-    draw_one(state);
-  }
   state.turn_number += 1;
   state.character_turn = true;
+  {
+    ActionQueue q;
+    ResolutionContext ctx;
+    fire_player_power_hooks(state, Hook::TurnStartPlayer, q);
+    Action draw;
+    draw.kind = ActionKind::DrawCards;
+    draw.amount = STARTING_HAND_SIZE;
+    q.push_back(draw);
+    drain(state, q, ctx);
+    // Brutality's HP loss can kill; Fire Breathing can clear the room.
+    check_character_terminal(state);
+    if (state.outcome != Outcome::InProgress) return;
+    check_enemy_terminal(state);
+  }
 }
 
 }  // namespace
@@ -423,10 +466,8 @@ CombatState start_combat(uint32_t seed, EncounterPool pool,
   state.character_turn = true;
   state.outcome = Outcome::InProgress;
 
-  // Draw the opening hand.
-  for (int i = 0; i < STARTING_HAND_SIZE; ++i) {
-    draw_one(state);
-  }
+  // Draw the opening hand (Innate cards come first and count toward it).
+  draw_opening_hand(state);
 
   return state;
 }
@@ -454,9 +495,7 @@ CombatState start_v1_combat(uint32_t seed) {
   state.character_turn = true;
   state.outcome = Outcome::InProgress;
 
-  for (int i = 0; i < STARTING_HAND_SIZE; ++i) {
-    draw_one(state);
-  }
+  draw_opening_hand(state);
 
   return state;
 }
@@ -474,6 +513,38 @@ DecodedAction decode_action(int action) {
                        target};
 }
 
+namespace {
+
+// Is one decoded card action legal right now? The single source of truth for
+// legality: valid_actions loops it, apply_action calls it once. `entangled` is
+// hoisted by the caller (it's per-state, not per-action).
+bool card_action_is_legal(const CombatState& state, const DecodedAction& d,
+                          bool entangled) {
+  const int card_idx = static_cast<int>(d.card);
+  if (card_idx < 0 || card_idx >= static_cast<int>(CARD_DATABASE.size())) {
+    return false;
+  }
+  const CardData& data = CARD_DATABASE.at(d.card);
+  if (data.unplayable) return false;  // Dazed etc. — never legal (ROB-65)
+  if (find_first_in_hand(state.current_hand, d.card) < 0) return false;
+  // X-cost cards (ROB-80) are always affordable (X = current energy, may be 0);
+  // fixed-cost cards need enough energy.
+  if (data.cost != kXCost && state.character.energy < data.cost) return false;
+  // Entangle blocks all Attack-type cards for a turn (ROB-75).
+  if (entangled && data.type == CardType::Attack) return false;
+
+  // Target legality fork.
+  if (card_targets_enemy(data)) {
+    // Targeted: the chosen enemy slot must hold a living enemy.
+    return d.target < static_cast<int>(state.enemies.size()) &&
+           state.enemies[d.target].hp > 0;
+  }
+  // Untargeted (Defend): only the canonical slot 0 is legal.
+  return d.target == 0;
+}
+
+}  // namespace
+
 std::vector<bool> valid_actions(const CombatState& state) {
   const int num_card_ids = static_cast<int>(CARD_DATABASE.size());
   const int num_actions = num_card_ids * kMaxEnemies + 1;
@@ -487,32 +558,19 @@ std::vector<bool> valid_actions(const CombatState& state) {
   const bool entangled =
       get_status(state.character.debuffs, Debuff::Entangle) > 0;
 
-  for (int action = 0; action < num_actions - 1; ++action) {
-    const DecodedAction d = decode_action(action);
-    const int card_idx = static_cast<int>(d.card);
+  // Walk the HAND, not the whole action space: a card not in hand is illegal in
+  // all of its target slots, and the hand is <= 10 cards against 400+ actions.
+  // (The all-actions loop hashed CARD_DATABASE once per action — the dominant
+  // per-step cost once the pool reached 80 cards.)
+  for (const Card& c : state.current_hand) {
+    const int card_idx = static_cast<int>(c.card_id);
     if (card_idx < 0 || card_idx >= num_card_ids) continue;
-
-    const CardData& data = CARD_DATABASE.at(d.card);
-    if (data.unplayable) continue;  // Dazed etc. — never a legal action (ROB-65)
-    const bool in_hand = find_first_in_hand(state.current_hand, d.card) >= 0;
-    // X-cost cards (ROB-80) are always affordable (X = current energy, may be 0);
-    // fixed-cost cards need enough energy.
-    const bool affordable =
-        data.cost == kXCost || state.character.energy >= data.cost;
-    if (!in_hand || !affordable) continue;
-    // Entangle blocks all Attack-type cards for a turn (ROB-75).
-    if (entangled && data.type == CardType::Attack) continue;
-
-    // Target legality fork (shares card_targets_enemy with apply_action, so
-    // the mask and the apply path never disagree).
-    if (card_targets_enemy(data)) {
-      // Targeted: the chosen enemy slot must hold a living enemy.
-      const bool alive = d.target < static_cast<int>(state.enemies.size()) &&
-                         state.enemies[d.target].hp > 0;
-      mask[action] = alive;
-    } else {
-      // Untargeted (Defend): only the canonical slot 0 is legal.
-      mask[action] = (d.target == 0);
+    for (int target = 0; target < kMaxEnemies; ++target) {
+      const int action = card_idx * kMaxEnemies + target;
+      if (mask[action]) continue;  // duplicate card in hand, already decided
+      mask[action] = card_action_is_legal(
+          state, DecodedAction{/*is_end_turn=*/false, c.card_id, target},
+          entangled);
     }
   }
 
@@ -524,12 +582,19 @@ std::vector<bool> valid_actions(const CombatState& state) {
 bool apply_action(CombatState& state, int action) {
   if (state.outcome != Outcome::InProgress) return false;
 
-  auto mask = valid_actions(state);
-  if (action < 0 || action >= static_cast<int>(mask.size()) || !mask[action]) {
-    return false;
-  }
+  const int num_actions =
+      static_cast<int>(CARD_DATABASE.size()) * kMaxEnemies + 1;
+  if (action < 0 || action >= num_actions) return false;
 
+  // Validate just THIS action rather than building the whole mask (the action
+  // space is 400+ entries; building it here doubled the per-step mask cost).
+  // Shares card_action_is_legal with valid_actions, so the two can't disagree.
   const DecodedAction d = decode_action(action);
+  if (!d.is_end_turn) {
+    const bool entangled =
+        get_status(state.character.debuffs, Debuff::Entangle) > 0;
+    if (!card_action_is_legal(state, d, entangled)) return false;
+  }
   if (d.is_end_turn) {
     handle_end_turn(state);
   } else {

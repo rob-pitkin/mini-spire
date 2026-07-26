@@ -33,6 +33,10 @@ struct Character {
   int current_block;
   std::unordered_map<Debuff, int> debuffs;
   std::unordered_map<Power, int> powers;
+  // Combust's second counter (Stage 4a): HP lost at end of turn = casts, while
+  // Power::Combust stacks = accumulated damage (5/7 per cast — one stack count
+  // can't hold both once upgrades mix). Bumped by the ApplyPower executor.
+  int combust_casts = 0;
 };
 
 struct CombatState {

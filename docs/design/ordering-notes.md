@@ -80,6 +80,51 @@ move's actions. Lagavulin neither escapes nor splits, and the affected state
 (Metallicize, is_asleep) is next read at the following enemy turn.
 Unobservable.
 
+## Stage 4a (player powers via the static registry)
+
+### 7. End of turn: hand first, then powers
+
+StS handles the hand at end of turn (ethereal exhausts, the rest discards)
+*before* end-of-turn powers resolve, so an ethereal exhaust's Feel No Pain
+block is gained in time to absorb the enemy attack, and queues ahead of
+Combust. Encoded as `DiscardHand` pushed before the `TurnEndPlayer` hook.
+Pinned by `EtherealExhaustAtEndOfTurnTriggersFeelNoPain`. (Not directly
+documented on the wiki — searched; this follows from ethereal being described
+as a special end-of-turn hand step, and matches in-game behavior. Revisit if
+a counterexample turns up.)
+
+### 8. Fixed (thorns-type) damage fires only the any-damage hooks
+
+Juggernaut / Combust / Fire Breathing / Flame Barrier damage ignores
+Strength / Weak / Vulnerable but IS absorbed by block. It fires
+`Hook::OnAnyDamage` (Lagavulin's wake — the wiki says "if it takes any
+damage"), `EnemyHpThreshold` (the split interrupt is pure HP), and death
+recording — but NOT `Hook::EnemyDamaged`, whose listeners (Curl Up, Angry)
+are worded "on taking **attack** damage" in StS, mirroring the documented rule
+that Thorns doesn't trigger on power damage. This split the old `OnDamaged`
+trigger into `OnDamaged` (attack-only) and `OnAnyDamage`; Lagavulin's
+damage-wake moved to the latter. Pinned by `FixedDamageDoesNotTriggerCurlUp`.
+
+### 9. Rupture keys on self-inflicted HP loss only
+
+`Hook::HpLostPlayer` fires from the `LoseHp` executor only. Enemy attack
+damage goes through `DealDamage`, which deliberately does not fire it — so
+Rupture never triggers on being attacked. Pinned by
+`RuptureDoesNotTriggerOnEnemyDamage`.
+
+### 10. Expiry timing: Rage vs Flame Barrier
+
+Rage expires at the end of the player's turn (`TurnEndPlayer` →
+`RemovePower`). Flame Barrier must survive the enemy phase in order to
+retaliate, so it expires at the START of the next player turn
+(`TurnStartPlayer`). Both pinned by tests.
+
+### 11. Combust needs two counters
+
+`Power::Combust` stacks hold the accumulated damage (5 or 7 per cast) while
+`Character::combust_casts` counts casts for the 1-HP-per-cast loss. One count
+can't express both once upgrades mix: Combust + Combust+ = lose 2 HP, deal 12.
+
 ## RNG stream
 
 Unchanged by the queue: within a card resolution, only draws consume RNG;
@@ -87,3 +132,7 @@ within an enemy phase, only the Protect ally roll (translation-time, note 5)
 and `select_next_move` (post-drain, per enemy) do — and their count and
 relative order are identical to pre-queue. Same seed, same fight, before and
 after.
+
+Stage 4a adds one new RNG consumer: Juggernaut's random-enemy roll, taken at
+execution time, once per trigger. It only draws when the power is in play, so
+fights without Juggernaut have an unchanged stream.

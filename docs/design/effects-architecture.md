@@ -274,7 +274,10 @@ bang** — the queue arrives under card resolution first, then spreads.
 | **1. Mutators** | Centralize every stat write behind `deal_damage / gain_block / lose_hp / gain_energy / draw_card / exhaust_card / add_card_to_pile`. Pure refactor, no queue, no behavior change. | Full suite green, ASan clean. Diff shows zero scattered writes remain. |
 | **2. Queue under card resolution** | `handle_play_card` → action translation + drain. Executors wrap the Stage-1 mutators. Enemy phase still imperative. Hook vocabulary introduced; existing triggers repointed. | Suite green; timing-sensitive tests (spore-cloud, split, became-alone) re-verified deliberately (§8). |
 | **3. Enemy phase on the queue** | `handle_end_turn` / `apply_move_to_state` emit actions; two-regime period ends. | Suite green; enemy-phase timing tests re-verified. |
-| **4. Powers + choices + meta-cards** | Player-power registry (Tier C cards), query layer consumers (Corruption/Barricade/…), pause-on-choice, Double Tap/Havoc/choice cards (Tier D/E). | New card tests; choice-mode obs/mask spec implemented. |
+| **4a. Player-power registry** ✅ | `fire_player_power_hooks` (static switch over `character.powers`), fixed/thorns damage, per-entity obs power lists, Tier C cards. | Done: 262 C++ + 91 Python green, ASan clean. |
+| **4b. Query/modifier layer** | `effective_cost` (Corruption, Blood for Blood), `block_resets` (Barricade), `can_draw` (Battle Trance), damage modifiers (Heavy Blade, Perfected Strike, Body Slam), `is_playable` (Clash). | Suite green; mask and executors read queries, never raw fields. |
+| **4c. Pause-on-choice** | `PendingChoice` POD + persisted action vector; choice-mode obs/mask encoding (needs its own mini-design). | Choice round-trip test: pause → clone → resume on the clone. |
+| **4d. Meta-cards** | Double Tap, Havoc, Armaments, Headbutt, Exhume, Dual Wield, Warcry (Tier D/E). | New card tests. |
 
 Tier C cards ship at Stage 4 (registry) but the *foundation* work of Stages 1–3
 is what they stand on. Stages 1–2 are the critical path.
@@ -325,10 +328,35 @@ interaction rulings. Policy:
 
 ## 9. Performance
 
-- Fixed-capacity ring buffer (e.g. 64 actions, grow-never in steady state).
-- Benchmark gate: re-run the steps/sec benchmark after Stage 2 and Stage 3;
-  regression budget **≤10%** vs. current baseline (open question below if that
-  proves tight).
+- Fixed-capacity ring buffer (128 actions, grow-never in steady state).
+- Benchmark gate: re-run the steps/sec benchmark each stage; regression budget
+  **≤10%** vs. the pre-queue baseline.
+
+Measured (single-env random agent, M1, best of 3):
+
+| Stage | Engine-only | End-to-end (Python harness) |
+|---|---|---|
+| pre-queue | 391.8k | 116.8k |
+| Stage 2 | — | 113.8k (−2.6%) |
+| Stage 3 | — | 112.9k (−3.4%) |
+| Stage 4a | **910.0k (+132%)** | 87.2k (−25%) |
+
+Stage 4a first measured a 39% engine regression — not from the queue, but from
+the action space growing 60% (50→80 card types, 251→401 actions) against a
+`valid_actions` that looped every action and hashed `CARD_DATABASE` per
+iteration, *twice per step* (`apply_action` rebuilt the whole mask to test one
+bit). Two fixes: `apply_action` now validates just its own action via a shared
+`card_action_is_legal`, and `valid_actions` walks the ≤10-card hand instead of
+the 400+ action space. Result: 2.3× faster than the pre-queue engine.
+Behavior-preservation was verified differentially — 15,317 masks across all
+pools with entangle/energy/dead-enemy stress, zero mismatches vs. the original
+implementation.
+
+The end-to-end figure is now dominated by the *benchmark harness*, not the env:
+its per-step Python list comprehension over the 401-entry mask costs ~8.6 µs
+against an engine step of ~1.1 µs. Real training (MaskablePPO consumes the
+numpy mask directly) does not pay this. **When the benchmark is published (M2),
+measure the engine path, not the harness.**
 
 ---
 

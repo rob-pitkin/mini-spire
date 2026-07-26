@@ -101,10 +101,10 @@ TEST(CombatEnv, ObsCharacterStatsAfterReset) {
 
 // Enemy obs layout (ROB-59/73), all derived from constants so it tracks the
 // status-block width: enemies start after the player block; each enemy block is
-//   +0 is_alive, +1 hp, +2 block, then status(kNumStatusEffects), then
+//   +0 is_alive, +1 hp, +2 block, then status(kEnemyStatusSize), then
 //   intent(4: attacking, atk_dmg, block, buff).
 constexpr int kEnemy0Base = CombatEnv::kPlayerObsSize;
-constexpr int kIntentOff = 3 + minispire::kNumStatusEffects;  // start of intent
+constexpr int kIntentOff = 3 + CombatEnv::kEnemyStatusSize;  // start of intent
 constexpr int kPileBase =
     CombatEnv::kPlayerObsSize + minispire::kMaxEnemies * CombatEnv::kEnemyObsStride;
 

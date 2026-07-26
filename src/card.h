@@ -68,12 +68,44 @@ enum class CardId {
   SeeingRedPlus,
   Offering,
   OfferingPlus,
+  // Tier C (Stage 4a) — player powers via the static registry
+  // (fire_player_power_hooks) + pure-data rares.
+  Inflame,
+  InflamePlus,
+  Impervious,
+  ImperviousPlus,
+  DemonForm,
+  DemonFormPlus,
+  Combust,  // scoped enums: no clash with Power::Combust
+  CombustPlus,
+  FeelNoPain,
+  FeelNoPainPlus,
+  DarkEmbrace,
+  DarkEmbracePlus,
+  Evolve,
+  EvolvePlus,
+  FireBreathing,
+  FireBreathingPlus,
+  Rupture,
+  RupturePlus,
+  Juggernaut,
+  JuggernautPlus,
+  Rage,
+  RagePlus,
+  FlameBarrier,
+  FlameBarrierPlus,
+  Brutality,
+  BrutalityPlus,
+  Berserk,
+  BerserkPlus,
+  Metallicize,
+  MetallicizePlus,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
 // action-space size (card x target). Update CARD_DATABASE + kObsCardOrder in
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
-inline constexpr int kNumCardTypes = 50;
+inline constexpr int kNumCardTypes = 80;
 
 // A card's inherent StS type. This is a real property, NOT inferable from
 // damage/block: an Attack can gain block (Body Slam) and a Skill can deal
@@ -126,6 +158,9 @@ struct CardData {
   int energy = 0;   // gain N energy
   int lose_hp = 0;  // player loses N HP — an EFFECT (not a cost, can kill you),
                     // direct HP loss that bypasses block (verified).
+  // Innate (Stage 4a, Brutality+): starts in the opening hand, counting toward
+  // the opening draw.
+  bool innate = false;
 };
 
 // CardData row order: name, cost, damage, hits, block, target, debuffs, powers,
@@ -186,6 +221,48 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     {CardId::SeeingRedPlus, {"Seeing Red+", 0, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, true, false, false, 0, 2, 0}},
     {CardId::Offering, {"Offering", 0, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, true, false, false, 3, 2, 6}},
     {CardId::OfferingPlus, {"Offering+", 0, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, true, false, false, 5, 2, 6}},
+    // --- Ironclad Tier C (Stage 4a): player powers. Each Power card applies a
+    // Power to the player; the BEHAVIOR lives in the static registry
+    // (fire_player_power_hooks in action.cc), keyed by the Power enum. A played
+    // Power card vanishes — it enters no pile (see handle_play_card).
+    {CardId::Inflame, {"Inflame", 1, 0, 0, 0, CardTarget::Self, {}, {{Power::Strength, 2, Target::Character}}, CardType::Power, false, false}},
+    {CardId::InflamePlus, {"Inflame+", 1, 0, 0, 0, CardTarget::Self, {}, {{Power::Strength, 3, Target::Character}}, CardType::Power, false, false}},
+    // Impervious is a SKILL (exhausts to the exhaust pile), not a Power.
+    {CardId::Impervious, {"Impervious", 2, 0, 0, 30, CardTarget::None, {}, {}, CardType::Skill, true, false}},
+    {CardId::ImperviousPlus, {"Impervious+", 2, 0, 0, 40, CardTarget::None, {}, {}, CardType::Skill, true, false}},
+    {CardId::DemonForm, {"Demon Form", 3, 0, 0, 0, CardTarget::None, {}, {{Power::DemonForm, 2, Target::Character}}, CardType::Power, false, false}},
+    {CardId::DemonFormPlus, {"Demon Form+", 3, 0, 0, 0, CardTarget::None, {}, {{Power::DemonForm, 3, Target::Character}}, CardType::Power, false, false}},
+    // Combust: stacks = accumulated damage; the per-cast HP loss is counted
+    // separately in Character::combust_casts (mixed upgrades need both).
+    {CardId::Combust, {"Combust", 1, 0, 0, 0, CardTarget::None, {}, {{Power::Combust, 5, Target::Character}}, CardType::Power, false, false}},
+    {CardId::CombustPlus, {"Combust+", 1, 0, 0, 0, CardTarget::None, {}, {{Power::Combust, 7, Target::Character}}, CardType::Power, false, false}},
+    {CardId::FeelNoPain, {"Feel No Pain", 1, 0, 0, 0, CardTarget::None, {}, {{Power::FeelNoPain, 3, Target::Character}}, CardType::Power, false, false}},
+    {CardId::FeelNoPainPlus, {"Feel No Pain+", 1, 0, 0, 0, CardTarget::None, {}, {{Power::FeelNoPain, 4, Target::Character}}, CardType::Power, false, false}},
+    {CardId::DarkEmbrace, {"Dark Embrace", 2, 0, 0, 0, CardTarget::None, {}, {{Power::DarkEmbrace, 1, Target::Character}}, CardType::Power, false, false}},
+    {CardId::DarkEmbracePlus, {"Dark Embrace+", 1, 0, 0, 0, CardTarget::None, {}, {{Power::DarkEmbrace, 1, Target::Character}}, CardType::Power, false, false}},
+    {CardId::Evolve, {"Evolve", 1, 0, 0, 0, CardTarget::None, {}, {{Power::Evolve, 1, Target::Character}}, CardType::Power, false, false}},
+    {CardId::EvolvePlus, {"Evolve+", 1, 0, 0, 0, CardTarget::None, {}, {{Power::Evolve, 2, Target::Character}}, CardType::Power, false, false}},
+    {CardId::FireBreathing, {"Fire Breathing", 1, 0, 0, 0, CardTarget::None, {}, {{Power::FireBreathing, 6, Target::Character}}, CardType::Power, false, false}},
+    {CardId::FireBreathingPlus, {"Fire Breathing+", 1, 0, 0, 0, CardTarget::None, {}, {{Power::FireBreathing, 10, Target::Character}}, CardType::Power, false, false}},
+    {CardId::Rupture, {"Rupture", 1, 0, 0, 0, CardTarget::None, {}, {{Power::Rupture, 1, Target::Character}}, CardType::Power, false, false}},
+    {CardId::RupturePlus, {"Rupture+", 1, 0, 0, 0, CardTarget::None, {}, {{Power::Rupture, 2, Target::Character}}, CardType::Power, false, false}},
+    {CardId::Juggernaut, {"Juggernaut", 2, 0, 0, 0, CardTarget::None, {}, {{Power::Juggernaut, 5, Target::Character}}, CardType::Power, false, false}},
+    {CardId::JuggernautPlus, {"Juggernaut+", 2, 0, 0, 0, CardTarget::None, {}, {{Power::Juggernaut, 7, Target::Character}}, CardType::Power, false, false}},
+    // Rage and Flame Barrier are turn-scoped SKILLS whose effect is modeled as
+    // a Power (StS shows them as power icons); the registry removes them at the
+    // matching turn boundary.
+    {CardId::Rage, {"Rage", 0, 0, 0, 0, CardTarget::None, {}, {{Power::Rage, 3, Target::Character}}, CardType::Skill, false, false}},
+    {CardId::RagePlus, {"Rage+", 0, 0, 0, 0, CardTarget::None, {}, {{Power::Rage, 5, Target::Character}}, CardType::Skill, false, false}},
+    {CardId::FlameBarrier, {"Flame Barrier", 2, 0, 0, 12, CardTarget::None, {}, {{Power::FlameBarrier, 4, Target::Character}}, CardType::Skill, false, false}},
+    {CardId::FlameBarrierPlus, {"Flame Barrier+", 2, 0, 0, 16, CardTarget::None, {}, {{Power::FlameBarrier, 6, Target::Character}}, CardType::Skill, false, false}},
+    {CardId::Brutality, {"Brutality", 0, 0, 0, 0, CardTarget::None, {}, {{Power::Brutality, 1, Target::Character}}, CardType::Power, false, false}},
+    // Brutality+ is Innate: it starts in the opening hand.
+    {CardId::BrutalityPlus, {"Brutality+", 0, 0, 0, 0, CardTarget::None, {}, {{Power::Brutality, 1, Target::Character}}, CardType::Power, false, false, false, 0, 0, 0, /*innate=*/true}},
+    // Berserk's self-Vulnerable is the cost of its permanent +1 energy.
+    {CardId::Berserk, {"Berserk", 0, 0, 0, 0, CardTarget::Self, {{Debuff::Vulnerable, 2, Target::Character}}, {{Power::Berserk, 1, Target::Character}}, CardType::Power, false, false}},
+    {CardId::BerserkPlus, {"Berserk+", 0, 0, 0, 0, CardTarget::Self, {{Debuff::Vulnerable, 1, Target::Character}}, {{Power::Berserk, 1, Target::Character}}, CardType::Power, false, false}},
+    {CardId::Metallicize, {"Metallicize", 1, 0, 0, 0, CardTarget::None, {}, {{Power::Metallicize, 3, Target::Character}}, CardType::Power, false, false}},
+    {CardId::MetallicizePlus, {"Metallicize+", 1, 0, 0, 0, CardTarget::None, {}, {{Power::Metallicize, 4, Target::Character}}, CardType::Power, false, false}},
 };
 
 // Whether a card needs the player to PICK a specific enemy slot (ROB-80). Only

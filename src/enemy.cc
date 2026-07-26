@@ -896,8 +896,9 @@ Enemy make_lagavulin(std::mt19937& rng) {
                                  .power = Power::Metallicize});
   // Damage-wake: a hit while asleep (requires_asleep guard) interrupts the intent
   // to Stunned. once=true + the guard mean it fires only for the first wake,
-  // never mid-cycle after is_asleep is cleared.
-  e.triggered_effects.push_back({.trigger = Trigger::OnDamaged,
+  // never mid-cycle after is_asleep is cleared. OnAnyDamage, not OnDamaged: the
+  // wiki says "if it takes ANY damage" — fixed damage (Juggernaut) wakes it too.
+  e.triggered_effects.push_back({.trigger = Trigger::OnAnyDamage,
                                  .action = TriggeredAction::RewriteIntent,
                                  .move = MoveName::Stunned,
                                  .once = true,

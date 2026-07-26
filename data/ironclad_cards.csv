@@ -139,8 +139,8 @@ FiendFire,Fiend Fire,Attack,Rare,2,Enemy,0,0,0,0,0,n/a,TRUE,FALSE,FALSE,FALSE,Ex
 FiendFirePlus,Fiend Fire+,Attack,Rare,2,Enemy,0,0,0,0,0,n/a,TRUE,FALSE,FALSE,FALSE,Exhaust all cards in your hand. Deal 10 damage for each card exhausted.,FiendFire
 Immolate,Immolate,Attack,Rare,2,AllEnemies,21,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Add a burn into your discard pile.,n/a
 ImmolatePlus,Immolate+,Attack,Rare,2,AllEnemies,28,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Add a burn into your discard pile.,Immolate
-Impervious,Impervious,Power,Rare,2,None,0,0,30,0,0,n/a,TRUE,FALSE,FALSE,FALSE,n/a,n/a
-ImperviousPlus,Impervious+,Power,Rare,2,None,0,0,40,0,0,n/a,TRUE,FALSE,FALSE,FALSE,n/a,Impervious
+Impervious,Impervious,Skill,Rare,2,None,0,0,30,0,0,n/a,TRUE,FALSE,FALSE,FALSE,n/a,n/a
+ImperviousPlus,Impervious+,Skill,Rare,2,None,0,0,40,0,0,n/a,TRUE,FALSE,FALSE,FALSE,n/a,Impervious
 Juggernaut,Juggernaut,Power,Rare,2,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever you gain block, deal 5 damage to a random enemy.",n/a
 JuggernautPlus,Juggernaut+,Power,Rare,2,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever you gain block, deal 7 damage to a random enemy.",Juggernaut
 LimitBreak,Limit Break,Skill,Rare,1,None,0,0,0,0,0,n/a,TRUE,FALSE,FALSE,FALSE,Double your strength.,n/a
