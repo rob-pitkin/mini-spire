@@ -48,6 +48,15 @@ constexpr std::array<CardId, kNumCardTypes> kObsCardOrder = {
     CardId::RagePlus, CardId::FlameBarrier, CardId::FlameBarrierPlus,
     CardId::Brutality, CardId::BrutalityPlus, CardId::Berserk,
     CardId::BerserkPlus, CardId::Metallicize, CardId::MetallicizePlus,
+    // Ironclad Tier D (Stage 4b) — the query/modifier layer.
+    CardId::BodySlam, CardId::BodySlamPlus, CardId::Clash, CardId::ClashPlus,
+    CardId::HeavyBlade, CardId::HeavyBladePlus, CardId::PerfectedStrike,
+    CardId::PerfectedStrikePlus, CardId::BattleTrance,
+    CardId::BattleTrancePlus, CardId::BloodForBlood, CardId::BloodForBloodPlus,
+    CardId::Dropkick, CardId::DropkickPlus, CardId::Entrench,
+    CardId::EntrenchPlus, CardId::SeverSoul, CardId::SeverSoulPlus,
+    CardId::Barricade, CardId::BarricadePlus, CardId::Corruption,
+    CardId::CorruptionPlus,
 };
 static_assert(kObsCardOrder.size() == kNumCardTypes,
               "kObsCardOrder must list every card type");
@@ -84,6 +93,7 @@ constexpr std::array<Power, kNumPlayerPowers> kObsPlayerPowerOrder = {
     Power::DarkEmbrace,  Power::Evolve,        Power::FireBreathing,
     Power::Rupture,      Power::Juggernaut,    Power::Rage,
     Power::FlameBarrier, Power::Brutality,     Power::Berserk,
+    Power::Corruption,   Power::Barricade,
 };
 static_assert(kObsPlayerPowerOrder.size() == kNumPlayerPowers,
               "kObsPlayerPowerOrder must list every power");

@@ -150,7 +150,30 @@ PYBIND11_MODULE(_core, m) {
       .value("Berserk", CardId::Berserk)
       .value("BerserkPlus", CardId::BerserkPlus)
       .value("Metallicize", CardId::Metallicize)
-      .value("MetallicizePlus", CardId::MetallicizePlus);
+      .value("MetallicizePlus", CardId::MetallicizePlus)
+      // Tier D (Stage 4b) — query/modifier layer.
+      .value("BodySlam", CardId::BodySlam)
+      .value("BodySlamPlus", CardId::BodySlamPlus)
+      .value("Clash", CardId::Clash)
+      .value("ClashPlus", CardId::ClashPlus)
+      .value("HeavyBlade", CardId::HeavyBlade)
+      .value("HeavyBladePlus", CardId::HeavyBladePlus)
+      .value("PerfectedStrike", CardId::PerfectedStrike)
+      .value("PerfectedStrikePlus", CardId::PerfectedStrikePlus)
+      .value("BattleTrance", CardId::BattleTrance)
+      .value("BattleTrancePlus", CardId::BattleTrancePlus)
+      .value("BloodForBlood", CardId::BloodForBlood)
+      .value("BloodForBloodPlus", CardId::BloodForBloodPlus)
+      .value("Dropkick", CardId::Dropkick)
+      .value("DropkickPlus", CardId::DropkickPlus)
+      .value("Entrench", CardId::Entrench)
+      .value("EntrenchPlus", CardId::EntrenchPlus)
+      .value("SeverSoul", CardId::SeverSoul)
+      .value("SeverSoulPlus", CardId::SeverSoulPlus)
+      .value("Barricade", CardId::Barricade)
+      .value("BarricadePlus", CardId::BarricadePlus)
+      .value("Corruption", CardId::Corruption)
+      .value("CorruptionPlus", CardId::CorruptionPlus);
 
   // EnemyKind (ROB-79) — so the TUI can name per-slot enemies via enemy_kinds().
   py::enum_<EnemyKind>(m, "EnemyKind")
@@ -210,7 +233,10 @@ PYBIND11_MODULE(_core, m) {
       .value("Rage", Power::Rage)
       .value("FlameBarrier", Power::FlameBarrier)
       .value("Brutality", Power::Brutality)
-      .value("Berserk", Power::Berserk);
+      .value("Berserk", Power::Berserk)
+      // Query-layer powers (Stage 4b).
+      .value("Corruption", Power::Corruption)
+      .value("Barricade", Power::Barricade);
 
   py::enum_<Target>(m, "Target")
       .value("Character", Target::Character)

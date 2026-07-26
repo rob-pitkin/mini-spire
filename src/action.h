@@ -83,6 +83,11 @@ struct Action {
   int target = kNoSlot;  // recipient: kPlayerSlot or an enemy slot
   int amount = 0;
   CardId card = CardId::Strike;    // for card-carrying kinds
+  // Strength multiplier for this hit (Heavy Blade's 3x/5x, Stage 4b). Set from
+  // the card at translation; 1 for enemy attacks and fixed damage, which have
+  // no card. Explicit rather than re-derived from `card`, whose default would
+  // silently stand in for "no card".
+  int strength_mult = 1;
   Debuff debuff = Debuff::None;    // ApplyDebuff payload
   Power power = Power::None;       // ApplyPower / RemovePower payload
   MoveName move = MoveName::None;  // RewriteIntent payload

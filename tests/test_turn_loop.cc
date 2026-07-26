@@ -6,6 +6,7 @@
 #include "card.h"
 #include "combat_state.h"
 #include "enemy.h"
+#include "query.h"
 #include "status_effect.h"
 #include "test_helpers.h"
 #include "turn_loop.h"
@@ -2251,4 +2252,320 @@ TEST(TurnLoop, InnateCardStartsInTheOpeningHand) {
     if (c.card_id == CardId::BrutalityPlus) found = true;
   }
   EXPECT_TRUE(found) << "Innate card must start in the opening hand";
+}
+
+// ============================================================================
+// Tier D / Stage 4b: the query/modifier layer.
+// Each test pins ONE query rule (effects-architecture §4.5). The invariant
+// under test throughout: the MASK and the RESOLUTION path agree, because both
+// read the same query.
+// ============================================================================
+
+TEST(TurnLoop, CorruptionMakesSkillsFreeAndExhaustsThem) {
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::Corruption] = 1;
+  s.character.energy = 0;  // no energy at all
+  s.current_hand.push_back(Card{CardId::Defend});  // normally costs 1
+
+  // The mask must agree that a 0-energy Defend is legal under Corruption.
+  const auto mask = valid_actions(s);
+  ASSERT_TRUE(mask[card_action(CardId::Defend, 0)]);
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend, 0)));
+  EXPECT_EQ(s.character.energy, 0);          // cost 0, nothing spent
+  EXPECT_EQ(s.character.current_block, 5);   // and it still did its job
+  EXPECT_EQ(s.exhaust_pile.size(), 1u);      // Corruption exhausts Skills
+  EXPECT_TRUE(s.discard_pile.empty());
+}
+
+TEST(TurnLoop, CorruptionDoesNotDiscountAttacks) {
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::Corruption] = 1;
+  s.character.energy = 0;
+  s.current_hand.push_back(Card{CardId::Strike});  // an Attack, still costs 1
+
+  const auto mask = valid_actions(s);
+  EXPECT_FALSE(mask[card_action(CardId::Strike, 0)]);
+}
+
+TEST(TurnLoop, BarricadeKeepsBlockAcrossTheTurnBoundary) {
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::Barricade] = 1;
+  s.character.powers[Power::Metallicize] = 100;  // huge block, absorbs the hit
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  // Without Barricade the turn-start reset would zero this.
+  EXPECT_GT(s.character.current_block, 0);
+}
+
+TEST(TurnLoop, BlockStillResetsWithoutBarricade) {
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::Metallicize] = 100;
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_EQ(s.character.current_block, 0);
+}
+
+TEST(TurnLoop, BattleTranceDrawsThenBlocksFurtherDraws) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  for (int i = 0; i < 12; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::BattleTrance});
+  s.current_hand.push_back(Card{CardId::PommelStrike});  // draws 1
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::BattleTrance, 0)));
+  const std::size_t after_trance = s.current_hand.size();
+  EXPECT_TRUE(s.character.no_draw_this_turn);
+
+  // Battle Trance's OWN draw resolved (3 cards + the Pommel Strike still held).
+  EXPECT_EQ(after_trance, 4u);
+
+  // A later draw is suppressed.
+  ASSERT_TRUE(apply_action(s, card_action(CardId::PommelStrike, 0)));
+  EXPECT_EQ(s.current_hand.size(), after_trance - 1);  // played, drew nothing
+}
+
+TEST(TurnLoop, BattleTranceNoDrawClearsNextTurn) {
+  CombatState s = make_power_test_state();
+  s.character.no_draw_this_turn = true;
+  for (int i = 0; i < 12; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_FALSE(s.character.no_draw_this_turn);
+  EXPECT_EQ(s.current_hand.size(), static_cast<std::size_t>(STARTING_HAND_SIZE));
+}
+
+TEST(TurnLoop, BloodForBloodCostsLessPerHpLossEvent) {
+  CombatState s = make_power_test_state();
+  // Fresh combat: full price (4).
+  EXPECT_EQ(effective_cost(s, CardId::BloodForBlood), 4);
+
+  s.character.hp_loss_events = 2;
+  EXPECT_EQ(effective_cost(s, CardId::BloodForBlood), 2);
+
+  s.character.hp_loss_events = 10;  // floors at 0, never negative
+  EXPECT_EQ(effective_cost(s, CardId::BloodForBlood), 0);
+}
+
+TEST(TurnLoop, BloodForBloodCountsEnemyDamageAsAnHpLossEvent) {
+  // Unlike Rupture (self-inflicted only), Blood for Blood counts ANY HP loss.
+  CombatState s = make_power_test_state();
+  ASSERT_EQ(s.character.hp_loss_events, 0);
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));  // the enemy hits us
+
+  EXPECT_EQ(s.character.hp_loss_events, 1);
+}
+
+TEST(TurnLoop, BloodForBloodCountsSelfInflictedLossToo) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Bloodletting});  // lose 3 HP
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bloodletting, 0)));
+
+  EXPECT_EQ(s.character.hp_loss_events, 1);
+}
+
+TEST(TurnLoop, BlockedEnemyAttackIsNotAnHpLossEvent) {
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::Metallicize] = 100;  // absorbs the whole attack
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_EQ(s.character.hp_loss_events, 0);  // no HP actually lost
+}
+
+TEST(TurnLoop, HeavyBladeCountsStrengthThreeTimes) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.character.powers[Power::Strength] = 3;
+  const int hp = s.enemies[0].hp;
+  s.current_hand.push_back(Card{CardId::HeavyBlade});  // 14 base, 3x Strength
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::HeavyBlade, 0)));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - (14 + 3 * 3));  // 23, not 17
+}
+
+TEST(TurnLoop, HeavyBladePlusCountsStrengthFiveTimes) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.character.powers[Power::Strength] = 3;
+  const int hp = s.enemies[0].hp;
+  s.current_hand.push_back(Card{CardId::HeavyBladePlus});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::HeavyBladePlus, 0)));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - (14 + 3 * 5));  // 29
+}
+
+TEST(TurnLoop, NormalCardsAreUnaffectedByTheStrengthMultiplier) {
+  CombatState s = make_power_test_state();
+  s.character.powers[Power::Strength] = 3;
+  const int hp = s.enemies[0].hp;
+  s.current_hand.push_back(Card{CardId::Strike});  // 6 base, 1x Strength
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 9);  // 6 + 3
+}
+
+TEST(TurnLoop, BodySlamDealsDamageEqualToCurrentBlock) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.character.current_block = 17;
+  const int hp = s.enemies[0].hp;
+  s.current_hand.push_back(Card{CardId::BodySlam});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::BodySlam, 0)));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 17);
+  EXPECT_EQ(s.character.current_block, 17);  // block is read, not spent
+}
+
+TEST(TurnLoop, BodySlamWithNoBlockDealsNothing) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.character.current_block = 0;
+  const int hp = s.enemies[0].hp;
+  s.current_hand.push_back(Card{CardId::BodySlam});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::BodySlam, 0)));
+
+  EXPECT_EQ(s.enemies[0].hp, hp);
+}
+
+TEST(TurnLoop, PerfectedStrikeCountsStrikeNamedCardsAcrossPiles) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.draw_pile.push_back(Card{CardId::Strike});        // "Strike"
+  s.draw_pile.push_back(Card{CardId::TwinStrike});    // "Twin Strike"
+  s.discard_pile.push_back(Card{CardId::PommelStrike});  // "Pommel Strike"
+  s.current_hand.push_back(Card{CardId::Defend});     // not a Strike
+  s.current_hand.push_back(Card{CardId::PerfectedStrike});
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::PerfectedStrike, 0)));
+
+  // 3 Strike-named in piles + Perfected Strike itself = 4, x2 = +8, on base 6.
+  EXPECT_EQ(s.enemies[0].hp, hp - (6 + 8));
+}
+
+TEST(TurnLoop, PerfectedStrikeDoesNotCountExhaustedStrikes) {
+  // StS1: exhausting a Strike REDUCES Perfected Strike (the StS2 rework added
+  // the exhaust pile; we model StS1 — verified).
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.exhaust_pile.push_back(Card{CardId::Strike});
+  s.exhaust_pile.push_back(Card{CardId::TwinStrike});
+  s.current_hand.push_back(Card{CardId::PerfectedStrike});
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::PerfectedStrike, 0)));
+
+  // Only Perfected Strike itself counts: 1 x2 = +2, on base 6.
+  EXPECT_EQ(s.enemies[0].hp, hp - (6 + 2));
+}
+
+TEST(TurnLoop, ClashIsOnlyPlayableWhenTheHandIsAllAttacks) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Clash});
+  s.current_hand.push_back(Card{CardId::Strike});  // an Attack: still legal
+
+  auto mask = valid_actions(s);
+  EXPECT_TRUE(mask[card_action(CardId::Clash, 0)]);
+
+  // Add a Skill: now illegal.
+  s.current_hand.push_back(Card{CardId::Defend});
+  mask = valid_actions(s);
+  EXPECT_FALSE(mask[card_action(CardId::Clash, 0)]);
+  // And the resolution path agrees with the mask.
+  EXPECT_FALSE(apply_action(s, card_action(CardId::Clash, 0)));
+}
+
+TEST(TurnLoop, EntrenchDoublesCurrentBlock) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.character.current_block = 9;
+  s.current_hand.push_back(Card{CardId::Entrench});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Entrench, 0)));
+
+  EXPECT_EQ(s.character.current_block, 18);
+}
+
+TEST(TurnLoop, EntrenchDoublingTriggersJuggernaut) {
+  // Entrench's doubling IS a block gain, so Juggernaut sees it.
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.character.current_block = 9;
+  s.character.powers[Power::Juggernaut] = 5;
+  const int hp = s.enemies[0].hp;
+  s.current_hand.push_back(Card{CardId::Entrench});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Entrench, 0)));
+
+  EXPECT_EQ(s.character.current_block, 18);
+  EXPECT_EQ(s.enemies[0].hp, hp - 5);
+}
+
+TEST(TurnLoop, SeverSoulExhaustsNonAttacksInHand) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::SeverSoul});
+  s.current_hand.push_back(Card{CardId::Strike});   // Attack: kept
+  s.current_hand.push_back(Card{CardId::Defend});   // Skill: exhausted
+  s.current_hand.push_back(Card{CardId::Inflame});  // Power: exhausted
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::SeverSoul, 0)));
+
+  EXPECT_EQ(s.current_hand.size(), 1u);  // just the Strike
+  EXPECT_EQ(s.current_hand[0].card_id, CardId::Strike);
+  EXPECT_EQ(s.exhaust_pile.size(), 2u);
+}
+
+TEST(TurnLoop, SeverSoulExhaustsFeedFeelNoPainBeforeItsDamage) {
+  // Ordering: the exhausts are queued before the attack, so Feel No Pain's
+  // block is gained first (and, with Body Slam-like reads, would be visible).
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.character.powers[Power::FeelNoPain] = 3;
+  s.current_hand.push_back(Card{CardId::SeverSoul});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::GhostlyArmor});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::SeverSoul, 0)));
+
+  EXPECT_EQ(s.character.current_block, 6);  // 2 exhausts x 3 block
+}
+
+TEST(TurnLoop, DropkickGivesEnergyAndDrawWhenTargetIsVulnerable) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.enemies[0].debuffs[Debuff::Vulnerable] = 2;
+  for (int i = 0; i < 5; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Dropkick});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Dropkick, 0)));
+
+  // Paid 1, gained 1 back.
+  EXPECT_EQ(s.character.energy, 3);
+  EXPECT_EQ(s.current_hand.size(), 1u);  // drew 1
+}
+
+TEST(TurnLoop, DropkickGivesNothingWhenTargetIsNotVulnerable) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  for (int i = 0; i < 5; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Dropkick});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Dropkick, 0)));
+
+  EXPECT_EQ(s.character.energy, 2);      // paid 1, got nothing back
+  EXPECT_TRUE(s.current_hand.empty());   // drew nothing
 }

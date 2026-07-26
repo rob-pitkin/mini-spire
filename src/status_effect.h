@@ -49,6 +49,10 @@ enum class Power {
                  // removed at the start of the next turn
   Brutality,     // turn start: lose `stacks` HP, draw `stacks` cards
   Berserk,       // turn start: gain `stacks` energy
+  // --- Query-layer powers (Stage 4b): consulted, never fired. Behavior lives
+  // in query.cc, not in a hook registry. ---
+  Corruption,    // Skills cost 0 and exhaust when played
+  Barricade,     // block is not removed at the start of your turn
   None,          // sentinel: "no power" (default for unused fields)
 };
 
@@ -59,7 +63,7 @@ enum class Power {
 // enforce the counts match. (The None sentinels are excluded.)
 inline constexpr int kNumDebuffs = 4;
 inline constexpr int kNumEnemyPowers = 6;
-inline constexpr int kNumPlayerPowers = 18;
+inline constexpr int kNumPlayerPowers = 20;
 
 // FUTURE (multi-enemy): Target { Character, Enemy } collapses any "the enemy"
 // to a single entity, which is unambiguous in v1 with one enemy. Multi-enemy

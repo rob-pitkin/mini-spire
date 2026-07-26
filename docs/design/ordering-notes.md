@@ -125,6 +125,56 @@ retaliate, so it expires at the START of the next player turn
 `Character::combust_casts` counts casts for the 1-HP-per-cast loss. One count
 can't express both once upgrades mix: Combust + Combust+ = lose 2 HP, deal 12.
 
+## Stage 4b (query/modifier layer)
+
+Queries are **pull, not push**: consulted at computation sites, never fired.
+The invariant they buy is that `valid_actions` and `handle_play_card` read the
+*same* function, so the mask and the resolution path cannot disagree about
+cost, legality, or damage.
+
+### 12. Query values are resolved at PLAY time, not execution time
+
+`base_card_damage` (Body Slam's block, Perfected Strike's Strike count) and
+`effective_cost` are evaluated during translation, and the resulting number is
+baked into the queued action. So a mid-card change — Juggernaut killing a
+Strike-holder, a block gain landing between hits — cannot retroactively alter
+already-queued damage. This matches what the player sees when choosing the
+card.
+
+### 13. Perfected Strike counts hand + draw + discard, NOT exhaust
+
+StS1: exhausting a Strike *reduces* Perfected Strike's damage (verified on the
+wiki and a dev-confirmed community thread; the StS2 rework added the exhaust
+pile, which we do not model). The match is a NAME substring — "counts ALL
+cards with the word Strike in its title" — so it covers Twin Strike, Pommel
+Strike, and Perfected Strike itself automatically as the pool grows.
+
+### 14. Blood for Blood counts any HP loss; Rupture counts only self-inflicted
+
+Deliberately different scopes on the same event, both wiki-verified:
+`Character::hp_loss_events` increments in the `LoseHp` executor **and** on
+unblocked enemy damage, while `Hook::HpLostPlayer` (Rupture) fires only from
+`LoseHp`. A fully-blocked attack is not an HP-loss event for either.
+
+### 15. Sever Soul and Entrench resolve before the card's damage
+
+Sever Soul's exhausts are queued ahead of its attack so Feel No Pain / Dark
+Embrace respond first; Entrench's doubling likewise lands before any Body
+Slam-style read of block. Entrench's doubling is queued as a `GainBlock`, so
+Juggernaut sees it as a real block gain (pinned by a test) — but it is *not*
+`card_block`, so Dexterity and Frail do not apply to the doubled amount.
+
+### 16. Corruption both discounts and exhausts
+
+`effective_cost` returns 0 for Skills, and the pile-routing step converts a
+played Skill's discard into an exhaust. Both halves are needed; the exhaust
+half also means Corruption feeds Feel No Pain / Dark Embrace.
+
+### 17. Dropkick checks Vulnerable before its own damage
+
+The bonus is evaluated at translation, against the target's Vulnerable state
+as the player sees it when choosing — not after the card's own hit resolves.
+
 ## RNG stream
 
 Unchanged by the queue: within a card resolution, only draws consume RNG;

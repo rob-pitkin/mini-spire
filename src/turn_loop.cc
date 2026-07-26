@@ -9,6 +9,7 @@
 #include "card.h"
 #include "encounter.h"
 #include "enemy.h"
+#include "query.h"
 #include "status_effect.h"
 
 namespace minispire {
@@ -81,10 +82,11 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   // 1. Pay energy at translation time — an X-cost card's X (= its hit count)
   // must be known before its hits can be queued.
   int x = 0;
-  if (data.cost == kXCost) {
+  const int cost = effective_cost(state, card_id);  // Corruption, Blood for Blood
+  if (cost == kXCost) {
     x = spend_all_energy(state);
   } else {
-    spend_energy(state, data.cost);
+    spend_energy(state, cost);
   }
   // hits: -1 means "X hits" (Whirlwind); otherwise the literal count.
   const int hits = (data.hits < 0) ? x : data.hits;
@@ -109,7 +111,42 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   // 3. Translate the CardData field-bag into its default action sequence.
   ActionQueue q;
   ResolutionContext ctx;
-  if (data.damage > 0) {
+
+  // 3a. Pre-damage hand/block effects (Stage 4b). These resolve BEFORE the
+  // card's damage: Sever Soul's exhausts must feed Feel No Pain first, and
+  // Entrench's doubling must land before a Body Slam reads block.
+  if (data.exhausts_non_attacks_in_hand) {
+    // Sever Soul: exhaust every non-Attack in hand (the card itself is already
+    // in flight, so it can't exhaust itself).
+    std::vector<Card> keep;
+    for (const Card& c : state.current_hand) {
+      if (CARD_DATABASE.at(c.card_id).type == CardType::Attack) {
+        keep.push_back(c);
+      } else {
+        Action a;
+        a.kind = ActionKind::ExhaustCard;
+        a.card = c.card_id;
+        q.push_back(a);
+      }
+    }
+    state.current_hand = std::move(keep);
+  }
+  if (data.doubles_block) {
+    // Entrench: double current block. Queued as a GainBlock of the current
+    // amount so Juggernaut sees a block gain (raw, no Dex/Frail — this isn't
+    // block "from a card" in the Dexterity sense).
+    Action a;
+    a.kind = ActionKind::GainBlock;
+    a.target = kPlayerSlot;
+    a.amount = state.character.current_block;
+    q.push_back(a);
+  }
+
+  // Base damage is a QUERY: Body Slam reads current block, Perfected Strike
+  // counts Strikes in the deck. Resolved here (at play time) so a mid-card
+  // change can't retroactively alter the queued hits.
+  const int card_damage = base_card_damage(state, card_id);
+  if (card_damage > 0) {
     // One DealDamage per hit per target; a multi-hit AoE (Whirlwind) sweeps
     // all targets each swing. Damage math runs at execution (Strength per hit).
     for (int h = 0; h < hits; ++h) {
@@ -118,7 +155,9 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
         a.kind = ActionKind::DealDamage;
         a.actor = kPlayerSlot;
         a.target = slot;
-        a.amount = data.damage;
+        a.amount = card_damage;
+        a.card = card_id;
+        a.strength_mult = strength_multiplier(card_id);  // Heavy Blade 3x/5x
         q.push_back(a);
       }
     }
@@ -177,13 +216,34 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
     a.amount = data.lose_hp;
     q.push_back(a);
   }
+  // Dropkick: if the TARGET is Vulnerable, gain 1 energy and draw 1. Checked at
+  // translation, i.e. against the Vulnerable state before this card's own
+  // damage — which is what the player sees when choosing the card.
+  if (data.bonus_if_target_vulnerable && !target_slots.empty()) {
+    const int slot = target_slots.front();
+    if (get_status(state.enemies[slot].debuffs, Debuff::Vulnerable) > 0) {
+      Action e;
+      e.kind = ActionKind::GainEnergy;
+      e.amount = 1;
+      q.push_back(e);
+      Action d2;
+      d2.kind = ActionKind::DrawCards;
+      d2.amount = 1;
+      q.push_back(d2);
+    }
+  }
   // The played card lands in its pile after the card's own effects resolve.
   // A Power card VANISHES (StS): it enters no pile at all, so it can never be
   // Exhumed or replayed — and, not being exhausted, it doesn't trigger Feel No
   // Pain / Dark Embrace.
   if (data.type != CardType::Power) {
+    // Corruption also EXHAUSTS every Skill played (not just making them free).
+    const bool corrupted_skill =
+        data.type == CardType::Skill &&
+        get_status(state.character.powers, Power::Corruption) > 0;
     Action a;
-    a.kind = data.exhaust ? ActionKind::ExhaustCard : ActionKind::DiscardCard;
+    a.kind = (data.exhaust || corrupted_skill) ? ActionKind::ExhaustCard
+                                               : ActionKind::DiscardCard;
     a.card = card_id;
     q.push_back(a);
   }
@@ -205,6 +265,10 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   // 4. Drain to completion — every mutation is a flat, sequential step; no
   // live reference or open loop spans a mutation.
   drain(state, q, ctx);
+
+  // Battle Trance: no FURTHER draws this turn. Set after the drain so the
+  // card's own draw (queued above) still resolves. Cleared at turn start.
+  if (data.no_draw_after) state.character.no_draw_this_turn = true;
 
   // 5. Terminal checks. DEATH takes precedence over victory: if the card's
   // self-damage (a lose-HP card — ROB-80) killed the player, it's a Loss even
@@ -400,8 +464,10 @@ void handle_end_turn(CombatState& state) {
   // the start-of-turn powers (Demon Form, Brutality, Berserk, Flame Barrier
   // expiry) and the draw are a translate + drain, so drawn Statuses can fire
   // Evolve / Fire Breathing.
-  state.character.current_block = 0;
+  // Barricade keeps block across the turn boundary (query, Stage 4b).
+  if (block_resets_at_turn_start(state)) state.character.current_block = 0;
   state.character.energy = state.character.energy_per_turn;
+  state.character.no_draw_this_turn = false;  // Battle Trance is turn-scoped
   state.turn_number += 1;
   state.character_turn = true;
   {
@@ -425,10 +491,14 @@ void handle_end_turn(CombatState& state) {
 int compute_attack_damage(
     int base, const std::unordered_map<Power, int>& attacker_powers,
     const std::unordered_map<Debuff, int>& attacker_debuffs,
-    const std::unordered_map<Debuff, int>& defender_debuffs) {
+    const std::unordered_map<Debuff, int>& defender_debuffs,
+    int strength_mult) {
   // Float-internal, truncated once at the end (per the STS wiki rounding rule).
+  // strength_mult is Heavy Blade's "Strength affects this 3x/5x" (Stage 4b);
+  // 1 for everything else.
   float d = static_cast<float>(base) +
-            static_cast<float>(get_status(attacker_powers, Power::Strength));
+            static_cast<float>(
+                get_status(attacker_powers, Power::Strength) * strength_mult);
   if (get_status(attacker_debuffs, Debuff::Weak) > 0) d *= 0.75f;
   if (get_status(defender_debuffs, Debuff::Vulnerable) > 0) d *= 1.5f;
   int result = static_cast<int>(std::floor(d));
@@ -518,20 +588,21 @@ namespace {
 // Is one decoded card action legal right now? The single source of truth for
 // legality: valid_actions loops it, apply_action calls it once. `entangled` is
 // hoisted by the caller (it's per-state, not per-action).
-bool card_action_is_legal(const CombatState& state, const DecodedAction& d,
-                          bool entangled) {
+bool card_action_is_legal(const CombatState& state, const DecodedAction& d) {
   const int card_idx = static_cast<int>(d.card);
   if (card_idx < 0 || card_idx >= static_cast<int>(CARD_DATABASE.size())) {
     return false;
   }
   const CardData& data = CARD_DATABASE.at(d.card);
-  if (data.unplayable) return false;  // Dazed etc. — never legal (ROB-65)
+  // Playability (unplayable / Entangle / Clash) and cost (Corruption, Blood for
+  // Blood) come from the query layer, so the mask can't disagree with what
+  // resolution actually does (Stage 4b, §4.5).
+  if (!is_playable(state, d.card)) return false;
   if (find_first_in_hand(state.current_hand, d.card) < 0) return false;
   // X-cost cards (ROB-80) are always affordable (X = current energy, may be 0);
   // fixed-cost cards need enough energy.
-  if (data.cost != kXCost && state.character.energy < data.cost) return false;
-  // Entangle blocks all Attack-type cards for a turn (ROB-75).
-  if (entangled && data.type == CardType::Attack) return false;
+  const int cost = effective_cost(state, d.card);
+  if (cost != kXCost && state.character.energy < cost) return false;
 
   // Target legality fork.
   if (card_targets_enemy(data)) {
@@ -554,10 +625,6 @@ std::vector<bool> valid_actions(const CombatState& state) {
     return mask;  // all false
   }
 
-  // Entangle (ROB-75): while entangled, the player can't play attack cards.
-  const bool entangled =
-      get_status(state.character.debuffs, Debuff::Entangle) > 0;
-
   // Walk the HAND, not the whole action space: a card not in hand is illegal in
   // all of its target slots, and the hand is <= 10 cards against 400+ actions.
   // (The all-actions loop hashed CARD_DATABASE once per action — the dominant
@@ -569,8 +636,7 @@ std::vector<bool> valid_actions(const CombatState& state) {
       const int action = card_idx * kMaxEnemies + target;
       if (mask[action]) continue;  // duplicate card in hand, already decided
       mask[action] = card_action_is_legal(
-          state, DecodedAction{/*is_end_turn=*/false, c.card_id, target},
-          entangled);
+          state, DecodedAction{/*is_end_turn=*/false, c.card_id, target});
     }
   }
 
@@ -590,11 +656,7 @@ bool apply_action(CombatState& state, int action) {
   // space is 400+ entries; building it here doubled the per-step mask cost).
   // Shares card_action_is_legal with valid_actions, so the two can't disagree.
   const DecodedAction d = decode_action(action);
-  if (!d.is_end_turn) {
-    const bool entangled =
-        get_status(state.character.debuffs, Debuff::Entangle) > 0;
-    if (!card_action_is_legal(state, d, entangled)) return false;
-  }
+  if (!d.is_end_turn && !card_action_is_legal(state, d)) return false;
   if (d.is_end_turn) {
     handle_end_turn(state);
   } else {

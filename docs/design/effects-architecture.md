@@ -275,7 +275,7 @@ bang** — the queue arrives under card resolution first, then spreads.
 | **2. Queue under card resolution** | `handle_play_card` → action translation + drain. Executors wrap the Stage-1 mutators. Enemy phase still imperative. Hook vocabulary introduced; existing triggers repointed. | Suite green; timing-sensitive tests (spore-cloud, split, became-alone) re-verified deliberately (§8). |
 | **3. Enemy phase on the queue** | `handle_end_turn` / `apply_move_to_state` emit actions; two-regime period ends. | Suite green; enemy-phase timing tests re-verified. |
 | **4a. Player-power registry** ✅ | `fire_player_power_hooks` (static switch over `character.powers`), fixed/thorns damage, per-entity obs power lists, Tier C cards. | Done: 262 C++ + 91 Python green, ASan clean. |
-| **4b. Query/modifier layer** | `effective_cost` (Corruption, Blood for Blood), `block_resets` (Barricade), `can_draw` (Battle Trance), damage modifiers (Heavy Blade, Perfected Strike, Body Slam), `is_playable` (Clash). | Suite green; mask and executors read queries, never raw fields. |
+| **4b. Query/modifier layer** ✅ | `effective_cost` (Corruption, Blood for Blood), `block_resets_at_turn_start` (Barricade), `can_draw` (Battle Trance), `base_card_damage` (Body Slam, Perfected Strike), `strength_multiplier` (Heavy Blade), `is_playable` (Clash) — all in `src/query.{h,cc}`. Tier D's 22 cards ship on it. | Done: 286 C++ + 91 Python green, ASan clean; mask verified differentially against an independent oracle. |
 | **4c. Pause-on-choice** | `PendingChoice` POD + persisted action vector; choice-mode obs/mask encoding (needs its own mini-design). | Choice round-trip test: pause → clone → resume on the clone. |
 | **4d. Meta-cards** | Double Tap, Havoc, Armaments, Headbutt, Exhume, Dual Wield, Warcry (Tier D/E). | New card tests. |
 
@@ -340,6 +340,7 @@ Measured (single-env random agent, M1, best of 3):
 | Stage 2 | — | 113.8k (−2.6%) |
 | Stage 3 | — | 112.9k (−3.4%) |
 | Stage 4a | **910.0k (+132%)** | 87.2k (−25%) |
+| Stage 4b | 838.5k (+114%) | — |
 
 Stage 4a first measured a 39% engine regression — not from the queue, but from
 the action space growing 60% (50→80 card types, 251→401 actions) against a

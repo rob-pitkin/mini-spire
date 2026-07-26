@@ -17,6 +17,7 @@ add_library(minispire
   src/combat_env.cc
   src/enemy.cc
   src/encounter.cc
+  src/query.cc
   src/turn_loop.cc
 )
 

@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "query.h"      // can_draw (Battle Trance)
 #include "turn_loop.h"  // compute_attack_damage, HAND_SIZE_LIMIT
 
 namespace minispire {
@@ -506,8 +507,12 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         const int dmg = compute_attack_damage(
             a.amount, state.enemies[a.actor].powers,
             state.enemies[a.actor].debuffs, state.character.debuffs);
+        const int hp_before = state.character.hp;
         apply_damage_to_hp_block(state.character.hp,
                                  state.character.current_block, dmg);
+        // Blood for Blood counts HP-loss events from ANY source, so unblocked
+        // enemy damage counts too (Rupture, by contrast, does not fire here).
+        if (state.character.hp < hp_before) state.character.hp_loss_events += 1;
         // Flame Barrier retaliates on being attacked, even if fully blocked.
         fire_player_power_hooks(state, Hook::PlayerAttacked, q, a.card,
                                 a.actor);
@@ -517,10 +522,9 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       if (!valid_enemy_slot(state, a.target)) break;
       if (state.enemies[a.target].hp <= 0) break;
       const int hp_before = state.enemies[a.target].hp;
-      const int dmg =
-          compute_attack_damage(a.amount, state.character.powers,
-                                state.character.debuffs,
-                                state.enemies[a.target].debuffs);
+      const int dmg = compute_attack_damage(
+          a.amount, state.character.powers, state.character.debuffs,
+          state.enemies[a.target].debuffs, a.strength_mult);
       apply_damage_to_hp_block(state.enemies[a.target].hp,
                                state.enemies[a.target].current_block, dmg);
       if (state.enemies[a.target].hp < hp_before) {
@@ -566,6 +570,8 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
     case ActionKind::LoseHp:
       if (a.amount > 0) {
         lose_player_hp(state, a.amount);
+        // Blood for Blood counts HP-loss EVENTS from any source (Stage 4b).
+        state.character.hp_loss_events += 1;
         // Rupture: HP lost from a card or power (never from enemy damage).
         fire_player_power_hooks(state, Hook::HpLostPlayer, q);
       }
@@ -592,6 +598,8 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       gain_energy(state, a.amount);
       break;
     case ActionKind::DrawCards:
+      // Battle Trance forbids further draws this turn (query, not a hook).
+      if (!can_draw(state)) break;
       for (int i = 0; i < a.amount; ++i) {
         const std::optional<CardId> drawn = draw_one(state);
         // Evolve / Fire Breathing key on the drawn card's type.

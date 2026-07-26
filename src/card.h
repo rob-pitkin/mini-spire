@@ -100,12 +100,36 @@ enum class CardId {
   BerserkPlus,
   Metallicize,
   MetallicizePlus,
+  // Tier D (Stage 4b) — the query/modifier layer: cards whose cost, damage,
+  // legality, or block rule is COMPUTED from state rather than stored.
+  BodySlam,
+  BodySlamPlus,
+  Clash,
+  ClashPlus,
+  HeavyBlade,
+  HeavyBladePlus,
+  PerfectedStrike,
+  PerfectedStrikePlus,
+  BattleTrance,
+  BattleTrancePlus,
+  BloodForBlood,
+  BloodForBloodPlus,
+  Dropkick,
+  DropkickPlus,
+  Entrench,
+  EntrenchPlus,
+  SeverSoul,
+  SeverSoulPlus,
+  Barricade,
+  BarricadePlus,
+  Corruption,
+  CorruptionPlus,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
 // action-space size (card x target). Update CARD_DATABASE + kObsCardOrder in
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
-inline constexpr int kNumCardTypes = 80;
+inline constexpr int kNumCardTypes = 102;
 
 // A card's inherent StS type. This is a real property, NOT inferable from
 // damage/block: an Attack can gain block (Body Slam) and a Skill can deal
@@ -132,6 +156,15 @@ enum class CardTarget {
 // X-cost sentinel (ROB-80): playing an X-cost card (Whirlwind) spends ALL
 // current energy; X = the energy spent. Stored in CardData::cost.
 inline constexpr int kXCost = -2;
+
+// How a card's base damage is computed (Stage 4b). Most cards just use
+// CardData::damage; a few derive it from state, which is a QUERY (pulled at
+// resolution), not a stored value. Resolved by base_card_damage in query.cc.
+enum class DamageRule {
+  Normal,           // use CardData::damage
+  EqualToBlock,     // Body Slam: the player's current block
+  PerStrikeInDeck,  // Perfected Strike: + amount per "Strike"-named card
+};
 
 // FUTURE: per-instance card state (e.g. Ritual Dagger's accumulated damage,
 // Searing Blow's cumulative upgrades) will require widening this struct.
@@ -161,6 +194,18 @@ struct CardData {
   // Innate (Stage 4a, Brutality+): starts in the opening hand, counting toward
   // the opening draw.
   bool innate = false;
+  // --- Query/modifier hooks (Stage 4b). These are DECLARATIVE: the rule lives
+  // in query.cc, the card only says which rule applies. See
+  // docs/design/effects-architecture.md §4.5. ---
+  DamageRule damage_rule = DamageRule::Normal;
+  int damage_rule_amount = 0;  // per-Strike bonus (Perfected Strike)
+  int strength_mult = 1;  // Heavy Blade counts Strength 3x / 5x
+  bool cost_drops_per_hp_loss = false;   // Blood for Blood
+  bool attacks_only_in_hand = false;     // Clash
+  bool exhausts_non_attacks_in_hand = false;  // Sever Soul
+  bool doubles_block = false;                 // Entrench
+  bool no_draw_after = false;                 // Battle Trance
+  bool bonus_if_target_vulnerable = false;    // Dropkick: +1 energy, +1 draw
 };
 
 // CardData row order: name, cost, damage, hits, block, target, debuffs, powers,
@@ -263,6 +308,40 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     {CardId::BerserkPlus, {"Berserk+", 0, 0, 0, 0, CardTarget::Self, {{Debuff::Vulnerable, 1, Target::Character}}, {{Power::Berserk, 1, Target::Character}}, CardType::Power, false, false}},
     {CardId::Metallicize, {"Metallicize", 1, 0, 0, 0, CardTarget::None, {}, {{Power::Metallicize, 3, Target::Character}}, CardType::Power, false, false}},
     {CardId::MetallicizePlus, {"Metallicize+", 1, 0, 0, 0, CardTarget::None, {}, {{Power::Metallicize, 4, Target::Character}}, CardType::Power, false, false}},
+    // --- Ironclad Tier D (Stage 4b): the query/modifier layer. The trailing
+    // flags select a RULE in query.cc; the card never carries the logic.
+    // Body Slam: damage = current block (damage field unused).
+    {CardId::BodySlam, {"Body Slam", 1, 0, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::EqualToBlock}},
+    {CardId::BodySlamPlus, {"Body Slam+", 0, 0, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::EqualToBlock}},
+    // Clash: only playable when every card in hand is an Attack.
+    {CardId::Clash, {"Clash", 0, 14, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, /*attacks_only_in_hand=*/true}},
+    {CardId::ClashPlus, {"Clash+", 0, 18, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, /*attacks_only_in_hand=*/true}},
+    // Heavy Blade: Strength counts 3x (5x upgraded).
+    {CardId::HeavyBlade, {"Heavy Blade", 2, 14, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, /*strength_mult=*/3}},
+    {CardId::HeavyBladePlus, {"Heavy Blade+", 2, 14, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, /*strength_mult=*/5}},
+    // Perfected Strike: +2 (+3) per "Strike"-named card in hand/draw/discard.
+    {CardId::PerfectedStrike, {"Perfected Strike", 2, 6, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::PerStrikeInDeck, 2}},
+    {CardId::PerfectedStrikePlus, {"Perfected Strike+", 2, 6, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::PerStrikeInDeck, 3}},
+    // Battle Trance: draw, then no further draws this turn.
+    {CardId::BattleTrance, {"Battle Trance", 0, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 3, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, /*no_draw_after=*/true}},
+    {CardId::BattleTrancePlus, {"Battle Trance+", 0, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 4, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, /*no_draw_after=*/true}},
+    // Blood for Blood: costs 1 less per HP-loss event this combat.
+    {CardId::BloodForBlood, {"Blood For Blood", 4, 18, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, /*cost_drops_per_hp_loss=*/true}},
+    {CardId::BloodForBloodPlus, {"Blood For Blood+", 3, 22, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, /*cost_drops_per_hp_loss=*/true}},
+    // Dropkick: if the target is Vulnerable, gain 1 energy and draw 1.
+    {CardId::Dropkick, {"Dropkick", 1, 5, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, /*bonus_if_target_vulnerable=*/true}},
+    {CardId::DropkickPlus, {"Dropkick+", 1, 8, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, /*bonus_if_target_vulnerable=*/true}},
+    // Entrench: double your current block.
+    {CardId::Entrench, {"Entrench", 2, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, /*doubles_block=*/true}},
+    {CardId::EntrenchPlus, {"Entrench+", 1, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, /*doubles_block=*/true}},
+    // Sever Soul: exhaust all non-Attack cards in hand, then deal damage.
+    {CardId::SeverSoul, {"Sever Soul", 2, 16, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, /*exhausts_non_attacks_in_hand=*/true}},
+    {CardId::SeverSoulPlus, {"Sever Soul+", 2, 22, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, /*exhausts_non_attacks_in_hand=*/true}},
+    // Barricade / Corruption: pure query-layer powers (no hook behavior).
+    {CardId::Barricade, {"Barricade", 3, 0, 0, 0, CardTarget::None, {}, {{Power::Barricade, 1, Target::Character}}, CardType::Power, false, false}},
+    {CardId::BarricadePlus, {"Barricade+", 2, 0, 0, 0, CardTarget::None, {}, {{Power::Barricade, 1, Target::Character}}, CardType::Power, false, false}},
+    {CardId::Corruption, {"Corruption", 3, 0, 0, 0, CardTarget::None, {}, {{Power::Corruption, 1, Target::Character}}, CardType::Power, false, false}},
+    {CardId::CorruptionPlus, {"Corruption+", 2, 0, 0, 0, CardTarget::None, {}, {{Power::Corruption, 1, Target::Character}}, CardType::Power, false, false}},
 };
 
 // Whether a card needs the player to PICK a specific enemy slot (ROB-80). Only

@@ -22,10 +22,13 @@ constexpr int HAND_SIZE_LIMIT = 10;
 //
 // Exposed so the CLI / observation layer can display the *effective* enemy
 // attack damage (Strength-modified, etc.) rather than the raw move.damage.
+// `strength_mult` multiplies the attacker's Strength contribution (Heavy
+// Blade's 3x/5x, Stage 4b); it defaults to the normal 1x.
 int compute_attack_damage(
     int base, const std::unordered_map<Power, int>& attacker_powers,
     const std::unordered_map<Debuff, int>& attacker_debuffs,
-    const std::unordered_map<Debuff, int>& defender_debuffs);
+    const std::unordered_map<Debuff, int>& defender_debuffs,
+    int strength_mult = 1);
 
 // The Ironclad starter deck: 5 Strike + 4 Defend + 1 Bash (unshuffled).
 std::vector<Card> starter_deck();

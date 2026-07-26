@@ -37,6 +37,14 @@ struct Character {
   // Power::Combust stacks = accumulated damage (5/7 per cast — one stack count
   // can't hold both once upgrades mix). Bumped by the ApplyPower executor.
   int combust_casts = 0;
+  // --- Query-layer counters (Stage 4b). Hidden from the obs on purpose: they
+  // are read through query.cc, not shown as power icons in StS. ---
+  // Blood for Blood: cost drops 1 per HP-loss EVENT this combat, from ANY
+  // source including enemy attacks (unlike Rupture, which is self-inflicted
+  // only). Combat-scoped — never reset per turn.
+  int hp_loss_events = 0;
+  // Battle Trance: no further draws this turn. Cleared at turn start.
+  bool no_draw_this_turn = false;
 };
 
 struct CombatState {
