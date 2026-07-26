@@ -35,6 +35,65 @@ void apply_damage_to_hp_block(int& hp, int& block, int amount) {
   if (hp < 0) hp = 0;
 }
 
+// ---------------------------------------------------------------------------
+// Centralized mutators (effects-architecture Stage 1).
+//
+// EVERY gameplay stat mutation flows through these — they are the future hook
+// points of the action-queue architecture (docs/design/effects-architecture.md):
+// Juggernaut fires inside gain_block, Rupture inside lose_player_hp, Feel No
+// Pain / Dark Embrace inside move_to_exhaust, etc. Construction-time writes
+// (enemy factories, start_combat) and phase-boundary resets are upkeep, not
+// gameplay events, and stay direct. Convention: no other code assigns to
+// hp/block/energy or pushes to exhaust/discard for gameplay reasons.
+// ---------------------------------------------------------------------------
+
+// Entity addressing: enemy slot index, or kPlayerSlot for the player.
+constexpr int kPlayerSlot = -1;
+
+// Grant block to the player (slot == kPlayerSlot) or an enemy. `amount` is the
+// final amount — card-block math (Dexterity, Frail) happens at the card site
+// since it only applies to block gained FROM CARDS, not all block.
+void gain_block(CombatState& state, int slot, int amount) {
+  if (amount <= 0) return;
+  if (slot == kPlayerSlot) {
+    state.character.current_block += amount;
+  } else if (slot >= 0 && slot < static_cast<int>(state.enemies.size())) {
+    state.enemies[slot].current_block += amount;
+  }
+}
+
+// Direct player HP loss (a lose-HP EFFECT — bypasses block, can kill; ROB-80).
+void lose_player_hp(CombatState& state, int amount) {
+  if (amount <= 0) return;
+  state.character.hp -= amount;
+  if (state.character.hp < 0) state.character.hp = 0;
+}
+
+void gain_energy(CombatState& state, int amount) {
+  state.character.energy += amount;
+}
+
+void spend_energy(CombatState& state, int amount) {
+  state.character.energy -= amount;
+}
+
+// Spend ALL energy (X-cost cards); returns the amount spent (= X).
+int spend_all_energy(CombatState& state) {
+  int x = state.character.energy;
+  state.character.energy = 0;
+  return x;
+}
+
+// Card pile routing. All gameplay-driven moves into exhaust/discard go through
+// these (the future CardExhausted hook point).
+void move_to_exhaust(CombatState& state, Card card) {
+  state.exhaust_pile.push_back(card);
+}
+
+void move_to_discard(CombatState& state, Card card) {
+  state.discard_pile.push_back(card);
+}
+
 // Resolve a Target to the map to write into. `enemy_target` is the decoded enemy
 // slot (ROB-60); ignored for Target::Character. Returns nullptr if the target
 // slot is out of range (defensive). AoE (apply to all enemies) is not yet
@@ -170,11 +229,13 @@ void place_child(CombatState& state, const Enemy& child) {
   }
 }
 
-// Apply one triggered effect's action to the enemy / player (ROB-65). `enemy`
-// is the effect's owner. HpAtOrBelow's threshold and RewriteIntent-when-dead
-// guards are handled by the caller/action semantics below.
-void apply_triggered_action(CombatState& state, Enemy& enemy,
+// Apply one triggered effect's action for the enemy at `slot` (ROB-65).
+// Indexed by slot rather than holding an Enemy& — mutators may (in future
+// stages) reallocate state.enemies, and slot-indexing is the anti-dangling
+// convention (effects-architecture Stage 1).
+void apply_triggered_action(CombatState& state, int slot,
                             const TriggeredEffect& fx) {
+  Enemy& enemy = state.enemies[slot];
   switch (fx.action) {
     case TriggeredAction::RewriteIntent:
       // Only meaningful for a living enemy (a dead one takes no turn).
@@ -189,7 +250,7 @@ void apply_triggered_action(CombatState& state, Enemy& enemy,
       enemy.powers[Power::Strength] += get_status(enemy.powers, fx.power);
       break;
     case TriggeredAction::GainBlock:
-      enemy.current_block += fx.amount;
+      gain_block(state, slot, fx.amount);
       break;
     case TriggeredAction::ApplyPlayerDebuff:
       state.character.debuffs[fx.debuff] += fx.amount;
@@ -223,7 +284,7 @@ void fire_triggers(CombatState& state, int slot, Trigger which) {
       Enemy& e = state.enemies[slot];
       if (e.hp <= 0 || e.hp > fx.param) continue;
     }
-    apply_triggered_action(state, state.enemies[slot], fx);
+    apply_triggered_action(state, slot, fx);
     fx.fired = true;
   }
 }
@@ -271,10 +332,9 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   // spent, used as the hit count.
   int x = 0;
   if (data.cost == kXCost) {
-    x = state.character.energy;
-    state.character.energy = 0;
+    x = spend_all_energy(state);
   } else {
-    state.character.energy -= data.cost;
+    spend_energy(state, data.cost);
   }
   // hits: -1 means "X hits" (Whirlwind); otherwise the literal count.
   const int hits = (data.hits < 0) ? x : data.hits;
@@ -309,7 +369,7 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
       block_gained =
           static_cast<int>(std::floor(static_cast<float>(block_gained) * 0.75f));
     }
-    if (block_gained > 0) state.character.current_block += block_gained;
+    gain_block(state, kPlayerSlot, block_gained);
   }
 
   // 4. Apply debuffs/powers. Self/None applications route to the player (their
@@ -331,11 +391,8 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
 
   // 4b. Card-flow effects (ROB-80 Tier B). Energy gain, then lose-HP (an EFFECT,
   // not a cost: direct HP loss bypassing block, and it CAN kill the player).
-  state.character.energy += data.energy;
-  if (data.lose_hp > 0) {
-    state.character.hp -= data.lose_hp;
-    if (state.character.hp < 0) state.character.hp = 0;
-  }
+  if (data.energy > 0) gain_energy(state, data.energy);
+  lose_player_hp(state, data.lose_hp);
 
   // 5. Move card from hand to discard or exhaust
   int idx = find_first_in_hand(state.current_hand, card_id);
@@ -343,9 +400,9 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   Card played = state.current_hand[idx];
   state.current_hand.erase(state.current_hand.begin() + idx);
   if (data.exhaust) {
-    state.exhaust_pile.push_back(played);
+    move_to_exhaust(state, played);
   } else {
-    state.discard_pile.push_back(played);
+    move_to_discard(state, played);
   }
 
   // 5b. OnPlayerSkill triggers (ROB-65). Playing a Skill fires every living
@@ -422,9 +479,9 @@ void apply_move_to_state(CombatState& state, const Move& move, int actor_slot) {
       // Protect (ROB-77): block a random living ally; fall back to self if none.
       int ally = random_living_ally(state, actor_slot);
       int slot = (ally >= 0) ? ally : actor_slot;
-      state.enemies[slot].current_block += move.block;
+      gain_block(state, slot, move.block);
     } else {
-      enemy.current_block += move.block;
+      gain_block(state, actor_slot, move.block);
     }
   }
   // STS limitation: multi-hit attacks (Twin Strike, Pommel Strike) deal Strength
@@ -439,7 +496,7 @@ void apply_move_to_state(CombatState& state, const Move& move, int actor_slot) {
   // Status cards the move adds to the player's discard (ROB-72), e.g. a slime
   // spit adding Slimed. Resolves with the move (end of this enemy's action).
   for (CardId card : move.adds_to_discard) {
-    state.discard_pile.push_back(Card{card});
+    move_to_discard(state, Card{card});
   }
   // Wake-on-resolve (ROB-65): Lagavulin's last sleep move (Sleep3) fires the
   // enemy's OnWake effects at the END of the asleep turn (self-wake path), so
@@ -482,9 +539,9 @@ void handle_end_turn(CombatState& state) {
   // rest discard.
   for (const Card& c : state.current_hand) {
     if (CARD_DATABASE.at(c.card_id).ethereal) {
-      state.exhaust_pile.push_back(c);
+      move_to_exhaust(state, c);
     } else {
-      state.discard_pile.push_back(c);
+      move_to_discard(state, c);
     }
   }
   state.current_hand.clear();
@@ -531,9 +588,7 @@ void handle_end_turn(CombatState& state) {
     // Lagavulin asleep). Runs AFTER the phase-start block reset, so an asleep
     // enemy shows exactly its Metallicize amount each turn (no accumulation).
     int metallicize = get_status(state.enemies[slot].powers, Power::Metallicize);
-    if (metallicize > 0) {
-      state.enemies[slot].current_block += metallicize;
-    }
+    gain_block(state, static_cast<int>(slot), metallicize);
 
     // 2b. Apply the primed intent (set at combat start or the prior enemy turn).
     // last_move always stores the upcoming intent so the obs shows it. NOTE: a
