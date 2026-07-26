@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <set>
+#include <string>
+
 #include "card.h"
 #include "status_effect.h"
 
@@ -67,4 +70,80 @@ TEST(Card, BashPlusDamageAndVulnerable) {
   EXPECT_EQ(d.applies_debuffs[0].effect, Debuff::Vulnerable);
   EXPECT_EQ(d.applies_debuffs[0].amount, 3);
   EXPECT_EQ(d.applies_debuffs[0].target, Target::Enemy);
+}
+
+// ============================================================================
+// CARD_UPGRADES (Stage 4c step 1). These are INVARIANT tests, not spot checks:
+// a hand-written 50-row table must be verified by rules that keep holding as
+// the pool grows, not by re-asserting the rows it already has.
+// ============================================================================
+
+namespace {
+bool name_is_upgraded(const CardData& d) {
+  const std::string n = d.name;
+  return !n.empty() && n.back() == '+';
+}
+}  // namespace
+
+TEST(CardUpgrades, EveryBaseCardIsUpgradable) {
+  // Every card that is neither already-upgraded nor a Status card must have an
+  // upgrade. Catches a card added to CARD_DATABASE but forgotten here.
+  for (const auto& [id, d] : CARD_DATABASE) {
+    if (name_is_upgraded(d) || d.type == CardType::Status) continue;
+    EXPECT_TRUE(is_upgradable(id)) << "no upgrade for base card: " << d.name;
+  }
+}
+
+TEST(CardUpgrades, UpgradedAndStatusCardsAreNotUpgradable) {
+  // StS: you cannot upgrade an already-upgraded card, nor a Status card.
+  for (const auto& [id, d] : CARD_DATABASE) {
+    if (name_is_upgraded(d) || d.type == CardType::Status) {
+      EXPECT_FALSE(is_upgradable(id)) << "should not be upgradable: " << d.name;
+    }
+  }
+}
+
+TEST(CardUpgrades, EveryMappingGoesToItsOwnPlusForm) {
+  // Verifies X -> "X+" BY NAME, which is what catches a transcription swap
+  // (e.g. Clash accidentally mapped to Clothesline+).
+  for (const auto& [base, upgraded] : CARD_UPGRADES) {
+    const std::string base_name = CARD_DATABASE.at(base).name;
+    const std::string upg_name = CARD_DATABASE.at(upgraded).name;
+    EXPECT_EQ(upg_name, base_name + "+")
+        << base_name << " upgrades to the wrong card";
+  }
+}
+
+TEST(CardUpgrades, NoTwoCardsShareAnUpgradeTarget) {
+  std::set<CardId> targets;
+  for (const auto& [base, upgraded] : CARD_UPGRADES) {
+    EXPECT_TRUE(targets.insert(upgraded).second)
+        << "duplicate upgrade target: " << CARD_DATABASE.at(upgraded).name;
+  }
+}
+
+TEST(CardUpgrades, UpgradedCardIsTotalAndIdentityWhenNotUpgradable) {
+  // upgraded_card never fails: callers upgrading a whole pile need no guard.
+  for (const auto& [id, d] : CARD_DATABASE) {
+    if (is_upgradable(id)) {
+      EXPECT_EQ(upgraded_card(id), CARD_UPGRADES.at(id));
+    } else {
+      EXPECT_EQ(upgraded_card(id), id) << "not identity for " << d.name;
+    }
+  }
+}
+
+TEST(CardUpgrades, KnownPairsAreCorrect) {
+  // A few spot checks across tiers, so the invariants above can't all pass
+  // vacuously on an empty table.
+  EXPECT_EQ(upgraded_card(CardId::Strike), CardId::StrikePlus);
+  EXPECT_EQ(upgraded_card(CardId::Bash), CardId::BashPlus);
+  EXPECT_EQ(upgraded_card(CardId::Whirlwind), CardId::WhirlwindPlus);
+  EXPECT_EQ(upgraded_card(CardId::DemonForm), CardId::DemonFormPlus);
+  EXPECT_EQ(upgraded_card(CardId::Corruption), CardId::CorruptionPlus);
+  EXPECT_EQ(CARD_UPGRADES.size(), 50u);
+  // Status cards: not upgradable (StS).
+  EXPECT_FALSE(is_upgradable(CardId::Slimed));
+  EXPECT_FALSE(is_upgradable(CardId::Dazed));
+  EXPECT_EQ(upgraded_card(CardId::Slimed), CardId::Slimed);
 }

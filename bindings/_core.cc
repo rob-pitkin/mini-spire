@@ -286,6 +286,16 @@ PYBIND11_MODULE(_core, m) {
       [](EnemyKind kind) { return std::string(enemy_name(kind)); },
       py::arg("kind"), "Display name for an enemy kind.");
 
+  // Upgrades (Stage 4c). Exposed so the TUI's choice screen and any
+  // non-combat decision layer read the engine's table rather than deriving
+  // upgrades from card names.
+  m.def("is_upgradable", &is_upgradable, py::arg("card_id"),
+        "Whether this card can be upgraded (false for already-upgraded and "
+        "Status cards).");
+  m.def("upgraded_card", &upgraded_card, py::arg("card_id"),
+        "The upgraded form of a card, or the card itself if it cannot be "
+        "upgraded.");
+
   // A deterministic single-enemy (Jaw Worm) test/debug fixture env. reset()
   // samples a random encounter (ROB-66), so tests that need a known single-enemy
   // fight build one from the canonical start_v1_combat state instead.

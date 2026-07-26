@@ -208,6 +208,84 @@ struct CardData {
   bool bonus_if_target_vulnerable = false;    // Dropkick: +1 energy, +1 draw
 };
 
+// What a card becomes when upgraded (Armaments; v2's rest-site smith).
+// Sourced from data/ironclad_cards.csv's `upgrade_of` column, inverted.
+//
+// Kept as a separate table rather than a CardData field so the 102 existing
+// CARD_DATABASE rows don't all need editing — and because "what I upgrade to"
+// is a relation between two cards, not a property of one. Absent = cannot be
+// upgraded: already-upgraded cards, and the Status cards Slimed/Dazed (which
+// StS correctly forbids upgrading).
+inline const std::unordered_map<CardId, CardId> CARD_UPGRADES = {
+    {CardId::Strike, CardId::StrikePlus},
+    {CardId::Defend, CardId::DefendPlus},
+    {CardId::Bash, CardId::BashPlus},
+    // Tier A
+    {CardId::Cleave, CardId::CleavePlus},
+    {CardId::Clothesline, CardId::ClotheslinePlus},
+    {CardId::Flex, CardId::FlexPlus},
+    {CardId::IronWave, CardId::IronWavePlus},
+    {CardId::Thunderclap, CardId::ThunderclapPlus},
+    {CardId::TwinStrike, CardId::TwinStrikePlus},
+    {CardId::Carnage, CardId::CarnagePlus},
+    {CardId::Disarm, CardId::DisarmPlus},
+    {CardId::GhostlyArmor, CardId::GhostlyArmorPlus},
+    {CardId::Intimidate, CardId::IntimidatePlus},
+    {CardId::Pummel, CardId::PummelPlus},
+    {CardId::Shockwave, CardId::ShockwavePlus},
+    {CardId::Uppercut, CardId::UppercutPlus},
+    {CardId::Whirlwind, CardId::WhirlwindPlus},
+    {CardId::Bludgeon, CardId::BludgeonPlus},
+    // Tier B
+    {CardId::PommelStrike, CardId::PommelStrikePlus},
+    {CardId::ShrugItOff, CardId::ShrugItOffPlus},
+    {CardId::Bloodletting, CardId::BloodlettingPlus},
+    {CardId::Hemokinesis, CardId::HemokinesisPlus},
+    {CardId::SeeingRed, CardId::SeeingRedPlus},
+    {CardId::Offering, CardId::OfferingPlus},
+    // Tier C
+    {CardId::Inflame, CardId::InflamePlus},
+    {CardId::Impervious, CardId::ImperviousPlus},
+    {CardId::DemonForm, CardId::DemonFormPlus},
+    {CardId::Combust, CardId::CombustPlus},
+    {CardId::FeelNoPain, CardId::FeelNoPainPlus},
+    {CardId::DarkEmbrace, CardId::DarkEmbracePlus},
+    {CardId::Evolve, CardId::EvolvePlus},
+    {CardId::FireBreathing, CardId::FireBreathingPlus},
+    {CardId::Rupture, CardId::RupturePlus},
+    {CardId::Juggernaut, CardId::JuggernautPlus},
+    {CardId::Rage, CardId::RagePlus},
+    {CardId::FlameBarrier, CardId::FlameBarrierPlus},
+    {CardId::Brutality, CardId::BrutalityPlus},
+    {CardId::Berserk, CardId::BerserkPlus},
+    {CardId::Metallicize, CardId::MetallicizePlus},
+    // Tier D
+    {CardId::BodySlam, CardId::BodySlamPlus},
+    {CardId::Clash, CardId::ClashPlus},
+    {CardId::HeavyBlade, CardId::HeavyBladePlus},
+    {CardId::PerfectedStrike, CardId::PerfectedStrikePlus},
+    {CardId::BattleTrance, CardId::BattleTrancePlus},
+    {CardId::BloodForBlood, CardId::BloodForBloodPlus},
+    {CardId::Dropkick, CardId::DropkickPlus},
+    {CardId::Entrench, CardId::EntrenchPlus},
+    {CardId::SeverSoul, CardId::SeverSoulPlus},
+    {CardId::Barricade, CardId::BarricadePlus},
+    {CardId::Corruption, CardId::CorruptionPlus},
+};
+
+// Can this card be upgraded? False for already-upgraded cards and for Status
+// cards (Slimed, Dazed). Armaments' candidate filter reads this.
+inline bool is_upgradable(CardId id) {
+  return CARD_UPGRADES.count(id) > 0;
+}
+
+// The upgraded form of `id`, or `id` itself if it cannot be upgraded. Total —
+// never throws, so callers that upgrade a whole pile need no per-card guard.
+inline CardId upgraded_card(CardId id) {
+  auto it = CARD_UPGRADES.find(id);
+  return it == CARD_UPGRADES.end() ? id : it->second;
+}
+
 // CardData row order: name, cost, damage, hits, block, target, debuffs, powers,
 // type, exhaust, ethereal, unplayable.
 inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
