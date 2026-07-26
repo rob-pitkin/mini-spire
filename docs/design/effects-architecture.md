@@ -360,7 +360,11 @@ Recorded for the decision log:
 2. **Timing-parity ambition:** default-`push_back` plus a divergence ledger
    (§7), or actively source StS queue discipline per effect from decompiled
    code. Currently: ledger approach.
-3. **Perf budget:** is ≤10% steps/sec regression acceptable for the queue?
-   Measured at Stage 2 gate.
-4. **`EnemyMove` granularity (Stage 3):** one action per enemy move vs. per
-   effect-within-move. Decide at Stage 3 with the tests in front of us.
+3. **Perf budget:** ~~is ≤10% steps/sec regression acceptable for the queue?~~
+   **Resolved:** measured −2.6% at the Stage 2 gate and −3.4% cumulative at
+   Stage 3 (single-env random agent) — the queue is cheap.
+4. **`EnemyMove` granularity (Stage 3):** ~~one action per enemy move vs. per
+   effect-within-move.~~ **Resolved (Rob):** per-effect actions on the same
+   queue as cards — StS resolves a move's effects sequentially through the one
+   manager (visible in-game with multi-debuff and attack+block moves). One
+   enemy turn = one translate + drain; see ordering-notes.md §Stage 3.

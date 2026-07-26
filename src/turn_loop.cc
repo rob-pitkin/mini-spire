@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
-#include <stdexcept>
 #include <vector>
 
 #include "action.h"
@@ -46,36 +45,6 @@ int find_first_in_hand(const std::vector<Card>& hand, CardId id) {
     if (hand[i].card_id == id) return static_cast<int>(i);
   }
   return -1;
-}
-
-// First slot not holding a living enemy (dead corpse OR empty), or -1 if all
-// slots are occupied by the living. A split overwrites a corpse (ROB-61 rule A).
-int find_free_slot(const CombatState& state) {
-  for (int i = 0; i < static_cast<int>(state.enemies.size()); ++i) {
-    if (state.enemies[i].hp <= 0) return i;
-  }
-  // Slots beyond the current vector size are also "free" up to kMaxEnemies.
-  if (static_cast<int>(state.enemies.size()) < kMaxEnemies) {
-    return static_cast<int>(state.enemies.size());
-  }
-  return -1;
-}
-
-// Place one child into a free slot (overwriting a corpse or growing the vector
-// up to kMaxEnemies). Throws if no slot is free (the living<=N invariant should
-// make this impossible — a split is only legal with living <= N-1 beforehand).
-void place_child(CombatState& state, const Enemy& child) {
-  int slot = find_free_slot(state);
-  if (slot < 0) {
-    throw std::runtime_error(
-        "split would exceed kMaxEnemies living enemies (mis-specified "
-        "encounter: split-capable enemies must start with living <= N-1)");
-  }
-  if (slot < static_cast<int>(state.enemies.size())) {
-    state.enemies[slot] = child;  // overwrite a corpse
-  } else {
-    state.enemies.push_back(child);
-  }
 }
 
 // Play one card: translate it into its action sequence and drain the queue
@@ -234,84 +203,85 @@ int random_living_ally(CombatState& state, int actor_slot) {
   return allies[pick(state.rng)];
 }
 
-// Resolve one enemy's move. `actor_slot` is the acting enemy's slot index — the
-// move's damage uses that enemy's status, its block lands on that enemy (or a
-// random ally for a blocks_ally move), and a Target::Enemy status is that
-// enemy's self-buff (e.g. Cultist Incantation -> own Strength).
+// Translate one enemy's move into its per-effect action sequence (Stage 3,
+// granularity decided: per-effect, same queue as cards — StS resolves an
+// enemy's damage/block/debuffs sequentially through the one manager).
+// `actor_slot` is the acting enemy's slot — the move's damage uses that
+// enemy's status (computed at execution, so a queued Ritual Strength gain is
+// visible), its block lands on that enemy (or a random ally for a blocks_ally
+// move), and a Target::Enemy status is that enemy's self-buff (e.g. Cultist
+// Incantation -> own Strength). Order preserved from the imperative version:
+// damage, block, debuffs, powers, added status cards, wake, escape, split.
 //
-// Still imperative (the Stage-2 two-regime period): the enemy phase migrates
-// onto the queue at Stage 3. It calls the centralized mutators directly and
-// fires its one trigger site through a local mini-drain.
-void apply_move_to_state(CombatState& state, const Move& move, int actor_slot) {
-  Enemy& enemy = state.enemies[actor_slot];
-
+// STS limitation: multi-hit enemy attacks (Lagavulin) would deal Strength
+// per-hit; our Move model is one hit per cast until Move grows a `hits` field.
+void translate_enemy_move(CombatState& state, const Move& move, int actor_slot,
+                          ActionQueue& q) {
   if (move.damage > 0) {
-    int dmg = compute_attack_damage(move.damage, enemy.powers, enemy.debuffs,
-                                    state.character.debuffs);
-    apply_damage_to_hp_block(state.character.hp, state.character.current_block,
-                             dmg);
+    Action a;
+    a.kind = ActionKind::DealDamage;
+    a.actor = actor_slot;
+    a.target = kPlayerSlot;
+    a.amount = move.damage;
+    q.push_back(a);
   }
   if (move.block > 0) {
+    // Protect (ROB-77): block a random living ally; fall back to self if none.
+    // The ally is rolled at TRANSLATION time — no RNG consumer sits between
+    // here and execution, so the stream order matches the pre-queue engine,
+    // and the ally set can't change during the actor's own move.
+    Action a;
+    a.kind = ActionKind::GainBlock;
+    a.target = actor_slot;
     if (move.blocks_ally) {
-      // Protect (ROB-77): block a random living ally; fall back to self if none.
       int ally = random_living_ally(state, actor_slot);
-      int slot = (ally >= 0) ? ally : actor_slot;
-      gain_block(state, slot, move.block);
-    } else {
-      gain_block(state, actor_slot, move.block);
+      if (ally >= 0) a.target = ally;
     }
+    a.amount = move.block;
+    q.push_back(a);
   }
-  // STS limitation: multi-hit attacks (Twin Strike, Pommel Strike) deal Strength
-  // bonus per-hit. Our Move model is one hit per cast; multi-hit needs a `hits`
-  // field on Move.
   for (const auto& app : move.applies_debuffs) {
-    apply_debuff(state, app, /*enemy_target=*/actor_slot);
+    Action a;
+    a.kind = ActionKind::ApplyDebuff;
+    a.target = (app.target == Target::Character) ? kPlayerSlot : actor_slot;
+    a.debuff = app.effect;
+    a.amount = app.amount;
+    q.push_back(a);
   }
   for (const auto& app : move.applies_powers) {
-    apply_power(state, app, /*enemy_target=*/actor_slot);
+    Action a;
+    a.kind = ActionKind::ApplyPower;
+    a.target = (app.target == Target::Character) ? kPlayerSlot : actor_slot;
+    a.power = app.effect;
+    a.amount = app.amount;
+    q.push_back(a);
   }
   // Status cards the move adds to the player's discard (ROB-72), e.g. a slime
   // spit adding Slimed. Resolves with the move (end of this enemy's action).
   for (CardId card : move.adds_to_discard) {
-    move_to_discard(state, Card{card});
+    Action a;
+    a.kind = ActionKind::DiscardCard;
+    a.card = card;
+    q.push_back(a);
   }
   // Wake-on-resolve (ROB-65): Lagavulin's last sleep move (Sleep3) fires the
   // enemy's OnWake effects at the END of the asleep turn (self-wake path), so
   // that turn keeps its Metallicize block and the next turn onward gets none.
-  // Fired through a local mini-drain so trigger dispatch has exactly one
-  // implementation (the two-regime bridge; Stage 3 removes it).
+  // Fired at translation; the responses land behind the move's own actions.
   if (move.wakes_on_resolve) {
-    ActionQueue q;
-    ResolutionContext ctx;
     fire_enemy_hooks(state, actor_slot, Hook::EnemyWake, q);
-    drain(state, q, ctx);
   }
-  // Escape (ROB-74): the acting enemy flees by setting its own hp to 0. It
-  // leaves the fight — everything keys on hp>0, so it's no longer
-  // targetable/acting and its slot frees. This is NOT a death: on_death hooks
-  // are not fired (a fleeing enemy doesn't split/spore). check_enemy_terminal
-  // (run after the enemy turn) treats it as gone -> Won if it was the last one.
   if (move.escapes) {
-    enemy.hp = 0;
+    Action a;
+    a.kind = ActionKind::EnemyEscape;
+    a.target = actor_slot;
+    q.push_back(a);
   }
-
-  // Split (ROB-64): the acting enemy dies and spawns its children, each set to
-  // the parent's CURRENT HP (inherited). Capture HP and kill the parent BEFORE
-  // spawning — place_child may reallocate state.enemies (invalidating `enemy`)
-  // and, by killing the parent first, its slot becomes a free slot a child can
-  // reuse. on_death hooks are not fired (split is its own mechanic).
   if (move.splits) {
-    const int inherited_hp = enemy.hp;
-    std::vector<Enemy> children = enemy.split_children;  // copy before invalidation
-    state.enemies[actor_slot].hp = 0;                    // parent dies
-    for (Enemy child : children) {
-      // Children take the parent's split-time HP as BOTH current and max — they
-      // aren't "real" Mediums with rolled HP, just spawned at the inherited
-      // value for this fight (ROB-64, verified faithful).
-      child.hp = inherited_hp;
-      child.max_hp = inherited_hp;
-      place_child(state, child);
-    }
+    Action a;
+    a.kind = ActionKind::EnemySplit;
+    a.target = actor_slot;
+    q.push_back(a);
   }
 }
 
@@ -358,29 +328,21 @@ void handle_end_turn(CombatState& state) {
   for (std::size_t slot : acting_slots) {
     if (state.enemies[slot].hp <= 0) continue;  // died earlier this phase
 
-    // 2a-pre. Start-of-turn powers. Ritual: gain Strength = Ritual stacks
-    // (Cultist). It does NOT tick down. Because Ritual is applied mid-turn when
-    // Incantation resolves (after this trigger point), it first fires the turn
-    // *after* it's gained — matching StS (ROB-73).
-    int ritual = get_status(state.enemies[slot].powers, Power::Ritual);
-    if (ritual > 0) {
-      state.enemies[slot].powers[Power::Strength] += ritual;
-    }
-    // Metallicize: gain block = stacks at the start of the turn (ROB-65,
-    // Lagavulin asleep). Runs AFTER the phase-start block reset, so an asleep
-    // enemy shows exactly its Metallicize amount each turn (no accumulation).
-    int metallicize = get_status(state.enemies[slot].powers, Power::Metallicize);
-    gain_block(state, static_cast<int>(slot), metallicize);
-
-    // 2b. Apply the primed intent (set at combat start or the prior enemy turn).
-    // last_move always stores the upcoming intent so the obs shows it. NOTE: a
-    // Split move calls place_child -> push_back, which can REALLOCATE
-    // state.enemies. Hold no Enemy& across this call; re-index by `slot` after.
-    // Copy the move by value so it stays valid even if enemy.moves is freed.
+    // 2b. One enemy turn = one translate + drain (Stage 3): start-of-turn
+    // power hooks (Ritual, then Metallicize — queued after the phase-start
+    // block reset), then the primed intent's per-effect actions. last_move
+    // always stores the upcoming intent so the obs shows it. Copy the move by
+    // value — an EnemySplit action reallocates state.enemies during the drain,
+    // and a Move& into enemy.moves would dangle.
     assert(state.enemies[slot].last_move.has_value() &&
            "enemy.last_move must be primed by start_v1_combat or prior turn");
     const Move move = state.enemies[slot].moves.at(*state.enemies[slot].last_move);
-    apply_move_to_state(state, move, static_cast<int>(slot));
+    ActionQueue q;
+    ResolutionContext ctx;
+    fire_enemy_power_hooks(state, static_cast<int>(slot), Hook::TurnStartEnemy,
+                           q);
+    translate_enemy_move(state, move, static_cast<int>(slot), q);
+    drain(state, q, ctx);
 
     // 2c. Terminal check — an enemy attack may have killed the player.
     check_character_terminal(state);

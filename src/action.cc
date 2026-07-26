@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
+#include <vector>
 
 #include "turn_loop.h"  // compute_attack_damage, HAND_SIZE_LIMIT
 
@@ -146,6 +148,36 @@ int count_living(const CombatState& state) {
   return n;
 }
 
+// First slot not holding a living enemy (dead corpse OR empty), or -1 if all
+// slots are occupied by the living. A split overwrites a corpse (ROB-61 rule A).
+int find_free_slot(const CombatState& state) {
+  for (int i = 0; i < static_cast<int>(state.enemies.size()); ++i) {
+    if (state.enemies[i].hp <= 0) return i;
+  }
+  // Slots beyond the current vector size are also "free" up to kMaxEnemies.
+  if (static_cast<int>(state.enemies.size()) < kMaxEnemies) {
+    return static_cast<int>(state.enemies.size());
+  }
+  return -1;
+}
+
+// Place one child into a free slot (overwriting a corpse or growing the vector
+// up to kMaxEnemies). Throws if no slot is free (the living<=N invariant should
+// make this impossible — a split is only legal with living <= N-1 beforehand).
+void place_child(CombatState& state, const Enemy& child) {
+  int slot = find_free_slot(state);
+  if (slot < 0) {
+    throw std::runtime_error(
+        "split would exceed kMaxEnemies living enemies (mis-specified "
+        "encounter: split-capable enemies must start with living <= N-1)");
+  }
+  if (slot < static_cast<int>(state.enemies.size())) {
+    state.enemies[slot] = child;  // overwrite a corpse
+  } else {
+    state.enemies.push_back(child);
+  }
+}
+
 // Translate one fired TriggeredEffect into its pushed response action.
 // Magnitudes that read stacks (Enrage's GainStrengthFromPower) resolve at fire
 // time; everything else resolves when the pushed action executes.
@@ -253,6 +285,35 @@ void fire_enemy_hooks(CombatState& state, int slot, Hook hook, ActionQueue& q) {
   }
 }
 
+void fire_enemy_power_hooks(CombatState& state, int slot, Hook hook,
+                            ActionQueue& q) {
+  if (hook != Hook::TurnStartEnemy) return;  // Stage 4 extends this registry
+
+  // Ritual: gain Strength = Ritual stacks (Cultist). It does NOT tick down.
+  // Because Ritual is applied mid-turn when Incantation resolves (after this
+  // trigger point), it first fires the turn *after* it's gained — matching StS
+  // (ROB-73).
+  const int ritual = get_status(state.enemies[slot].powers, Power::Ritual);
+  if (ritual > 0) {
+    Action a = make_action(ActionKind::ApplyPower);
+    a.target = slot;
+    a.power = Power::Strength;
+    a.amount = ritual;
+    q.push_back(a);
+  }
+  // Metallicize: gain block = stacks at the start of the turn (ROB-65,
+  // Lagavulin asleep). Queued AFTER the phase-start block reset, so an asleep
+  // enemy shows exactly its Metallicize amount each turn (no accumulation).
+  const int metallicize =
+      get_status(state.enemies[slot].powers, Power::Metallicize);
+  if (metallicize > 0) {
+    Action a = make_action(ActionKind::GainBlock);
+    a.target = slot;
+    a.amount = metallicize;
+    q.push_back(a);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Executors + drain
 // ---------------------------------------------------------------------------
@@ -267,9 +328,20 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
              ResolutionContext& ctx) {
   switch (a.kind) {
     case ActionKind::DealDamage: {
-      // One hit on one enemy (Stage 2: actor is always the player; enemy
-      // attacks migrate here at Stage 3). Damage is computed at execution
-      // time — Strength applies per hit (TwinStrike + Flex parity).
+      // One hit, either direction. Damage is computed at execution time —
+      // Strength applies per hit (TwinStrike + Flex parity), and an enemy's
+      // start-of-turn Ritual Strength (queued ahead of its attack) is visible.
+      if (a.target == kPlayerSlot) {
+        // Enemy -> player (Stage 3). (Stage 4: HpLostPlayer fires here.)
+        if (!valid_enemy_slot(state, a.actor)) break;
+        const int dmg = compute_attack_damage(
+            a.amount, state.enemies[a.actor].powers,
+            state.enemies[a.actor].debuffs, state.character.debuffs);
+        apply_damage_to_hp_block(state.character.hp,
+                                 state.character.current_block, dmg);
+        break;
+      }
+      // Player -> enemy.
       if (!valid_enemy_slot(state, a.target)) break;
       if (state.enemies[a.target].hp <= 0) break;
       const int hp_before = state.enemies[a.target].hp;
@@ -357,6 +429,35 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
     case ActionKind::DiscardCard:
       move_to_discard(state, Card{a.card});
       break;
+    case ActionKind::EnemyEscape:
+      // Escape (ROB-74): the enemy flees by setting its own hp to 0. It leaves
+      // the fight — everything keys on hp>0, so it's no longer targetable or
+      // acting and its slot frees. NOT a death: on-death hooks don't fire and
+      // no death is recorded (a fleeing enemy doesn't split/spore).
+      // check_enemy_terminal treats it as gone -> Won if it was the last one.
+      if (valid_enemy_slot(state, a.target)) {
+        state.enemies[a.target].hp = 0;
+      }
+      break;
+    case ActionKind::EnemySplit: {
+      // Split (ROB-64): the enemy dies and spawns its children, each set to
+      // the parent's CURRENT HP as both current and max — they aren't "real"
+      // Mediums with rolled HP (verified faithful). Children are copied out
+      // and the parent killed BEFORE placement: place_child may reallocate
+      // state.enemies, and a dead parent's slot is a free slot a child can
+      // reuse. As a flat executor step, no reference spans the reallocation.
+      // on-death hooks are not fired (split is its own mechanic).
+      if (!valid_enemy_slot(state, a.target)) break;
+      const int inherited_hp = state.enemies[a.target].hp;
+      std::vector<Enemy> children = state.enemies[a.target].split_children;
+      state.enemies[a.target].hp = 0;  // parent dies
+      for (Enemy child : children) {
+        child.hp = inherited_hp;
+        child.max_hp = inherited_hp;
+        place_child(state, child);
+      }
+      break;
+    }
     case ActionKind::CardPlayedHook:
       // Playing a Skill fires every living enemy's OnPlayerSkill effects (the
       // Gremlin Nob's Enrage), independent of whether the card dealt damage or

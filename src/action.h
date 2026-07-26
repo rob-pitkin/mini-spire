@@ -9,17 +9,17 @@
 #include "enemy.h"
 #include "status_effect.h"
 
-// The action queue (effects-architecture Stage 2; docs/design/
-// effects-architecture.md §4). Card resolution is translated into a flat
-// sequence of POD Actions and drained to completion — hooks respond by PUSHING
-// actions, never by mutating state directly, so no live reference or open loop
-// ever spans a mutation (the Split-UAF bug class is impossible by
-// construction). The queue is drained at every agent decision point and is
-// never stored in CombatState — clone() is untouched.
+// The action queue (effects-architecture Stages 2–3; docs/design/
+// effects-architecture.md §4). Card resolution AND enemy turns are translated
+// into a flat sequence of POD Actions and drained to completion — hooks
+// respond by PUSHING actions, never by mutating state directly, so no live
+// reference or open loop ever spans a mutation (the Split-UAF bug class is
+// impossible by construction). The queue is drained at every agent decision
+// point and is never stored in CombatState — clone() is untouched.
 //
-// Two-regime period (ends at Stage 3): the enemy phase in turn_loop.cc is
-// still imperative; it calls the mutators below directly and uses a local
-// mini-drain for its one trigger site (wakes_on_resolve).
+// Phase orchestration (block resets, acting-slot snapshots, debuff ticks,
+// terminal checks, turn-start draws) is upkeep and stays imperative in
+// turn_loop.cc; everything that IS a game effect flows through executors.
 
 namespace minispire {
 
@@ -53,6 +53,9 @@ enum class ActionKind {
   Wake,           // set target's is_asleep = false
   ExhaustCard,    // put `card` in the exhaust pile (played or generated)
   DiscardCard,    // put `card` in the discard pile
+  EnemyEscape,    // target flees: hp -> 0, NOT a death (no on-death; ROB-74)
+  EnemySplit,     // target dies and spawns its split_children at its current
+                  // HP (ROB-64) — the reallocation is one flat executor step
   // Bookkeeping
   CardPlayedHook,  // fire Hook::CardPlayed listeners for `card` (Enrage)
   CheckDeath,      // process deaths recorded this resolution (on-death,
@@ -152,6 +155,14 @@ enum class Hook {
 // fire time; response magnitudes that read stacks (Enrage) are also resolved
 // at fire time. Hooks with no enemy-Trigger analog are no-ops.
 void fire_enemy_hooks(CombatState& state, int slot, Hook hook, ActionQueue& q);
+
+// Fire the enemy-at-`slot`'s POWER behaviors for `hook`, pushing response
+// actions. The enemy-side static registry (§4.4): a compiler-checked switch
+// over the powers map, no state beyond the stacks themselves. Stage 3 handles
+// Hook::TurnStartEnemy (Ritual -> Strength, then Metallicize -> block); the
+// player-power registry arrives at Stage 4 as its sibling.
+void fire_enemy_power_hooks(CombatState& state, int slot, Hook hook,
+                            ActionQueue& q);
 
 // Drain the queue to completion: pop-execute until empty, short-circuiting on
 // a terminal outcome. Executors may push more actions. The queue must be empty

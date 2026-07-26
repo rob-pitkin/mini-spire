@@ -47,8 +47,43 @@ Pre-queue, `OnPlayerSkill` applied at step 5b (before deaths/draw). The
 `ApplyPower` executes at the back of the queue. Unobservable: enemy Strength
 is only read at the enemy phase.
 
+## Stage 3 (enemy phase on the queue)
+
+Granularity decision (open question 4, resolved by Rob): enemy moves
+translate to **per-effect actions on the same queue as cards** — StS resolves
+an enemy's damage/block/debuff applications sequentially through the one
+manager (visible in-game when a move applies several debuffs or attacks and
+blocks in one turn).
+
+### 4. One enemy turn = one translate + drain
+
+Per-enemy interleaving is preserved exactly: start-of-turn power hooks
+(Ritual, then Metallicize) and the primed move's per-effect actions drain
+fully before the terminal check, debuff tick, and `select_next_move` — so
+enemy B still acts strictly after enemy A's move resolves and A's next intent
+is sampled at the same point in the RNG stream as pre-queue. Damage computes
+at execution, so the queued Ritual Strength is visible to the same turn's
+attack (as before).
+
+### 5. Protect's ally roll happens at translation time
+
+The random living ally for a `blocks_ally` move is rolled when the move is
+translated, not when the `GainBlock` executes. No RNG consumer sits between
+the two points and the ally set cannot change during the actor's own move, so
+this is unobservable and keeps the RNG stream byte-identical.
+
+### 6. Wake-on-resolve responses land behind the move's actions
+
+Pre-queue, the Sleep3 mini-drain ran after the move's applies but before
+escape/split handling; queued, the OnWake responses execute after all of the
+move's actions. Lagavulin neither escapes nor splits, and the affected state
+(Metallicize, is_asleep) is next read at the following enemy turn.
+Unobservable.
+
 ## RNG stream
 
-Unchanged by the queue: within a card resolution, only draws consume RNG, and
-their count and relative order are identical to pre-queue. Same seed, same
-fight, before and after.
+Unchanged by the queue: within a card resolution, only draws consume RNG;
+within an enemy phase, only the Protect ally roll (translation-time, note 5)
+and `select_next_move` (post-drain, per enemy) do — and their count and
+relative order are identical to pre-queue. Same seed, same fight, before and
+after.
