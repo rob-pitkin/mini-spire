@@ -1827,3 +1827,94 @@ TEST(TurnLoop, DisarmReducesEnemyStrength) {
   EXPECT_EQ(s.enemies[0].powers[Power::Strength], -2);
   EXPECT_EQ(s.enemies[1].powers.count(Power::Strength), 0u);  // single target
 }
+
+// ============================================================================
+// Ironclad Tier B: draw / energy / lose-HP (ROB-80)
+// ============================================================================
+
+TEST(TurnLoop, PommelStrikeDrawsACard) {
+  CombatState s = two_enemy_state();
+  // Empty hand except Pommel Strike; a Strike in the draw pile to draw.
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::PommelStrike});
+  s.draw_pile.clear();
+  s.draw_pile.push_back(Card{CardId::Strike});
+  int hp0 = s.enemies[0].hp;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::PommelStrike, 0)));
+
+  EXPECT_EQ(s.enemies[0].hp, hp0 - 9);  // 9 damage
+  // Drew the Strike (Pommel Strike itself went to discard).
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].card_id, CardId::Strike);
+}
+
+TEST(TurnLoop, SeeingRedGainsEnergyAndExhausts) {
+  CombatState s = two_enemy_state();
+  s.character.energy = 1;
+  s.current_hand.push_back(Card{CardId::SeeingRed});  // cost 1, +2 energy, exhaust
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::SeeingRed, 0)));
+
+  EXPECT_EQ(s.character.energy, 2);  // 1 - 1 (cost) + 2 (gain)
+  // Exhausted, not discarded.
+  int in_exhaust = 0;
+  for (const Card& c : s.exhaust_pile)
+    if (c.card_id == CardId::SeeingRed) ++in_exhaust;
+  EXPECT_EQ(in_exhaust, 1);
+}
+
+TEST(TurnLoop, BloodlettingLosesHpAndGainsEnergy) {
+  CombatState s = two_enemy_state();
+  s.character.hp = 50;
+  s.character.energy = 0;
+  s.current_hand.push_back(Card{CardId::Bloodletting});  // +2 energy, lose 3 HP
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bloodletting, 0)));
+
+  EXPECT_EQ(s.character.energy, 2);
+  EXPECT_EQ(s.character.hp, 47);  // lose 3, direct
+}
+
+TEST(TurnLoop, LoseHpBypassesBlock) {
+  // Direct HP loss ignores player block.
+  CombatState s = two_enemy_state();
+  s.character.hp = 50;
+  s.character.current_block = 10;
+  s.current_hand.push_back(Card{CardId::Bloodletting});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bloodletting, 0)));
+  EXPECT_EQ(s.character.hp, 47);            // HP dropped despite block
+  EXPECT_EQ(s.character.current_block, 10);  // block untouched
+}
+
+TEST(TurnLoop, LoseHpCanKillThePlayer) {
+  // Offering (lose 6 HP) at 3 HP kills the player -> Lost, even though Offering
+  // deals no enemy damage.
+  CombatState s = two_enemy_state();
+  s.character.hp = 3;
+  s.current_hand.push_back(Card{CardId::Offering});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Offering, 0)));
+  EXPECT_EQ(s.character.hp, 0);
+  EXPECT_EQ(s.outcome, Outcome::Lost);
+}
+
+TEST(TurnLoop, DeathTakesPrecedenceOverVictory) {
+  // Hemokinesis (15 dmg + lose 2 HP) kills the LAST enemy AND the player at 2 HP.
+  // Death wins: it's a Loss, not a victory. (Rob's edge case.)
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy e = make_jaw_worm(rng);
+  e.hp = 10;  // dies to Hemokinesis's 15
+  e.max_hp = 10;
+  s.enemies.push_back(std::move(e));
+  s.character.hp = 2;  // dies to the 2 HP loss
+  s.character.energy = 1;
+  s.current_hand.push_back(Card{CardId::Hemokinesis});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Hemokinesis, 0)));
+
+  EXPECT_LE(s.enemies[0].hp, 0);        // enemy died
+  EXPECT_EQ(s.character.hp, 0);         // and so did the player
+  EXPECT_EQ(s.outcome, Outcome::Lost);  // death takes precedence
+}

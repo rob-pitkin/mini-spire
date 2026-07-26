@@ -106,7 +106,20 @@ PYBIND11_MODULE(_core, m) {
       .value("Whirlwind", CardId::Whirlwind)
       .value("WhirlwindPlus", CardId::WhirlwindPlus)
       .value("Bludgeon", CardId::Bludgeon)
-      .value("BludgeonPlus", CardId::BludgeonPlus);
+      .value("BludgeonPlus", CardId::BludgeonPlus)
+      // Ironclad Tier B (ROB-80).
+      .value("PommelStrike", CardId::PommelStrike)
+      .value("PommelStrikePlus", CardId::PommelStrikePlus)
+      .value("ShrugItOff", CardId::ShrugItOff)
+      .value("ShrugItOffPlus", CardId::ShrugItOffPlus)
+      .value("Bloodletting", CardId::Bloodletting)
+      .value("BloodlettingPlus", CardId::BloodlettingPlus)
+      .value("Hemokinesis", CardId::Hemokinesis)
+      .value("HemokinesisPlus", CardId::HemokinesisPlus)
+      .value("SeeingRed", CardId::SeeingRed)
+      .value("SeeingRedPlus", CardId::SeeingRedPlus)
+      .value("Offering", CardId::Offering)
+      .value("OfferingPlus", CardId::OfferingPlus);
 
   // EnemyKind (ROB-79) — so the TUI can name per-slot enemies via enemy_kinds().
   py::enum_<EnemyKind>(m, "EnemyKind")

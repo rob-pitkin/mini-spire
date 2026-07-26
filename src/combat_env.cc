@@ -32,6 +32,11 @@ constexpr std::array<CardId, kNumCardTypes> kObsCardOrder = {
     CardId::PummelPlus, CardId::Shockwave, CardId::ShockwavePlus,
     CardId::Uppercut, CardId::UppercutPlus, CardId::Whirlwind,
     CardId::WhirlwindPlus, CardId::Bludgeon, CardId::BludgeonPlus,
+    // Ironclad Tier B (ROB-80).
+    CardId::PommelStrike, CardId::PommelStrikePlus, CardId::ShrugItOff,
+    CardId::ShrugItOffPlus, CardId::Bloodletting, CardId::BloodlettingPlus,
+    CardId::Hemokinesis, CardId::HemokinesisPlus, CardId::SeeingRed,
+    CardId::SeeingRedPlus, CardId::Offering, CardId::OfferingPlus,
 };
 static_assert(kObsCardOrder.size() == kNumCardTypes,
               "kObsCardOrder must list every card type");

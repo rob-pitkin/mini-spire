@@ -55,12 +55,25 @@ enum class CardId {
   WhirlwindPlus,
   Bludgeon,
   BludgeonPlus,
+  // Tier B (ROB-80) — card-flow: draw / energy / lose-HP.
+  PommelStrike,
+  PommelStrikePlus,
+  ShrugItOff,
+  ShrugItOffPlus,
+  Bloodletting,
+  BloodlettingPlus,
+  Hemokinesis,
+  HemokinesisPlus,
+  SeeingRed,
+  SeeingRedPlus,
+  Offering,
+  OfferingPlus,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
 // action-space size (card x target). Update CARD_DATABASE + kObsCardOrder in
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
-inline constexpr int kNumCardTypes = 38;
+inline constexpr int kNumCardTypes = 50;
 
 // A card's inherent StS type. This is a real property, NOT inferable from
 // damage/block: an Attack can gain block (Body Slam) and a Skill can deal
@@ -108,6 +121,11 @@ struct CardData {
   bool exhaust = false;     // exhausts when PLAYED (Slimed)
   bool ethereal = false;    // exhausts at end of turn if unplayed in hand (Dazed)
   bool unplayable = false;  // never a legal action (Dazed) — masked out
+  // Card-flow effects (ROB-80 Tier B). Resolve with the card:
+  int draw = 0;     // draw N cards (resolves last)
+  int energy = 0;   // gain N energy
+  int lose_hp = 0;  // player loses N HP — an EFFECT (not a cost, can kill you),
+                    // direct HP loss that bypasses block (verified).
 };
 
 // CardData row order: name, cost, damage, hits, block, target, debuffs, powers,
@@ -155,6 +173,19 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     {CardId::WhirlwindPlus, {"Whirlwind+", kXCost, 8, -1, 0, CardTarget::AllEnemies, {}, {}, CardType::Attack, false, false}},
     {CardId::Bludgeon, {"Bludgeon", 3, 32, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false}},
     {CardId::BludgeonPlus, {"Bludgeon+", 3, 42, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false}},
+    // --- Ironclad Tier B (ROB-80): card-flow (draw / energy / lose-HP) ---
+    {CardId::PommelStrike, {"Pommel Strike", 1, 9, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 1, 0, 0}},
+    {CardId::PommelStrikePlus, {"Pommel Strike+", 1, 10, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 2, 0, 0}},
+    {CardId::ShrugItOff, {"Shrug It Off", 1, 0, 0, 8, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 1, 0, 0}},
+    {CardId::ShrugItOffPlus, {"Shrug It Off+", 1, 0, 0, 11, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 1, 0, 0}},
+    {CardId::Bloodletting, {"Bloodletting", 0, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 2, 3}},
+    {CardId::BloodlettingPlus, {"Bloodletting+", 0, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 3, 3}},
+    {CardId::Hemokinesis, {"Hemokinesis", 1, 15, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 2}},
+    {CardId::HemokinesisPlus, {"Hemokinesis+", 1, 20, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 2}},
+    {CardId::SeeingRed, {"Seeing Red", 1, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, true, false, false, 0, 2, 0}},
+    {CardId::SeeingRedPlus, {"Seeing Red+", 0, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, true, false, false, 0, 2, 0}},
+    {CardId::Offering, {"Offering", 0, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, true, false, false, 3, 2, 6}},
+    {CardId::OfferingPlus, {"Offering+", 0, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, true, false, false, 5, 2, 6}},
 };
 
 // Whether a card needs the player to PICK a specific enemy slot (ROB-80). Only

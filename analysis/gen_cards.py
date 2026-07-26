@@ -79,23 +79,38 @@ def load_cards() -> list[Card]:
     return cards
 
 
-# Which mechanic-tiers a card requires. Tier A cards need NONE beyond the base
-# engine + AoE/hits/X-cost (all landing in Tier A itself).
+import re
+
+# "Lose N HP" is a Tier-B mechanic (lose_hp), even though it lives in the CSV's
+# special prose. Extract it so cards whose ONLY special is HP-loss stay Tier B.
+_LOSE_HP_RE = re.compile(r"los[et]\s+(\d+)\s+HP", re.IGNORECASE)
+
+
+def lose_hp_amount(c: Card) -> int:
+    m = _LOSE_HP_RE.search(c.special)
+    return int(m.group(1)) if m else 0
+
+
+def _residual_special(c: Card) -> str:
+    """The special prose with the 'Lose N HP' clause removed — what's LEFT is
+    the genuinely-special effect (deck manip, conditionals) needing Tier D/E."""
+    return _LOSE_HP_RE.sub("", c.special).strip(" .")
+
+
+# Which mechanic-tiers a card requires. Tier A needs NONE beyond AoE/hits/X-cost.
 def classify(c: Card) -> str:
     needs = set()
-    if c.draw or c.energy:
-        needs.add("B")  # player card-flow
+    if c.draw or c.energy or lose_hp_amount(c):
+        needs.add("B")  # player card-flow (draw / energy / lose-HP)
     if c.type == "Power":
         needs.add("C")  # player powers
-    if c.special:
-        needs.add("E")  # a special handler (may overlap other tiers)
-    # exhaust as a keyword is fine (Tier A handles it — Slimed already exhausts);
-    # exhaust-SYNERGY lives in card `special` prose, already caught by E.
+    if _residual_special(c):
+        needs.add("E")  # a special handler beyond lose-HP
     c.tiers_needed = needs
     if not needs:
         return "A"
-    # First non-A tier in order determines where it lands.
-    for t in ("B", "C", "D", "E"):
+    # HIGHEST required tier wins (a card needing both B and E is E).
+    for t in ("E", "D", "C", "B"):
         if t in needs:
             return t
     return "A"
@@ -130,36 +145,38 @@ def _cpp_target(t: str) -> str:
             "AllEnemies": "Target::Enemy", "Character": "Target::Character"}[t]
 
 
-def emit_tier_a(cards: list[Card]) -> str:
-    """Emit C++ CardId enum entries + CARD_DATABASE rows for Tier A cards, EXCEPT
-    the six starters (already hand-written in card.h). Field order matches the
-    CardData struct: name, cost, damage, hits, block, target, debuffs, powers,
-    type, exhaust, ethereal, unplayable."""
-    STARTERS = {"Strike", "StrikePlus", "Defend", "DefendPlus", "Bash", "BashPlus"}
-    tier_a = [c for c in cards if c.tier == "A" and c.id not in STARTERS]
-    lines_enum = []
-    lines_db = []
-    for c in tier_a:
-        lines_enum.append(f"  {c.id},")
-        cost = "kXCost" if c.cost == "X" else c.cost
-        hits = "-1" if c.hits == "X" else c.hits  # -1 = X hits
-        debuffs, powers = _parse_applies(c.applies)
-        deb = ", ".join(f"{{Debuff::{e}, {a}, {_cpp_target(t)}}}" for e, a, t in debuffs)
-        pow_ = ", ".join(f"{{Power::{e}, {a}, {_cpp_target(t)}}}" for e, a, t in powers)
-        # Iron Wave's CSV "Enemy/None" -> Enemy (it deals damage, so it targets).
-        raw_target = "Enemy" if c.target == "Enemy/None" else c.target
-        tgt = {"None": "CardTarget::None", "Enemy": "CardTarget::Enemy",
-               "AllEnemies": "CardTarget::AllEnemies",
-               "Self": "CardTarget::Self"}[raw_target]
-        lines_db.append(
-            f'    {{CardId::{c.id}, {{"{c.name}", {cost}, {c.damage}, {hits}, '
-            f'{c.block}, {tgt}, {{{deb}}}, {{{pow_}}}, CardType::{c.type}, '
-            f'{"true" if c.exhaust else "false"}, '
-            f'{"true" if c.ethereal else "false"}}}}},'
-        )
-    return "// ---- CardId enum (append after existing) ----\n" + \
-           "\n".join(lines_enum) + \
-           "\n\n// ---- CARD_DATABASE rows ----\n" + "\n".join(lines_db)
+STARTERS = {"Strike", "StrikePlus", "Defend", "DefendPlus", "Bash", "BashPlus"}
+
+
+def _row(c: Card) -> str:
+    """One CARD_DATABASE row (fully positional). Field order matches CardData:
+    name, cost, damage, hits, block, target, debuffs, powers, type, exhaust,
+    ethereal, unplayable, draw, energy, lose_hp."""
+    cost = "kXCost" if c.cost == "X" else c.cost
+    hits = "-1" if c.hits == "X" else c.hits  # -1 = X hits
+    debuffs, powers = _parse_applies(c.applies)
+    deb = ", ".join(f"{{Debuff::{e}, {a}, {_cpp_target(t)}}}" for e, a, t in debuffs)
+    pow_ = ", ".join(f"{{Power::{e}, {a}, {_cpp_target(t)}}}" for e, a, t in powers)
+    raw_target = "Enemy" if c.target == "Enemy/None" else c.target
+    tgt = {"None": "CardTarget::None", "Enemy": "CardTarget::Enemy",
+           "AllEnemies": "CardTarget::AllEnemies", "Self": "CardTarget::Self"}[raw_target]
+    return (
+        f'    {{CardId::{c.id}, {{"{c.name}", {cost}, {c.damage}, {hits}, '
+        f'{c.block}, {tgt}, {{{deb}}}, {{{pow_}}}, CardType::{c.type}, '
+        f'{"true" if c.exhaust else "false"}, '
+        f'{"true" if c.ethereal else "false"}, false, '  # unplayable
+        f'{c.draw}, {c.energy}, {lose_hp_amount(c)}}}}},'
+    )
+
+
+def emit_tier(cards: list[Card], tier: str) -> str:
+    """Emit CardId enum entries + CARD_DATABASE rows for one tier (skipping the
+    hand-written starters)."""
+    members = [c for c in cards if c.tier == tier and c.id not in STARTERS]
+    enum = "\n".join(f"  {c.id}," for c in members)
+    db = "\n".join(_row(c) for c in members)
+    return f"// ---- CardId enum (Tier {tier}, append) ----\n{enum}" \
+           f"\n\n// ---- CARD_DATABASE rows (Tier {tier}) ----\n{db}"
 
 
 def main() -> None:
@@ -180,8 +197,8 @@ def main() -> None:
             members = [c.id for c in cards if c.tier == t]
             print(f"\nTier {t}: {len(members)} cards")
             print("  " + ", ".join(members))
-    if args.emit_tier == "A":
-        print(emit_tier_a(cards))
+    if args.emit_tier:
+        print(emit_tier(cards, args.emit_tier))
 
 
 if __name__ == "__main__":

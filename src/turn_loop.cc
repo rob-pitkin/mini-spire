@@ -329,6 +329,14 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
     }
   }
 
+  // 4b. Card-flow effects (ROB-80 Tier B). Energy gain, then lose-HP (an EFFECT,
+  // not a cost: direct HP loss bypassing block, and it CAN kill the player).
+  state.character.energy += data.energy;
+  if (data.lose_hp > 0) {
+    state.character.hp -= data.lose_hp;
+    if (state.character.hp < 0) state.character.hp = 0;
+  }
+
   // 5. Move card from hand to discard or exhaust
   int idx = find_first_in_hand(state.current_hand, card_id);
   assert(idx >= 0 && "mask should have rejected this action");
@@ -371,10 +379,17 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
     }
   }
 
-  // 7. Terminal checks
-  check_enemy_terminal(state);
+  // 6c. Draw (ROB-80 Tier B) — resolves LAST, after the card's other effects.
+  for (int i = 0; i < data.draw; ++i) draw_one(state);
+
+  // 7. Terminal checks. DEATH takes precedence over victory: if the card's
+  // self-damage (a lose-HP card — ROB-80) killed the player, it's a Loss even
+  // if the same card also cleared the room (e.g. Hemokinesis at 2 HP killing the
+  // last enemy while its 2 HP loss kills you). The player CAN now die on their
+  // own turn, so the character check is no longer unreachable.
+  check_character_terminal(state);
   if (state.outcome != Outcome::InProgress) return;
-  check_character_terminal(state);  // currently unreachable in v1
+  check_enemy_terminal(state);
 }
 
 // Choose a uniform-random living ally (a slot != actor with hp > 0), or -1 if
