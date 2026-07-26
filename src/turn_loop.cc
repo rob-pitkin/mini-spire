@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "action.h"
 #include "card.h"
 #include "encounter.h"
 #include "enemy.h"
@@ -14,135 +15,6 @@
 namespace minispire {
 
 namespace {
-
-// Helper: look up a stack count in a debuff/power map, returning 0 if absent.
-template <typename Effect>
-int get_status(const std::unordered_map<Effect, int>& m, Effect e) {
-  auto it = m.find(e);
-  return it == m.end() ? 0 : it->second;
-}
-
-// Apply damage to a HP/block pair: block absorbs first, then HP. HP is
-// clamped at 0 so we don't end up with negative HP in observations.
-//
-// LIMITATION: STS technically tracks "overkill" damage for some end-of-fight
-// effects (e.g. Centennial Puzzle). Clamping at 0 loses that information.
-// Not used by any v1 mechanic.
-void apply_damage_to_hp_block(int& hp, int& block, int amount) {
-  int blocked = std::min(amount, block);
-  block -= blocked;
-  hp -= (amount - blocked);
-  if (hp < 0) hp = 0;
-}
-
-// ---------------------------------------------------------------------------
-// Centralized mutators (effects-architecture Stage 1).
-//
-// EVERY gameplay stat mutation flows through these — they are the future hook
-// points of the action-queue architecture (docs/design/effects-architecture.md):
-// Juggernaut fires inside gain_block, Rupture inside lose_player_hp, Feel No
-// Pain / Dark Embrace inside move_to_exhaust, etc. Construction-time writes
-// (enemy factories, start_combat) and phase-boundary resets are upkeep, not
-// gameplay events, and stay direct. Convention: no other code assigns to
-// hp/block/energy or pushes to exhaust/discard for gameplay reasons.
-// ---------------------------------------------------------------------------
-
-// Entity addressing: enemy slot index, or kPlayerSlot for the player.
-constexpr int kPlayerSlot = -1;
-
-// Grant block to the player (slot == kPlayerSlot) or an enemy. `amount` is the
-// final amount — card-block math (Dexterity, Frail) happens at the card site
-// since it only applies to block gained FROM CARDS, not all block.
-void gain_block(CombatState& state, int slot, int amount) {
-  if (amount <= 0) return;
-  if (slot == kPlayerSlot) {
-    state.character.current_block += amount;
-  } else if (slot >= 0 && slot < static_cast<int>(state.enemies.size())) {
-    state.enemies[slot].current_block += amount;
-  }
-}
-
-// Direct player HP loss (a lose-HP EFFECT — bypasses block, can kill; ROB-80).
-void lose_player_hp(CombatState& state, int amount) {
-  if (amount <= 0) return;
-  state.character.hp -= amount;
-  if (state.character.hp < 0) state.character.hp = 0;
-}
-
-void gain_energy(CombatState& state, int amount) {
-  state.character.energy += amount;
-}
-
-void spend_energy(CombatState& state, int amount) {
-  state.character.energy -= amount;
-}
-
-// Spend ALL energy (X-cost cards); returns the amount spent (= X).
-int spend_all_energy(CombatState& state) {
-  int x = state.character.energy;
-  state.character.energy = 0;
-  return x;
-}
-
-// Card pile routing. All gameplay-driven moves into exhaust/discard go through
-// these (the future CardExhausted hook point).
-void move_to_exhaust(CombatState& state, Card card) {
-  state.exhaust_pile.push_back(card);
-}
-
-void move_to_discard(CombatState& state, Card card) {
-  state.discard_pile.push_back(card);
-}
-
-// Resolve a Target to the map to write into. `enemy_target` is the decoded enemy
-// slot (ROB-60); ignored for Target::Character. Returns nullptr if the target
-// slot is out of range (defensive). AoE (apply to all enemies) is not yet
-// modeled — revisit when AoE cards land.
-std::unordered_map<Debuff, int>* debuff_map(CombatState& state, Target target,
-                                            int enemy_target) {
-  if (target == Target::Character) return &state.character.debuffs;
-  if (enemy_target >= 0 && enemy_target < static_cast<int>(state.enemies.size())) {
-    return &state.enemies[enemy_target].debuffs;
-  }
-  return nullptr;
-}
-std::unordered_map<Power, int>* power_map(CombatState& state, Target target,
-                                          int enemy_target) {
-  if (target == Target::Character) return &state.character.powers;
-  if (enemy_target >= 0 && enemy_target < static_cast<int>(state.enemies.size())) {
-    return &state.enemies[enemy_target].powers;
-  }
-  return nullptr;
-}
-
-// Entangle is non-stacking: SET to the applied amount, not accumulated. It's
-// 1-turn and boolean (ROB-75); stacking to 2 would wrongly last two turns.
-void apply_debuff(CombatState& state, const DebuffApplication& app,
-                  int enemy_target) {
-  auto* m = debuff_map(state, app.target, enemy_target);
-  if (!m) return;
-  // Artifact (ROB-65): negates the whole debuff APPLICATION regardless of
-  // stacks, consuming one Artifact charge. Checked on the same target's powers.
-  auto* pm = power_map(state, app.target, enemy_target);
-  if (pm) {
-    auto art = pm->find(Power::Artifact);
-    if (art != pm->end() && art->second > 0) {
-      if (--art->second <= 0) pm->erase(art);
-      return;  // debuff negated
-    }
-  }
-  if (app.effect == Debuff::Entangle) {
-    (*m)[app.effect] = app.amount;
-  } else {
-    (*m)[app.effect] += app.amount;
-  }
-}
-
-void apply_power(CombatState& state, const PowerApplication& app,
-                 int enemy_target) {
-  auto* m = power_map(state, app.target, enemy_target);
-  if (m) (*m)[app.effect] += app.amount;
-}
 
 // Debuffs decrement by 1 at end of the bearer's turn; remove at 0. Powers never
 // tick — decrement-ness is now the TYPE, so no per-effect denylist.
@@ -155,20 +27,6 @@ void tick_debuffs(std::unordered_map<Debuff, int>& debuffs) {
       ++it;
     }
   }
-}
-
-// Move all of discard_pile into draw_pile (if needed), shuffle, draw one
-// to current_hand. Silent no-op if draw+discard empty or hand at limit.
-void draw_one(CombatState& state) {
-  if (state.draw_pile.empty()) {
-    if (state.discard_pile.empty()) return;
-    state.draw_pile = std::move(state.discard_pile);
-    state.discard_pile.clear();
-    std::shuffle(state.draw_pile.begin(), state.draw_pile.end(), state.rng);
-  }
-  if (static_cast<int>(state.current_hand.size()) >= HAND_SIZE_LIMIT) return;
-  state.current_hand.push_back(state.draw_pile.back());
-  state.draw_pile.pop_back();
 }
 
 void check_enemy_terminal(CombatState& state) {
@@ -188,15 +46,6 @@ int find_first_in_hand(const std::vector<Card>& hand, CardId id) {
     if (hand[i].card_id == id) return static_cast<int>(i);
   }
   return -1;
-}
-
-// Count living enemies (hp > 0).
-int count_living(const CombatState& state) {
-  int n = 0;
-  for (const Enemy& e : state.enemies) {
-    if (e.hp > 0) n++;
-  }
-  return n;
 }
 
 // First slot not holding a living enemy (dead corpse OR empty), or -1 if all
@@ -229,107 +78,18 @@ void place_child(CombatState& state, const Enemy& child) {
   }
 }
 
-// Apply one triggered effect's action for the enemy at `slot` (ROB-65).
-// Indexed by slot rather than holding an Enemy& — mutators may (in future
-// stages) reallocate state.enemies, and slot-indexing is the anti-dangling
-// convention (effects-architecture Stage 1).
-void apply_triggered_action(CombatState& state, int slot,
-                            const TriggeredEffect& fx) {
-  Enemy& enemy = state.enemies[slot];
-  switch (fx.action) {
-    case TriggeredAction::RewriteIntent:
-      // Only meaningful for a living enemy (a dead one takes no turn).
-      if (enemy.hp > 0) enemy.last_move = fx.move;
-      break;
-    case TriggeredAction::GainStrength:
-      enemy.powers[Power::Strength] += fx.amount;
-      break;
-    case TriggeredAction::GainStrengthFromPower:
-      // Gain Strength = the enemy's stacks of fx.power (Gremlin Nob Enrage,
-      // mirroring how start-of-turn Ritual grants Strength = Ritual stacks).
-      enemy.powers[Power::Strength] += get_status(enemy.powers, fx.power);
-      break;
-    case TriggeredAction::GainBlock:
-      gain_block(state, slot, fx.amount);
-      break;
-    case TriggeredAction::ApplyPlayerDebuff:
-      state.character.debuffs[fx.debuff] += fx.amount;
-      break;
-    case TriggeredAction::RemoveSelfPower:
-      enemy.powers.erase(fx.power);
-      break;
-    case TriggeredAction::Wake:
-      enemy.is_asleep = false;
-      break;
-  }
-}
-
-// Generalized trigger dispatcher (ROB-65). Fires every triggered_effect on the
-// enemy at `slot` whose trigger matches `which`. `which` is the event that just
-// occurred; HpAtOrBelow is a special damage-time trigger whose param is the hp
-// threshold (checked here). `once` effects latch off after firing.
-void fire_triggers(CombatState& state, int slot, Trigger which) {
-  // Iterate by index: an effect could mutate state.enemies (none currently do),
-  // and we need a stable reference to the owner each iteration.
-  auto& effects = state.enemies[slot].triggered_effects;
-  for (std::size_t i = 0; i < effects.size(); ++i) {
-    TriggeredEffect& fx = effects[i];
-    if (fx.trigger != which) continue;
-    if (fx.once && fx.fired) continue;
-    // Guard: fire only while the enemy is asleep (Lagavulin's damage-wake; a
-    // first hit AFTER a self-wake must not re-stun it mid-cycle).
-    if (fx.requires_asleep && !state.enemies[slot].is_asleep) continue;
-    // HpAtOrBelow: only fire while the enemy is alive and at/below the threshold.
-    if (which == Trigger::HpAtOrBelow) {
-      Enemy& e = state.enemies[slot];
-      if (e.hp <= 0 || e.hp > fx.param) continue;
-    }
-    apply_triggered_action(state, slot, fx);
-    fx.fired = true;
-  }
-}
-
-// on_death hook: fires when an enemy reaches hp <= 0. Deferred to after the
-// player's card fully resolves. `slot` is the dying enemy's slot. Spore Cloud
-// and any other OnDeath triggered_effects fire here.
-void fire_on_death(CombatState& state, int slot) {
-  fire_triggers(state, slot, Trigger::OnDeath);
-}
-
-// on_damaged hook: fires when an enemy actually loses HP. Runs the OnDamaged
-// triggers (Curl Up, Angry, Lagavulin's damage-wake -> Stunned), then OnWake if
-// this hit woke a sleeping enemy (Metallicize present), then the HpAtOrBelow
-// triggers (the Large Slime's split interrupt).
-void fire_on_damaged(CombatState& state, int slot) {
-  const bool was_asleep = state.enemies[slot].is_asleep;
-  // OnDamaged first: the damage-wake RewriteIntent (guarded on is_asleep) sets
-  // the Stunned intent while still asleep.
-  fire_triggers(state, slot, Trigger::OnDamaged);
-  // Damage-wake: a hit that lands while asleep wakes the enemy immediately
-  // (OnWake clears Metallicize now, so the stun turn gains no block).
-  if (was_asleep) fire_triggers(state, slot, Trigger::OnWake);
-  fire_triggers(state, slot, Trigger::HpAtOrBelow);
-}
-
-// Damage one enemy slot once, firing on_damaged and recording a death into
-// `died_slots`. Shared by single-target and AoE / multi-hit cards (ROB-80).
-void hit_enemy_once(CombatState& state, int slot, int base_damage,
-                    std::vector<int>& died_slots) {
-  Enemy& enemy = state.enemies[slot];
-  if (enemy.hp <= 0) return;
-  int hp_before = enemy.hp;
-  int dmg = compute_attack_damage(base_damage, state.character.powers,
-                                  state.character.debuffs, enemy.debuffs);
-  apply_damage_to_hp_block(enemy.hp, enemy.current_block, dmg);
-  if (enemy.hp < hp_before) fire_on_damaged(state, slot);
-  if (hp_before > 0 && enemy.hp <= 0) died_slots.push_back(slot);
-}
-
+// Play one card: translate it into its action sequence and drain the queue
+// (effects-architecture Stage 2). The translation preserves the pre-queue
+// resolution order: damage (hits x targets), block, debuffs/powers, energy,
+// lose-HP, pile move, CardPlayed hook, deferred deaths (ROB-62), then draw
+// LAST (ROB-80 Tier B). Hook responses are pushed to the BACK of the queue as
+// they fire (§7 default ordering) — divergences from the pre-queue nested
+// timing are recorded in docs/design/ordering-notes.md.
 void handle_play_card(CombatState& state, CardId card_id, int target) {
   const CardData& data = CARD_DATABASE.at(card_id);
 
-  // 1. Pay energy. X-cost cards (Whirlwind) spend ALL energy; X = the amount
-  // spent, used as the hit count.
+  // 1. Pay energy at translation time — an X-cost card's X (= its hit count)
+  // must be known before its hits can be queued.
   int x = 0;
   if (data.cost == kXCost) {
     x = spend_all_energy(state);
@@ -338,6 +98,12 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   }
   // hits: -1 means "X hits" (Whirlwind); otherwise the literal count.
   const int hits = (data.hits < 0) ? x : data.hits;
+
+  // 2. The played card leaves the hand now — it is "in flight" during
+  // resolution (StS) and rejoins a pile via the queued ExhaustCard/DiscardCard.
+  const int idx = find_first_in_hand(state.current_hand, card_id);
+  assert(idx >= 0 && "mask should have rejected this action");
+  state.current_hand.erase(state.current_hand.begin() + idx);
 
   // The set of enemy slots this card resolves against.
   std::vector<int> target_slots;
@@ -350,100 +116,107 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
     target_slots.push_back(target);
   }
 
-  // 2. Damage: `hits` times, to each target slot. Deaths deferred (on_death may
-  // mutate state.enemies via a split).
-  std::vector<int> died_slots;
+  // 3. Translate the CardData field-bag into its default action sequence.
+  ActionQueue q;
+  ResolutionContext ctx;
   if (data.damage > 0) {
+    // One DealDamage per hit per target; a multi-hit AoE (Whirlwind) sweeps
+    // all targets each swing. Damage math runs at execution (Strength per hit).
     for (int h = 0; h < hits; ++h) {
       for (int slot : target_slots) {
-        hit_enemy_once(state, slot, data.damage, died_slots);
+        Action a;
+        a.kind = ActionKind::DealDamage;
+        a.actor = kPlayerSlot;
+        a.target = slot;
+        a.amount = data.damage;
+        q.push_back(a);
       }
     }
   }
-
-  // 3. Apply block (Dexterity adds, then Frail reduces 25%, floored — StS order).
   if (data.block > 0) {
-    int block_gained =
-        data.block + get_status(state.character.powers, Power::Dexterity);
-    if (get_status(state.character.debuffs, Debuff::Frail) > 0) {
-      block_gained =
-          static_cast<int>(std::floor(static_cast<float>(block_gained) * 0.75f));
-    }
-    gain_block(state, kPlayerSlot, block_gained);
+    Action a;
+    a.kind = ActionKind::GainBlock;
+    a.target = kPlayerSlot;
+    a.amount = data.block;
+    a.card_block = true;  // Dex/Frail math applies in the executor
+    q.push_back(a);
   }
-
-  // 4. Apply debuffs/powers. Self/None applications route to the player (their
-  // Target::Character); enemy applications go to each target slot (AoE loops).
+  // Self/None applications route to the player; enemy applications go to each
+  // target slot (AoE loops).
   for (const auto& app : data.applies_debuffs) {
+    Action a;
+    a.kind = ActionKind::ApplyDebuff;
+    a.debuff = app.effect;
+    a.amount = app.amount;
     if (app.target == Target::Character) {
-      apply_debuff(state, app, -1);
+      a.target = kPlayerSlot;
+      q.push_back(a);
     } else {
-      for (int slot : target_slots) apply_debuff(state, app, slot);
+      for (int slot : target_slots) {
+        a.target = slot;
+        q.push_back(a);
+      }
     }
   }
   for (const auto& app : data.applies_powers) {
+    Action a;
+    a.kind = ActionKind::ApplyPower;
+    a.power = app.effect;
+    a.amount = app.amount;
     if (app.target == Target::Character) {
-      apply_power(state, app, -1);
+      a.target = kPlayerSlot;
+      q.push_back(a);
     } else {
-      for (int slot : target_slots) apply_power(state, app, slot);
+      for (int slot : target_slots) {
+        a.target = slot;
+        q.push_back(a);
+      }
     }
   }
-
-  // 4b. Card-flow effects (ROB-80 Tier B). Energy gain, then lose-HP (an EFFECT,
+  // Card-flow effects (ROB-80 Tier B). Energy gain, then lose-HP (an EFFECT,
   // not a cost: direct HP loss bypassing block, and it CAN kill the player).
-  if (data.energy > 0) gain_energy(state, data.energy);
-  lose_player_hp(state, data.lose_hp);
-
-  // 5. Move card from hand to discard or exhaust
-  int idx = find_first_in_hand(state.current_hand, card_id);
-  assert(idx >= 0 && "mask should have rejected this action");
-  Card played = state.current_hand[idx];
-  state.current_hand.erase(state.current_hand.begin() + idx);
-  if (data.exhaust) {
-    move_to_exhaust(state, played);
-  } else {
-    move_to_discard(state, played);
+  if (data.energy > 0) {
+    Action a;
+    a.kind = ActionKind::GainEnergy;
+    a.amount = data.energy;
+    q.push_back(a);
+  }
+  if (data.lose_hp > 0) {
+    Action a;
+    a.kind = ActionKind::LoseHp;
+    a.amount = data.lose_hp;
+    q.push_back(a);
+  }
+  // The played card lands in its pile after the card's own effects resolve.
+  {
+    Action a;
+    a.kind = data.exhaust ? ActionKind::ExhaustCard : ActionKind::DiscardCard;
+    a.card = card_id;
+    q.push_back(a);
+  }
+  // CardPlayed hook (Gremlin Nob Enrage), then deferred deaths, then draw.
+  {
+    Action a;
+    a.kind = ActionKind::CardPlayedHook;
+    a.card = card_id;
+    q.push_back(a);
+  }
+  q.push_back(Action{ActionKind::CheckDeath});
+  if (data.draw > 0) {
+    Action a;
+    a.kind = ActionKind::DrawCards;
+    a.amount = data.draw;
+    q.push_back(a);
   }
 
-  // 5b. OnPlayerSkill triggers (ROB-65). Playing a Skill fires every living
-  // enemy's OnPlayerSkill effects (the Gremlin Nob's Enrage). Independent of
-  // whether the card dealt damage or killed anything.
-  if (data.type == CardType::Skill) {
-    for (std::size_t i = 0; i < state.enemies.size(); ++i) {
-      if (state.enemies[i].hp > 0) {
-        fire_triggers(state, static_cast<int>(i), Trigger::OnPlayerSkill);
-      }
-    }
-  }
+  // 4. Drain to completion — every mutation is a flat, sequential step; no
+  // live reference or open loop spans a mutation.
+  drain(state, q, ctx);
 
-  // 6. Deferred on_death hooks (ROB-62). Fire after the card fully resolves so a
-  // Split can safely mutate state.enemies. Runs before the terminal check so a
-  // split's spawned children prevent a premature "all enemies dead" win. An AoE
-  // card can kill several enemies at once (ROB-80) — fire each.
-  if (!died_slots.empty()) {
-    for (int slot : died_slots) fire_on_death(state, slot);
-
-    // 6b. BecameLastEnemy triggers (ROB-77 via ROB-65). Checked AFTER on_death
-    // (a split could have added enemies). If the kills left exactly one living
-    // enemy, fire its BecameLastEnemy effects — e.g. the Shield Gremlin rewrites
-    // its queued Protect to attack once alone.
-    if (count_living(state) == 1) {
-      for (std::size_t i = 0; i < state.enemies.size(); ++i) {
-        if (state.enemies[i].hp > 0) {
-          fire_triggers(state, static_cast<int>(i), Trigger::BecameLastEnemy);
-        }
-      }
-    }
-  }
-
-  // 6c. Draw (ROB-80 Tier B) — resolves LAST, after the card's other effects.
-  for (int i = 0; i < data.draw; ++i) draw_one(state);
-
-  // 7. Terminal checks. DEATH takes precedence over victory: if the card's
+  // 5. Terminal checks. DEATH takes precedence over victory: if the card's
   // self-damage (a lose-HP card — ROB-80) killed the player, it's a Loss even
-  // if the same card also cleared the room (e.g. Hemokinesis at 2 HP killing the
-  // last enemy while its 2 HP loss kills you). The player CAN now die on their
-  // own turn, so the character check is no longer unreachable.
+  // if the same card also cleared the room (e.g. Hemokinesis at 2 HP killing
+  // the last enemy while its 2 HP loss kills you).
   check_character_terminal(state);
   if (state.outcome != Outcome::InProgress) return;
   check_enemy_terminal(state);
@@ -465,6 +238,10 @@ int random_living_ally(CombatState& state, int actor_slot) {
 // move's damage uses that enemy's status, its block lands on that enemy (or a
 // random ally for a blocks_ally move), and a Target::Enemy status is that
 // enemy's self-buff (e.g. Cultist Incantation -> own Strength).
+//
+// Still imperative (the Stage-2 two-regime period): the enemy phase migrates
+// onto the queue at Stage 3. It calls the centralized mutators directly and
+// fires its one trigger site through a local mini-drain.
 void apply_move_to_state(CombatState& state, const Move& move, int actor_slot) {
   Enemy& enemy = state.enemies[actor_slot];
 
@@ -501,8 +278,13 @@ void apply_move_to_state(CombatState& state, const Move& move, int actor_slot) {
   // Wake-on-resolve (ROB-65): Lagavulin's last sleep move (Sleep3) fires the
   // enemy's OnWake effects at the END of the asleep turn (self-wake path), so
   // that turn keeps its Metallicize block and the next turn onward gets none.
+  // Fired through a local mini-drain so trigger dispatch has exactly one
+  // implementation (the two-regime bridge; Stage 3 removes it).
   if (move.wakes_on_resolve) {
-    fire_triggers(state, actor_slot, Trigger::OnWake);
+    ActionQueue q;
+    ResolutionContext ctx;
+    fire_enemy_hooks(state, actor_slot, Hook::EnemyWake, q);
+    drain(state, q, ctx);
   }
   // Escape (ROB-74): the acting enemy flees by setting its own hp to 0. It
   // leaves the fight — everything keys on hp>0, so it's no longer

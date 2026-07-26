@@ -12,6 +12,7 @@ endif()
 add_compile_options(-Wall -Wextra -Wpedantic)
 
 add_library(minispire
+  src/action.cc
   src/combat_state.cc
   src/combat_env.cc
   src/enemy.cc

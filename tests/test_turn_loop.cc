@@ -808,6 +808,23 @@ TEST(TurnLoop, CurlUpDoesNotFireTwice) {
   EXPECT_EQ(s.enemies[0].current_block, 3);  // 9 - 6, no re-curl (once latch)
 }
 
+TEST(TurnLoop, CurlUpBlockDoesNotAbsorbRemainingMultiHits) {
+  // StS queue parity (effects-architecture Stage 2; see ordering-notes.md):
+  // Curl Up's block is QUEUED when the first hit lands (≈ addToBottom), so the
+  // remaining pre-queued hits of a multi-hit attack resolve before it — Twin
+  // Strike's second hit takes HP, and the block appears only afterwards. The
+  // pre-queue engine applied the block mid-card (between hits); that was the
+  // approximation, deliberately changed at Stage 2 (§8).
+  Enemy e = make_test_enemy(50);
+  e.triggered_effects.push_back(curl_up(9));
+  CombatState s = make_hook_test_state(std::move(e));
+  s.current_hand.push_back(Card{CardId::TwinStrike});  // 5 dmg x 2
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::TwinStrike, 0)));
+  EXPECT_EQ(s.enemies[0].hp, 40);            // 50 - 5 - 5: both hits reach HP
+  EXPECT_EQ(s.enemies[0].current_block, 9);  // curl block lands after the card
+}
+
 TEST(TurnLoop, SporeCloudAppliesVulnerableToPlayerOnDeath) {
   Enemy e = make_test_enemy(5);  // dies to one Strike (6)
   e.triggered_effects.push_back({.trigger = Trigger::OnDeath,

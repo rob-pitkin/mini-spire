@@ -1,0 +1,204 @@
+#pragma once
+
+#include <array>
+#include <cassert>
+#include <unordered_map>
+
+#include "card.h"
+#include "combat_state.h"
+#include "enemy.h"
+#include "status_effect.h"
+
+// The action queue (effects-architecture Stage 2; docs/design/
+// effects-architecture.md §4). Card resolution is translated into a flat
+// sequence of POD Actions and drained to completion — hooks respond by PUSHING
+// actions, never by mutating state directly, so no live reference or open loop
+// ever spans a mutation (the Split-UAF bug class is impossible by
+// construction). The queue is drained at every agent decision point and is
+// never stored in CombatState — clone() is untouched.
+//
+// Two-regime period (ends at Stage 3): the enemy phase in turn_loop.cc is
+// still imperative; it calls the mutators below directly and uses a local
+// mini-drain for its one trigger site (wakes_on_resolve).
+
+namespace minispire {
+
+// Entity addressing: enemy slot index, or kPlayerSlot for the player.
+// kNoSlot marks an unused actor/target field.
+inline constexpr int kPlayerSlot = -1;
+inline constexpr int kNoSlot = -2;
+
+// Helper: look up a stack count in a debuff/power map, returning 0 if absent.
+template <typename Effect>
+int get_status(const std::unordered_map<Effect, int>& m, Effect e) {
+  auto it = m.find(e);
+  return it == m.end() ? 0 : it->second;
+}
+
+// ---------------------------------------------------------------------------
+// Actions
+// ---------------------------------------------------------------------------
+
+enum class ActionKind {
+  // Mutations
+  DealDamage,   // actor attacks target for `amount` base damage (one hit)
+  LoseHp,       // direct player HP loss — bypasses block, can kill (ROB-80)
+  GainBlock,    // target gains `amount` block; card_block applies Dex/Frail
+  GainEnergy,   // player gains `amount` energy
+  DrawCards,    // player draws `amount` cards
+  ApplyDebuff,  // apply debuff x amount to target (Artifact-checked)
+  ApplyPower,   // apply power x amount to target
+  RemovePower,  // erase `power` from target (Lagavulin's Metallicize on wake)
+  RewriteIntent,  // set target's last_move = move (interrupt the queued intent)
+  Wake,           // set target's is_asleep = false
+  ExhaustCard,    // put `card` in the exhaust pile (played or generated)
+  DiscardCard,    // put `card` in the discard pile
+  // Bookkeeping
+  CardPlayedHook,  // fire Hook::CardPlayed listeners for `card` (Enrage)
+  CheckDeath,      // process deaths recorded this resolution (on-death,
+                   // became-last) — replaces the hand-rolled died_slots deferral
+};
+
+// A small, clone-safe tagged value. No closures, no pointers into state —
+// actors and targets are slot indices / enums. Extend fields as kinds demand
+// (POD only).
+struct Action {
+  ActionKind kind;
+  int actor = kNoSlot;   // damage source: kPlayerSlot or an enemy slot
+  int target = kNoSlot;  // recipient: kPlayerSlot or an enemy slot
+  int amount = 0;
+  CardId card = CardId::Strike;    // for card-carrying kinds
+  Debuff debuff = Debuff::None;    // ApplyDebuff payload
+  Power power = Power::None;       // ApplyPower / RemovePower payload
+  MoveName move = MoveName::None;  // RewriteIntent payload
+  bool card_block = false;  // GainBlock from a played card: apply Dex/Frail
+};
+
+// Fixed-capacity ring buffer (no steady-state allocation — constraint §3.3).
+// push_back ≈ StS addToBottom (the default); push_front ≈ addToTop
+// ("immediately next"). Capacity covers the worst realistic card (X-cost
+// multi-hit AoE at high energy) with a wide margin; overflow is a bug.
+class ActionQueue {
+ public:
+  bool empty() const { return count_ == 0; }
+
+  void push_back(const Action& a) {
+    assert(count_ < kCapacity && "ActionQueue overflow");
+    buf_[(head_ + count_) % kCapacity] = a;
+    ++count_;
+  }
+
+  void push_front(const Action& a) {
+    assert(count_ < kCapacity && "ActionQueue overflow");
+    head_ = (head_ + kCapacity - 1) % kCapacity;
+    buf_[head_] = a;
+    ++count_;
+  }
+
+  Action pop_front() {
+    assert(count_ > 0 && "pop from empty ActionQueue");
+    Action a = buf_[head_];
+    head_ = (head_ + 1) % kCapacity;
+    --count_;
+    return a;
+  }
+
+ private:
+  static constexpr int kCapacity = 128;
+  std::array<Action, kCapacity> buf_;
+  int head_ = 0;
+  int count_ = 0;
+};
+
+// Per-resolution scratch state (local to one drain, like the queue itself —
+// never stored in CombatState). Deaths are recorded by the DealDamage executor
+// and processed by the CheckDeath action.
+struct ResolutionContext {
+  std::array<int, kMaxEnemies> died_slots{};
+  int died_count = 0;
+
+  void record_death(int slot) {
+    assert(died_count < kMaxEnemies);
+    died_slots[died_count++] = slot;
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Hooks — the engine-wide event vocabulary (§4.4). One vocabulary consulted
+// from inside executors and at phase boundaries. Stage 2 consults the enemy
+// events + CardPlayed; the player-power registry (Demon Form, Juggernaut, ...)
+// arrives at Stage 4 and consults the rest.
+// ---------------------------------------------------------------------------
+
+enum class Hook {
+  TurnStartPlayer,    // Demon Form, Brutality, Berserk (Stage 4)
+  TurnEndPlayer,      // Combust, player Metallicize, Rage expiry (Stage 4)
+  TurnStartEnemy,     // enemy Ritual / Metallicize (Stage 3)
+  CardPlayed,         // enemy OnPlayerSkill today; Rage keys off CardType later
+  CardExhausted,      // Feel No Pain, Dark Embrace (Stage 4)
+  BlockGainedPlayer,  // Juggernaut (Stage 4)
+  HpLostPlayer,       // Rupture (Stage 4)
+  CardDrawn,          // Evolve, Fire Breathing (Stage 4)
+  EnemyDamaged,       // Curl Up, Angry, Lagavulin damage-wake
+  EnemyHpThreshold,   // Large Slime split interrupt
+  EnemyDeath,         // Spore Cloud
+  EnemyWake,          // Lagavulin Metallicize removal
+  BecameLastEnemy,    // Shield Gremlin attacks once alone
+};
+
+// Fire the enemy-at-`slot`'s TriggeredEffects matching `hook`, PUSHING the
+// response actions onto `q` (never mutating directly). Firing conditions
+// (once/fired latch, requires_asleep, HpAtOrBelow threshold) are evaluated at
+// fire time; response magnitudes that read stacks (Enrage) are also resolved
+// at fire time. Hooks with no enemy-Trigger analog are no-ops.
+void fire_enemy_hooks(CombatState& state, int slot, Hook hook, ActionQueue& q);
+
+// Drain the queue to completion: pop-execute until empty, short-circuiting on
+// a terminal outcome. Executors may push more actions. The queue must be empty
+// at every agent decision point (§4.2 invariant).
+void drain(CombatState& state, ActionQueue& q, ResolutionContext& ctx);
+
+// ---------------------------------------------------------------------------
+// Centralized mutators (Stage 1) — the single write-path for every gameplay
+// stat mutation, wrapped by the executors above and still called directly by
+// the (Stage-3-pending) imperative enemy phase. Construction-time writes and
+// phase-boundary resets are upkeep, not gameplay events, and stay direct.
+// ---------------------------------------------------------------------------
+
+// Apply damage to a HP/block pair: block absorbs first, then HP (clamped 0).
+// LIMITATION: StS tracks "overkill" damage for some effects (Centennial
+// Puzzle); clamping loses it. Not used by any current mechanic.
+void apply_damage_to_hp_block(int& hp, int& block, int amount);
+
+// Grant block to the player (slot == kPlayerSlot) or an enemy. `amount` is the
+// final amount — card-block math (Dex/Frail) applies only to block gained from
+// cards and happens in the GainBlock executor.
+void gain_block(CombatState& state, int slot, int amount);
+
+// Direct player HP loss (a lose-HP EFFECT — bypasses block, can kill; ROB-80).
+void lose_player_hp(CombatState& state, int amount);
+
+void gain_energy(CombatState& state, int amount);
+void spend_energy(CombatState& state, int amount);
+
+// Spend ALL energy (X-cost cards); returns the amount spent (= X).
+int spend_all_energy(CombatState& state);
+
+// Card pile routing. All gameplay-driven moves into exhaust/discard go through
+// these (the future CardExhausted hook point).
+void move_to_exhaust(CombatState& state, Card card);
+void move_to_discard(CombatState& state, Card card);
+
+// Move all of discard_pile into draw_pile (if needed), shuffle, draw one card
+// to the hand. Silent no-op if draw+discard empty or hand at limit.
+void draw_one(CombatState& state);
+
+// Apply one debuff/power application to its target ('enemy_target' = decoded
+// enemy slot; ignored for Target::Character). Artifact negates a whole debuff
+// application; Entangle is SET, not accumulated (non-stacking, ROB-75).
+void apply_debuff(CombatState& state, const DebuffApplication& app,
+                  int enemy_target);
+void apply_power(CombatState& state, const PowerApplication& app,
+                 int enemy_target);
+
+}  // namespace minispire
