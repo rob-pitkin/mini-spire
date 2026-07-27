@@ -124,6 +124,15 @@ class MinispireEnv(gym.Env):
         inspection — not used in the training loop. See ROB-46."""
         return self._env.state_piles()
 
+    def choice_view(self):
+        """Return the pending mid-card choice, if any (Stage 4c).
+
+        `options[i]` is answered with action `FIRST_OPTION_SLOT + i`. The obs
+        already encodes this for the agent; this is the named-value form for
+        the TUI and for inspection — not used in the training loop.
+        """
+        return self._env.choice_view()
+
     def enemy_max_hps(self):
         """Per-enemy-slot max HP (the obs omits enemy max_hp; ROB-59). For the
         TUI's enemy HP bars — not used in the training loop."""

@@ -351,6 +351,61 @@ def render_hand(console: Console, env) -> list:
     return action_map
 
 
+# Human-readable prompt per ChoiceKind. Keyed by enum name so a new kind shows
+# up as a missing-key error rather than silently rendering the wrong prompt.
+CHOICE_PROMPTS = {
+    "UpgradeCardInHand": "Upgrade a card in your hand",
+    "HandToTopOfDraw": "Put a card from your hand on top of your draw pile",
+    "DiscardToTopOfDraw": "Put a card from your discard pile on top of your draw pile",
+    "ExhaustToHand": "Put a card from your exhaust pile into your hand",
+    "CopyAttackOrPowerInHand": "Choose an Attack or Power to copy",
+}
+
+
+def render_choice(console: Console, env) -> int:
+    """Render the pending-choice screen. Returns the number of options.
+
+    Local index i maps to the global action FIRST_OPTION_SLOT + i, so the
+    controller does not need its own mapping table.
+    """
+    view = env.choice_view()
+    prompt = CHOICE_PROMPTS.get(
+        view.kind.name, f"Choose a card ({view.kind.name})"
+    )
+
+    header = Text()
+    header.append(f"{_core.card_name(view.source_card)}: ", style="bold yellow")
+    header.append(prompt, style="bold white")
+    if view.copies > 1:
+        header.append(f"  (x{view.copies} copies)", style="yellow")
+
+    table = Table.grid(padding=(0, 3))
+    for _ in range(3):
+        table.add_column()
+    row: list[Text] = []
+    for i, card_id in enumerate(view.options):
+        data = _core.card_data(card_id)
+        entry = Text()
+        entry.append(f"({i}) ", style="bold white")
+        entry.append(f"{_core.card_name(card_id):<16}", style="white")
+        entry.append(f"{{{cost_str(data.cost)}}}", style="yellow")
+        row.append(entry)
+        if len(row) == 3:
+            table.add_row(*row)
+            row = []
+    if row:
+        while len(row) < 3:
+            row.append(Text(""))
+        table.add_row(*row)
+
+    body: list = [header, Text(""), table]
+    if view.is_optional:
+        body.append(Text(f"\n(s) skip", style="dim"))
+
+    console.print(Panel(Group(*body), border_style="yellow", title="CHOOSE"))
+    return len(view.options)
+
+
 def render_piles(console: Console, env) -> None:
     """Render the pile view (toggled with 'p'). Does not consume a step."""
     piles = env.state_piles()

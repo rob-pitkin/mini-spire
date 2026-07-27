@@ -31,6 +31,18 @@ struct StatePiles {
   std::vector<CardId> exhaust;
 };
 
+// Pending-choice accessor for the TUI (Stage 4c). The obs already encodes this
+// for the agent; the TUI wants it as named values rather than float offsets.
+// `options[i]` is answered with action FIRST_OPTION_SLOT + i.
+struct ChoiceView {
+  bool active = false;
+  ChoiceKind kind = ChoiceKind::None;
+  CardId source_card = CardId::Strike;
+  bool is_optional = false;
+  int copies = 1;
+  std::vector<CardId> options;
+};
+
 // CombatEnv wraps CombatState + TurnLoop into a Gym-shaped env that owns its
 // observation and action-mask buffers. The buffers are stable (never
 // reallocated) so the Python binding can expose them as zero-copy numpy
@@ -134,6 +146,10 @@ class CombatEnv {
 
   // Pile contents — for the Python TUI pile-view. Not used during training.
   StatePiles state_piles() const;
+
+  // The pending mid-card choice, if any (Stage 4c). For the TUI; not called
+  // per training step.
+  ChoiceView choice_view() const;
 
   // Per-enemy-slot max HP, in slot order. The observation intentionally omits
   // enemy max_hp (ROB-59), but the TUI needs it to draw enemy HP bars. Debug

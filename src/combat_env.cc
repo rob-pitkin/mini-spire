@@ -353,6 +353,20 @@ StatePiles CombatEnv::state_piles() const {
   return out;
 }
 
+ChoiceView CombatEnv::choice_view() const {
+  ChoiceView out;
+  const PendingChoice& pc = state_.pending_choice;
+  out.active = pc.active();
+  if (!out.active) return out;
+  out.kind = pc.kind;
+  out.source_card = pc.source_card;
+  out.is_optional = pc.is_optional;
+  out.copies = pc.copies;
+  out.options.reserve(pc.num_options);
+  for (int i = 0; i < pc.num_options; ++i) out.options.push_back(pc.options[i]);
+  return out;
+}
+
 std::vector<int> CombatEnv::enemy_max_hps() const {
   std::vector<int> out;
   out.reserve(state_.enemies.size());

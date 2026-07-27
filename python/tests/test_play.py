@@ -212,3 +212,43 @@ def test_parse_deck_rejects_unknown_card():
 
     with pytest.raises(SystemExit):
         _parse_deck("strike,notacard")
+
+
+# ---------------------------------------------------------------------------
+# Mid-card choices (Stage 4c). Per this file's convention we test the logic and
+# the engine-facing contract, not the rendered rich output.
+# ---------------------------------------------------------------------------
+
+
+def test_choice_prompts_cover_every_choice_kind():
+    """A new ChoiceKind must not silently render a fallback prompt."""
+    import minispire._core as _core
+    from minispire.render.screen import CHOICE_PROMPTS
+
+    for name in _core.ChoiceKind.__members__:
+        if name == "None":
+            continue
+        assert name in CHOICE_PROMPTS, f"no TUI prompt for ChoiceKind.{name}"
+
+
+def test_choice_view_is_inactive_during_normal_combat():
+    from minispire import MinispireEnv
+
+    env = MinispireEnv()
+    env.reset(seed=0)
+    view = env.choice_view()
+    assert view.active is False
+    assert list(view.options) == []
+
+
+def test_action_layout_constants_are_consistent():
+    """The TUI computes global actions from these; they must not drift."""
+    import minispire._core as _core
+
+    ce = _core.CombatEnv
+    assert ce.END_TURN_ACTION == ce.NUM_CARD_TYPES * ce.MAX_ENEMIES
+    assert ce.FIRST_OPTION_SLOT == ce.END_TURN_ACTION + 1
+    assert ce.DECLINE_ACTION == ce.FIRST_OPTION_SLOT + ce.NUM_OPTION_SLOTS
+    assert ce.NUM_ACTIONS == ce.DECLINE_ACTION + 1
+    # End turn is NOT the last index — the whole reason this bug class existed.
+    assert ce.END_TURN_ACTION != ce.NUM_ACTIONS - 1

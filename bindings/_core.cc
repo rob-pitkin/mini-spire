@@ -218,6 +218,22 @@ PYBIND11_MODULE(_core, m) {
       .def_readonly("discard", &StatePiles::discard)
       .def_readonly("exhaust", &StatePiles::exhaust);
 
+  // Mid-card choices (Stage 4c).
+  py::enum_<ChoiceKind>(m, "ChoiceKind")
+      .value("None", ChoiceKind::None)
+      .value("UpgradeCardInHand", ChoiceKind::UpgradeCardInHand)
+      .value("HandToTopOfDraw", ChoiceKind::HandToTopOfDraw)
+      .value("DiscardToTopOfDraw", ChoiceKind::DiscardToTopOfDraw)
+      .value("ExhaustToHand", ChoiceKind::ExhaustToHand)
+      .value("CopyAttackOrPowerInHand", ChoiceKind::CopyAttackOrPowerInHand);
+  py::class_<ChoiceView>(m, "ChoiceView")
+      .def_readonly("active", &ChoiceView::active)
+      .def_readonly("kind", &ChoiceView::kind)
+      .def_readonly("source_card", &ChoiceView::source_card)
+      .def_readonly("is_optional", &ChoiceView::is_optional)
+      .def_readonly("copies", &ChoiceView::copies)
+      .def_readonly("options", &ChoiceView::options);
+
   // Card data model (ROB-49 -> ROB-78) — lets the TUI render what each card does.
   py::enum_<Debuff>(m, "Debuff")
       .value("Vulnerable", Debuff::Vulnerable)
@@ -384,6 +400,10 @@ PYBIND11_MODULE(_core, m) {
           "Apply an action. Returns (obs, reward, terminated, truncated, info).")
       .def("action_mask", &mask_view,
            "Boolean mask of legal actions (length NUM_ACTIONS).")
+      .def("choice_view", &CombatEnv::choice_view,
+           "The pending mid-card choice, if any (Stage 4c). options[i] is "
+           "answered with action FIRST_OPTION_SLOT + i. For the TUI; "
+           "allocates, so not for the training loop.")
       .def("state_piles", &CombatEnv::state_piles,
            "Read pile contents (hand/draw/discard/exhaust) as CardId lists. "
            "Allocates — not for use in the training loop.")

@@ -181,6 +181,33 @@ def run(seed: int, ascii_only: bool, pool=None, deck=None) -> int:
             _log_state(log, env, obs)
 
             screen.render_fight(console, obs, env, ascii_only=ascii_only)
+
+            # A pending mid-card choice takes over the screen (Stage 4c): the
+            # engine has masked off every combat action until it is answered.
+            choice = env.choice_view()
+            if choice.active:
+                num_options = screen.render_choice(console, env)
+                try:
+                    raw = input("> ").strip()
+                except EOFError:
+                    return 2
+                if raw in ("q", "Q"):
+                    return 2
+                if raw in ("s", "S") and choice.is_optional:
+                    global_action = _core.CombatEnv.DECLINE_ACTION
+                else:
+                    try:
+                        pick = int(raw)
+                    except ValueError:
+                        continue  # re-prompt
+                    if not (0 <= pick < num_options):
+                        continue  # re-prompt
+                    global_action = _core.CombatEnv.FIRST_OPTION_SLOT + pick
+                turn_before = int(obs[screen.TURN_NUMBER])
+                obs, reward, terminated, truncated, _info = env.step(global_action)
+                _log_action(log, turn_before, global_action, reward, terminated)
+                continue
+
             if pile_view:
                 screen.render_piles(console, env)
                 action_map: list = []
