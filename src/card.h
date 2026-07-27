@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <unordered_map>
 #include <vector>
 
@@ -278,6 +279,46 @@ inline const std::unordered_map<CardId, CardId> CARD_UPGRADES = {
 inline bool is_upgradable(CardId id) {
   return CARD_UPGRADES.count(id) > 0;
 }
+
+// ---------------------------------------------------------------------------
+// Mid-resolution player choices (Stage 4c; docs/design/decision-points.md).
+//
+// Every choice is "pick 1 of N from a labeled set". The engine builds the
+// candidate list (applying each card's filter and the canonical ordering), the
+// mask exposes it, and resolve_choice() consumes the answer. v2.0.0's
+// non-combat decisions become new ChoiceKind values with no interface change.
+// ---------------------------------------------------------------------------
+
+enum class ChoiceKind {
+  None,
+  UpgradeCardInHand,        // Armaments: upgrade a card in hand
+  HandToTopOfDraw,          // Warcry: put a hand card on top of the draw pile
+  DiscardToTopOfDraw,       // Headbutt: discard pile -> top of draw
+  ExhaustToHand,            // Exhume: exhaust pile -> hand
+  CopyAttackOrPowerInHand,  // Dual Wield: copy an Attack/Power in hand
+  // v2.0.0 (map / shop / events) appends here — no encoding change.
+};
+
+// Upper bound on simultaneous options. Set to kNumCardTypes so a pile choice
+// can NEVER overflow: a pile cannot hold more distinct card types than exist.
+// This makes truncation — which would be a parity violation, since a human can
+// pick any card — structurally impossible rather than merely unlikely.
+inline constexpr int kNumOptionSlots = kNumCardTypes;
+
+// The suspended-choice record. POD with a fixed array (no heap) so
+// CombatState::clone() stays a plain copy and MCTS can branch on a paused
+// state. Options are DEDUPLICATED distinct card types in ascending CardId
+// order — the canonical ordering is part of the public interface, since slot
+// indices are actions.
+struct PendingChoice {
+  ChoiceKind kind = ChoiceKind::None;
+  CardId source_card = CardId::Strike;  // the card that caused the pause
+  bool is_optional = false;             // may the agent decline?
+  int num_options = 0;
+  std::array<CardId, kNumOptionSlots> options{};
+
+  bool active() const { return kind != ChoiceKind::None; }
+};
 
 // The upgraded form of `id`, or `id` itself if it cannot be upgraded. Total —
 // never throws, so callers that upgrade a whole pile need no per-card guard.

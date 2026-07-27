@@ -55,6 +55,7 @@ if(MINISPIRE_BUILD_TESTS AND NOT SKBUILD)
   add_executable(minispire_tests
     tests/test_helpers.cc
     tests/test_card.cc
+    tests/test_choice.cc
     tests/test_enemy.cc
     tests/test_combat_state.cc
     tests/test_turn_loop.cc

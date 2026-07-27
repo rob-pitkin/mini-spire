@@ -472,6 +472,17 @@ bool valid_enemy_slot(const CombatState& state, int slot) {
   return slot >= 0 && slot < static_cast<int>(state.enemies.size());
 }
 
+// Remove one instance of `id` from a pile. Returns false if absent.
+bool take_from_pile(std::vector<Card>& pile, CardId id) {
+  for (auto it = pile.begin(); it != pile.end(); ++it) {
+    if (it->card_id == id) {
+      pile.erase(it);
+      return true;
+    }
+  }
+  return false;
+}
+
 // Apply fixed (thorns-type) damage to one enemy: no Strength/Weak/Vulnerable
 // modifiers, but block still absorbs it (verified: the wiki speaks of
 // "unblocked damage" from such sources). Fires the ANY-damage hook family —
@@ -702,6 +713,57 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         }
       }
       break;
+    case ActionKind::RequestChoice: {
+      // Build the candidate list. If nothing qualifies, the choice is simply
+      // skipped — StS plays the card, the choice just has no legal target
+      // (e.g. Exhume with an empty exhaust pile). No pause, drain continues.
+      PendingChoice pc = build_choice(state, static_cast<ChoiceKind>(a.amount),
+                                      a.card);
+      if (pc.num_options == 0) break;
+      state.pending_choice = pc;
+      // The drain loop sees the active choice and suspends the remainder.
+      break;
+    }
+    case ActionKind::ApplyChoice: {
+      const ChoiceKind kind = static_cast<ChoiceKind>(a.amount);
+      switch (kind) {
+        case ChoiceKind::UpgradeCardInHand:
+          // Armaments: replace one copy in hand with its upgraded form.
+          for (Card& c : state.current_hand) {
+            if (c.card_id == a.card) {
+              c.card_id = upgraded_card(a.card);
+              break;
+            }
+          }
+          break;
+        case ChoiceKind::HandToTopOfDraw:
+          // Warcry: hand -> top of draw. `back()` is the top (draw_one pops it).
+          if (take_from_pile(state.current_hand, a.card)) {
+            state.draw_pile.push_back(Card{a.card});
+          }
+          break;
+        case ChoiceKind::DiscardToTopOfDraw:
+          // Headbutt: discard -> top of draw.
+          if (take_from_pile(state.discard_pile, a.card)) {
+            state.draw_pile.push_back(Card{a.card});
+          }
+          break;
+        case ChoiceKind::ExhaustToHand:
+          // Exhume: exhaust -> hand. The exhaust pile only grows otherwise
+          // (Rob's invariant), and this is the one sanctioned removal.
+          if (take_from_pile(state.exhaust_pile, a.card)) {
+            state.current_hand.push_back(Card{a.card});
+          }
+          break;
+        case ChoiceKind::CopyAttackOrPowerInHand:
+          // Dual Wield: ADD a copy; the original stays in hand.
+          state.current_hand.push_back(Card{a.card});
+          break;
+        case ChoiceKind::None:
+          break;
+      }
+      break;
+    }
     case ActionKind::DiscardHand:
       // End of the player's turn: unplayed Ethereal cards exhaust (ROB-65
       // Dazed), the rest discard. Routed through the executors so an ethereal
@@ -738,11 +800,124 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
 
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// Mid-card choices (Stage 4c)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Does this card qualify as an option for `kind`?
+bool card_qualifies(ChoiceKind kind, CardId id) {
+  const CardData& d = CARD_DATABASE.at(id);
+  switch (kind) {
+    case ChoiceKind::UpgradeCardInHand:
+      return is_upgradable(id);  // already-upgraded and Status cards excluded
+    case ChoiceKind::CopyAttackOrPowerInHand:
+      return d.type == CardType::Attack || d.type == CardType::Power;
+    case ChoiceKind::HandToTopOfDraw:
+    case ChoiceKind::DiscardToTopOfDraw:
+    case ChoiceKind::ExhaustToHand:
+      return true;  // any card in the source pile
+    case ChoiceKind::None:
+      return false;
+  }
+  return false;
+}
+
+// Which pile does this choice draw its options from?
+const std::vector<Card>& source_pile(const CombatState& state,
+                                     ChoiceKind kind) {
+  switch (kind) {
+    case ChoiceKind::DiscardToTopOfDraw: return state.discard_pile;
+    case ChoiceKind::ExhaustToHand:      return state.exhaust_pile;
+    case ChoiceKind::UpgradeCardInHand:
+    case ChoiceKind::HandToTopOfDraw:
+    case ChoiceKind::CopyAttackOrPowerInHand:
+    case ChoiceKind::None:
+      break;
+  }
+  return state.current_hand;
+}
+
+}  // namespace
+
+PendingChoice build_choice(const CombatState& state, ChoiceKind kind,
+                           CardId source_card) {
+  PendingChoice pc;
+  pc.kind = kind;
+  pc.source_card = source_card;
+  if (kind == ChoiceKind::None) return pc;
+
+  // Dedupe to distinct card types: two identical cards are interchangeable, so
+  // offering both would be two indistinguishable actions.
+  std::array<bool, kNumCardTypes> seen{};
+  for (const Card& c : source_pile(state, kind)) {
+    const int idx = static_cast<int>(c.card_id);
+    if (idx < 0 || idx >= kNumCardTypes || seen[idx]) continue;
+    if (!card_qualifies(kind, c.card_id)) continue;
+    seen[idx] = true;
+  }
+  // Ascending CardId — the canonical ordering (public interface: slot indices
+  // are actions, so this ordering must be deterministic and documented).
+  for (int i = 0; i < kNumCardTypes; ++i) {
+    if (seen[i]) pc.options[pc.num_options++] = static_cast<CardId>(i);
+  }
+  return pc;
+}
+
+bool resolve_choice(CombatState& state, int option_index) {
+  PendingChoice& pc = state.pending_choice;
+  if (!pc.active()) return false;
+
+  // Validate before mutating, so a bad index can't corrupt a paused state.
+  const bool declining = option_index == kDeclineChoice;
+  if (declining) {
+    if (!pc.is_optional) return false;
+  } else if (option_index < 0 || option_index >= pc.num_options) {
+    return false;
+  }
+
+  const ChoiceKind kind = pc.kind;
+  const CardId chosen = declining ? CardId::Strike : pc.options[option_index];
+
+  // Clear the pause BEFORE resuming: the resumed drain may itself request
+  // another choice (v2's nested rest site), which needs a clean slot.
+  pc = PendingChoice{};
+
+  ActionQueue q = state.suspended_queue;
+  state.suspended_queue = ActionQueue{};
+
+  if (!declining) {
+    Action a;
+    a.kind = ActionKind::ApplyChoice;
+    a.card = chosen;
+    a.amount = static_cast<int>(kind);
+    q.push_front(a);  // the choice applies before the card's remaining actions
+  }
+
+  ResolutionContext ctx;
+  drain(state, q, ctx);
+  return true;
+}
+
 void drain(CombatState& state, ActionQueue& q, ResolutionContext& ctx) {
   while (!q.empty()) {
     Action a = q.pop_front();
     execute(state, a, q, ctx);
-    if (state.outcome != Outcome::InProgress) return;  // terminal short-circuit
+    if (state.outcome != Outcome::InProgress) {
+      // Terminal short-circuit. A fight that ended mid-resolution discards any
+      // pending choice: death takes precedence, and answering a choice on a
+      // finished fight is meaningless.
+      state.pending_choice = PendingChoice{};
+      state.suspended_queue = ActionQueue{};
+      return;
+    }
+    if (state.pending_choice.active()) {
+      // A RequestChoice executor armed a pause. Park the not-yet-executed
+      // remainder; resolve_choice() resumes exactly here (Stage 4c).
+      state.suspended_queue = q;
+      return;
+    }
   }
 }
 

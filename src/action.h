@@ -5,6 +5,7 @@
 #include <optional>
 #include <unordered_map>
 
+#include "action_types.h"  // Action, ActionQueue, kPlayerSlot, get_status
 #include "card.h"
 #include "combat_state.h"
 #include "enemy.h"
@@ -24,111 +25,6 @@
 
 namespace minispire {
 
-// Entity addressing: enemy slot index, or kPlayerSlot for the player.
-// kNoSlot marks an unused actor/target field.
-inline constexpr int kPlayerSlot = -1;
-inline constexpr int kNoSlot = -2;
-
-// Helper: look up a stack count in a debuff/power map, returning 0 if absent.
-template <typename Effect>
-int get_status(const std::unordered_map<Effect, int>& m, Effect e) {
-  auto it = m.find(e);
-  return it == m.end() ? 0 : it->second;
-}
-
-// ---------------------------------------------------------------------------
-// Actions
-// ---------------------------------------------------------------------------
-
-enum class ActionKind {
-  // Mutations
-  DealDamage,   // actor attacks target for `amount` base damage (one hit)
-  DealFixedDamage,  // thorns-type damage (Juggernaut, Combust, Fire Breathing,
-                    // Flame Barrier): ignores Strength/Weak/Vulnerable, but IS
-                    // absorbed by block. Fires no attack-only enemy triggers.
-  DamageAllEnemies,   // fan out fixed damage to every living enemy (Combust,
-                      // Fire Breathing) — expands at execution so the target
-                      // set is current
-  DamageRandomEnemy,  // fixed damage to one uniformly-random living enemy
-                      // (Juggernaut) — rolled at execution, per trigger
-  LoseHp,       // direct player HP loss — bypasses block, can kill (ROB-80)
-  GainBlock,    // target gains `amount` block; card_block applies Dex/Frail
-  GainEnergy,   // player gains `amount` energy
-  DrawCards,    // player draws `amount` cards
-  ApplyDebuff,  // apply debuff x amount to target (Artifact-checked)
-  ApplyPower,   // apply power x amount to target
-  RemovePower,  // erase `power` from target (Lagavulin's Metallicize on wake)
-  RewriteIntent,  // set target's last_move = move (interrupt the queued intent)
-  Wake,           // set target's is_asleep = false
-  ExhaustCard,    // put `card` in the exhaust pile (played or generated)
-  DiscardCard,    // put `card` in the discard pile
-  EnemyEscape,    // target flees: hp -> 0, NOT a death (no on-death; ROB-74)
-  EnemySplit,     // target dies and spawns its split_children at its current
-                  // HP (ROB-64) — the reallocation is one flat executor step
-  // Bookkeeping
-  CardPlayedHook,  // fire Hook::CardPlayed listeners for `card` (Enrage, Rage)
-  CheckDeath,      // process deaths recorded this resolution (on-death,
-                   // became-last) — replaces the hand-rolled died_slots deferral
-  DiscardHand,     // end of turn: ethereal cards exhaust, the rest discard
-                   // (routed through the executors so Feel No Pain / Dark
-                   // Embrace see the exhausts)
-};
-
-// A small, clone-safe tagged value. No closures, no pointers into state —
-// actors and targets are slot indices / enums. Extend fields as kinds demand
-// (POD only).
-struct Action {
-  ActionKind kind;
-  int actor = kNoSlot;   // damage source: kPlayerSlot or an enemy slot
-  int target = kNoSlot;  // recipient: kPlayerSlot or an enemy slot
-  int amount = 0;
-  CardId card = CardId::Strike;    // for card-carrying kinds
-  // Strength multiplier for this hit (Heavy Blade's 3x/5x, Stage 4b). Set from
-  // the card at translation; 1 for enemy attacks and fixed damage, which have
-  // no card. Explicit rather than re-derived from `card`, whose default would
-  // silently stand in for "no card".
-  int strength_mult = 1;
-  Debuff debuff = Debuff::None;    // ApplyDebuff payload
-  Power power = Power::None;       // ApplyPower / RemovePower payload
-  MoveName move = MoveName::None;  // RewriteIntent payload
-  bool card_block = false;  // GainBlock from a played card: apply Dex/Frail
-};
-
-// Fixed-capacity ring buffer (no steady-state allocation — constraint §3.3).
-// push_back ≈ StS addToBottom (the default); push_front ≈ addToTop
-// ("immediately next"). Capacity covers the worst realistic card (X-cost
-// multi-hit AoE at high energy) with a wide margin; overflow is a bug.
-class ActionQueue {
- public:
-  bool empty() const { return count_ == 0; }
-
-  void push_back(const Action& a) {
-    assert(count_ < kCapacity && "ActionQueue overflow");
-    buf_[(head_ + count_) % kCapacity] = a;
-    ++count_;
-  }
-
-  void push_front(const Action& a) {
-    assert(count_ < kCapacity && "ActionQueue overflow");
-    head_ = (head_ + kCapacity - 1) % kCapacity;
-    buf_[head_] = a;
-    ++count_;
-  }
-
-  Action pop_front() {
-    assert(count_ > 0 && "pop from empty ActionQueue");
-    Action a = buf_[head_];
-    head_ = (head_ + 1) % kCapacity;
-    --count_;
-    return a;
-  }
-
- private:
-  static constexpr int kCapacity = 128;
-  std::array<Action, kCapacity> buf_;
-  int head_ = 0;
-  int count_ = 0;
-};
 
 // Per-resolution scratch state (local to one drain, like the queue itself —
 // never stored in CombatState). Deaths are recorded by the DealDamage executor
@@ -241,5 +137,28 @@ void apply_debuff(CombatState& state, const DebuffApplication& app,
                   int enemy_target);
 void apply_power(CombatState& state, const PowerApplication& app,
                  int enemy_target);
+
+// ---------------------------------------------------------------------------
+// Mid-card choices (Stage 4c; docs/design/decision-points.md)
+// ---------------------------------------------------------------------------
+
+// Build the candidate list for `kind`: applies the per-card filter, dedupes to
+// distinct card types, and sorts ascending by CardId (the canonical ordering,
+// which is public interface because slot indices are actions). Returns the
+// populated PendingChoice; `num_options == 0` means no legal option exists.
+PendingChoice build_choice(const CombatState& state, ChoiceKind kind,
+                           CardId source_card);
+
+// Answer a pending choice and resume the suspended drain. `option_index` is an
+// index into pending_choice.options; pass kDeclineChoice to decline an optional
+// choice. Returns false (leaving the state untouched) if there is no active
+// choice or the index is illegal — so callers can't corrupt a paused state.
+//
+// Public because all three consumers use it: the RL step path, the TUI's choice
+// screen, and tests.
+bool resolve_choice(CombatState& state, int option_index);
+
+// Sentinel for "decline" (Warcry-style optional choices, v2's skip).
+inline constexpr int kDeclineChoice = -1;
 
 }  // namespace minispire
