@@ -93,8 +93,12 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
 
   // 2. The played card leaves the hand now — it is "in flight" during
   // resolution (StS) and rejoins a pile via the queued ExhaustCard/DiscardCard.
+  // The INSTANCE is captured, not just the id: Rampage's accumulated bonus and
+  // Searing Blow's upgrade count ride on the copy and must survive back into
+  // the pile it lands in.
   const int idx = find_first_in_hand(state.current_hand, card_id);
   assert(idx >= 0 && "mask should have rejected this action");
+  Card played = state.current_hand[idx];
   state.current_hand.erase(state.current_hand.begin() + idx);
 
   // The set of enemy slots this card resolves against.
@@ -145,7 +149,14 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   // Base damage is a QUERY: Body Slam reads current block, Perfected Strike
   // counts Strikes in the deck. Resolved here (at play time) so a mid-card
   // change can't retroactively alter the queued hits.
-  const int card_damage = base_card_damage(state, card_id);
+  // Damage is read from the INSTANCE (Rampage's accumulated bonus, Searing
+  // Blow's upgrade count) BEFORE Rampage's growth is applied below — the card
+  // reads "deal 8 damage, [then] increase this card's damage by 5".
+  const int card_damage = instance_card_damage(state, played);
+  // Rampage: this copy permanently gains damage for the rest of the combat.
+  // Applied after the damage read, before the pile move, so the growth rides
+  // back into the pile on this instance.
+  played.bonus_damage += data.bonus_damage_per_play;
   if (card_damage > 0) {
     // One DealDamage per hit per target; a multi-hit AoE (Whirlwind) sweeps
     // all targets each swing. Damage math runs at execution (Strength per hit).
@@ -253,6 +264,10 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
                          ? ActionKind::ExhaustCard
                          : ActionKind::DiscardCard;
     pile_move.card = card_id;
+    // Carry the instance so Rampage's growth (and Searing Blow's upgrades)
+    // return to the pile with this copy.
+    pile_move.card_bonus_damage = played.bonus_damage;
+    pile_move.card_upgrades = played.upgrades;
     has_pile_move = true;
     if (!defers_pile_move) q.push_back(pile_move);
   }

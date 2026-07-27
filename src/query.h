@@ -35,6 +35,11 @@ bool can_draw(const CombatState& state);
 // deck. Cards with no special rule return data.damage unchanged.
 int base_card_damage(const CombatState& state, CardId card);
 
+// As above, but for a specific card INSTANCE — the only correct entry point
+// for cards whose damage depends on the copy (Rampage's accumulated bonus,
+// Searing Blow's upgrade count). Falls back to base_card_damage for the rest.
+int instance_card_damage(const CombatState& state, const Card& card);
+
 // The Strength multiplier applied to a card's damage: Heavy Blade counts
 // Strength 3x (5x upgraded), everything else 1x. Kept separate from
 // base_card_damage because Strength is applied inside compute_attack_damage.

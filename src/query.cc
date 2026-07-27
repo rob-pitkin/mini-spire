@@ -76,6 +76,19 @@ int base_card_damage(const CombatState& state, CardId card) {
   return data.damage;
 }
 
+int instance_card_damage(const CombatState& state, const Card& card) {
+  const CardData& data = CARD_DATABASE.at(card.card_id);
+  if (data.damage_rule == DamageRule::SearingBlow) {
+    // n(n+7)/2 + 12 at n upgrades — matches the wiki's published progression
+    // (12, 16, 21, 27, 34, 42, ...). Unbounded by design.
+    const int n = card.upgrades;
+    return n * (n + 7) / 2 + 12;
+  }
+  // Rampage's accumulated bonus rides on the instance; every other rule is
+  // type-level.
+  return base_card_damage(state, card.card_id) + card.bonus_damage;
+}
+
 int strength_multiplier(CardId card) {
   // Heavy Blade: Strength affects it 3x (5x upgraded).
   const int m = CARD_DATABASE.at(card).strength_mult;

@@ -96,11 +96,38 @@ TEST(CardUpgrades, EveryBaseCardIsUpgradable) {
 
 TEST(CardUpgrades, UpgradedAndStatusCardsAreNotUpgradable) {
   // StS: you cannot upgrade an already-upgraded card, nor a Status card.
+  // Searing Blow is the documented exception — it upgrades without limit via
+  // its instance counter, so even Searing Blow+ stays upgradable.
   for (const auto& [id, d] : CARD_DATABASE) {
+    if (is_instance_upgradable(id)) continue;
     if (name_is_upgraded(d) || d.type == CardType::Status) {
       EXPECT_FALSE(is_upgradable(id)) << "should not be upgradable: " << d.name;
     }
   }
+}
+
+TEST(CardUpgrades, SearingBlowUpgradesWithoutLimitOnTheInstance) {
+  // The one card whose upgrades live on the copy rather than in CARD_UPGRADES.
+  EXPECT_TRUE(is_instance_upgradable(CardId::SearingBlow));
+  EXPECT_TRUE(is_instance_upgradable(CardId::SearingBlowPlus));
+  EXPECT_TRUE(is_upgradable(CardId::SearingBlowPlus));  // unlike other "+"
+  EXPECT_EQ(CARD_UPGRADES.count(CardId::SearingBlow), 0u);
+
+  Card c{CardId::SearingBlow};
+  for (int i = 1; i <= 5; ++i) {
+    ASSERT_TRUE(upgrade_card_in_place(c));
+    EXPECT_EQ(c.card_id, CardId::SearingBlow);  // id never changes
+    EXPECT_EQ(c.upgrades, i);                   // the counter does
+  }
+}
+
+TEST(CardUpgrades, UpgradeInPlaceSwapsIdForNormalCards) {
+  Card c{CardId::Strike};
+  ASSERT_TRUE(upgrade_card_in_place(c));
+  EXPECT_EQ(c.card_id, CardId::StrikePlus);
+  EXPECT_EQ(c.upgrades, 0);  // normal cards don't use the counter
+  // A "+" card cannot be upgraded again.
+  EXPECT_FALSE(upgrade_card_in_place(c));
 }
 
 TEST(CardUpgrades, EveryMappingGoesToItsOwnPlusForm) {
@@ -125,6 +152,7 @@ TEST(CardUpgrades, NoTwoCardsShareAnUpgradeTarget) {
 TEST(CardUpgrades, UpgradedCardIsTotalAndIdentityWhenNotUpgradable) {
   // upgraded_card never fails: callers upgrading a whole pile need no guard.
   for (const auto& [id, d] : CARD_DATABASE) {
+    if (is_instance_upgradable(id)) continue;  // upgrades via the instance
     if (is_upgradable(id)) {
       EXPECT_EQ(upgraded_card(id), CARD_UPGRADES.at(id));
     } else {
@@ -141,7 +169,7 @@ TEST(CardUpgrades, KnownPairsAreCorrect) {
   EXPECT_EQ(upgraded_card(CardId::Whirlwind), CardId::WhirlwindPlus);
   EXPECT_EQ(upgraded_card(CardId::DemonForm), CardId::DemonFormPlus);
   EXPECT_EQ(upgraded_card(CardId::Corruption), CardId::CorruptionPlus);
-  EXPECT_EQ(CARD_UPGRADES.size(), 55u);
+  EXPECT_EQ(CARD_UPGRADES.size(), 56u);  // +Rampage (Searing Blow is instance)
   // Status cards: not upgradable (StS).
   EXPECT_FALSE(is_upgradable(CardId::Slimed));
   EXPECT_FALSE(is_upgradable(CardId::Dazed));

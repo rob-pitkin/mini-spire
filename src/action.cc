@@ -475,18 +475,20 @@ bool valid_enemy_slot(const CombatState& state, int slot) {
 // Add a card to the hand, overflowing to the DISCARD pile if the hand is full
 // (StS: "if a copy surpasses the hand size limit, it goes to the discard pile"
 // — verified for Dual Wield; the same limit applies to Exhume).
-void add_card_to_hand(CombatState& state, CardId id) {
+void add_card_to_hand(CombatState& state, const Card& card) {
   if (static_cast<int>(state.current_hand.size()) >= HAND_SIZE_LIMIT) {
-    move_to_discard(state, Card{id});
+    move_to_discard(state, card);
   } else {
-    state.current_hand.push_back(Card{id});
+    state.current_hand.push_back(card);
   }
 }
 
-// Remove one instance of `id` from a pile. Returns false if absent.
-bool take_from_pile(std::vector<Card>& pile, CardId id) {
+// Remove one copy MATCHING `card` (id and instance state) from a pile.
+// Returns false if absent. Matching the instance matters once two copies of a
+// card can differ — taking an arbitrary one would be the wrong card.
+bool take_from_pile(std::vector<Card>& pile, const Card& card) {
   for (auto it = pile.begin(); it != pile.end(); ++it) {
-    if (it->card_id == id) {
+    if (it->same_as(card)) {
       pile.erase(it);
       return true;
     }
@@ -673,12 +675,12 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       }
       break;
     case ActionKind::ExhaustCard:
-      move_to_exhaust(state, Card{a.card});
+      move_to_exhaust(state, a.as_card());
       // Feel No Pain / Dark Embrace: whenever a card is exhausted.
       fire_player_power_hooks(state, Hook::CardExhausted, q, a.card);
       break;
     case ActionKind::DiscardCard:
-      move_to_discard(state, Card{a.card});
+      move_to_discard(state, a.as_card());
       break;
     case ActionKind::EnemyEscape:
       // Escape (ROB-74): the enemy flees by setting its own hp to 0. It leaves
@@ -740,7 +742,9 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         // step whose mask has a single legal action.
         Action apply;
         apply.kind = ActionKind::ApplyChoice;
-        apply.card = pc.options[0];
+        apply.card = pc.options[0].card_id;
+        apply.card_bonus_damage = pc.options[0].bonus_damage;
+        apply.card_upgrades = pc.options[0].upgrades;
         apply.amount = a.amount;
         apply.copies = pc.copies;
         q.push_front(apply);
@@ -752,38 +756,43 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
     }
     case ActionKind::ApplyChoice: {
       const ChoiceKind kind = static_cast<ChoiceKind>(a.amount);
+      // The chosen INSTANCE: matching on the id alone would grab an arbitrary
+      // copy, which is wrong once two Rampages differ.
+      const Card chosen = a.as_card();
       switch (kind) {
         case ChoiceKind::UpgradeCardInHand:
-          // Armaments: replace one copy in hand with its upgraded form.
+          // Armaments: upgrade one matching copy in hand, in place (Searing
+          // Blow bumps its counter rather than swapping id).
           for (Card& c : state.current_hand) {
-            if (c.card_id == a.card) {
-              c.card_id = upgraded_card(a.card);
+            if (c.same_as(chosen)) {
+              upgrade_card_in_place(c);
               break;
             }
           }
           break;
         case ChoiceKind::HandToTopOfDraw:
           // Warcry: hand -> top of draw. `back()` is the top (draw_one pops it).
-          if (take_from_pile(state.current_hand, a.card)) {
-            state.draw_pile.push_back(Card{a.card});
+          if (take_from_pile(state.current_hand, chosen)) {
+            state.draw_pile.push_back(chosen);
           }
           break;
         case ChoiceKind::DiscardToTopOfDraw:
           // Headbutt: discard -> top of draw.
-          if (take_from_pile(state.discard_pile, a.card)) {
-            state.draw_pile.push_back(Card{a.card});
+          if (take_from_pile(state.discard_pile, chosen)) {
+            state.draw_pile.push_back(chosen);
           }
           break;
         case ChoiceKind::ExhaustToHand:
           // Exhume: exhaust -> hand. The exhaust pile only grows otherwise
           // (Rob's invariant), and this is the one sanctioned removal.
-          if (take_from_pile(state.exhaust_pile, a.card)) {
-            add_card_to_hand(state, a.card);
+          if (take_from_pile(state.exhaust_pile, chosen)) {
+            add_card_to_hand(state, chosen);
           }
           break;
         case ChoiceKind::CopyAttackOrPowerInHand:
           // Dual Wield: ADD copies; the original stays in hand. The + adds 2.
-          for (int i = 0; i < a.copies; ++i) add_card_to_hand(state, a.card);
+          // Copies inherit the instance state (a copied +10 Rampage is +10).
+          for (int i = 0; i < a.copies; ++i) add_card_to_hand(state, chosen);
           break;
         case ChoiceKind::None:
           break;
@@ -874,20 +883,31 @@ PendingChoice build_choice(const CombatState& state, ChoiceKind kind,
   pc.source_card = source_card;
   if (kind == ChoiceKind::None) return pc;
 
-  // Dedupe to distinct card types: two identical cards are interchangeable, so
-  // offering both would be two indistinguishable actions.
-  std::array<bool, kNumCardTypes> seen{};
+  // Dedupe INTERCHANGEABLE copies. Two cards collapse into one option only if
+  // they play identically — same id AND same instance state — so a Rampage at
+  // +10 and one at +0 are two distinct, separately selectable options.
   for (const Card& c : source_pile(state, kind)) {
-    const int idx = static_cast<int>(c.card_id);
-    if (idx < 0 || idx >= kNumCardTypes || seen[idx]) continue;
     if (!card_qualifies(kind, c.card_id)) continue;
-    seen[idx] = true;
+    bool already = false;
+    for (int i = 0; i < pc.num_options; ++i) {
+      if (pc.options[i].same_as(c)) {
+        already = true;
+        break;
+      }
+    }
+    if (already) continue;
+    assert(pc.num_options < kNumOptionSlots);
+    pc.options[pc.num_options++] = c;
   }
-  // Ascending CardId — the canonical ordering (public interface: slot indices
-  // are actions, so this ordering must be deterministic and documented).
-  for (int i = 0; i < kNumCardTypes; ++i) {
-    if (seen[i]) pc.options[pc.num_options++] = static_cast<CardId>(i);
-  }
+  // Canonical ordering (public interface: slot indices are actions, so it must
+  // be deterministic and documented): ascending CardId, then ascending
+  // instance state so two copies of one card have a stable relative order.
+  std::sort(pc.options.begin(), pc.options.begin() + pc.num_options,
+            [](const Card& a, const Card& b) {
+              if (a.card_id != b.card_id) return a.card_id < b.card_id;
+              if (a.upgrades != b.upgrades) return a.upgrades < b.upgrades;
+              return a.bonus_damage < b.bonus_damage;
+            });
   return pc;
 }
 
@@ -905,7 +925,8 @@ bool resolve_choice(CombatState& state, int option_index) {
 
   const ChoiceKind kind = pc.kind;
   const int copies = pc.copies;
-  const CardId chosen = declining ? CardId::Strike : pc.options[option_index];
+  const Card chosen =
+      declining ? Card{CardId::Strike} : pc.options[option_index];
 
   // Clear the pause BEFORE resuming: the resumed drain may itself request
   // another choice (v2's nested rest site), which needs a clean slot.
@@ -917,7 +938,9 @@ bool resolve_choice(CombatState& state, int option_index) {
   if (!declining) {
     Action a;
     a.kind = ActionKind::ApplyChoice;
-    a.card = chosen;
+    a.card = chosen.card_id;
+    a.card_bonus_damage = chosen.bonus_damage;
+    a.card_upgrades = chosen.upgrades;
     a.amount = static_cast<int>(kind);
     a.copies = copies;
     q.push_front(a);  // the choice applies before the card's remaining actions

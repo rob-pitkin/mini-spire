@@ -90,6 +90,15 @@ struct Action {
   MoveName move = MoveName::None;  // RewriteIntent payload
   bool card_block = false;  // GainBlock from a played card: apply Dex/Frail
   int copies = 1;  // ApplyChoice: how many copies to add (Dual Wield+ = 2)
+  // Per-instance card state for card-moving kinds (ExhaustCard, DiscardCard,
+  // AddCardToPile). Carried alongside `card` so a Rampage returning to the
+  // discard pile keeps its accumulated bonus, and an upgraded Searing Blow
+  // keeps its counter. Zero for cards with no instance state.
+  int card_bonus_damage = 0;
+  int card_upgrades = 0;
+
+  // Rebuild the card instance this action carries.
+  Card as_card() const { return Card{card, card_bonus_damage, card_upgrades}; }
 };
 
 // Fixed-capacity ring buffer (no steady-state allocation — constraint §3.3).

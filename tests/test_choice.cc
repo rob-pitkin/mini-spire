@@ -4,6 +4,7 @@
 #include "card.h"
 #include "combat_env.h"
 #include "combat_state.h"
+#include "query.h"
 #include "test_helpers.h"
 #include "turn_loop.h"
 
@@ -57,8 +58,8 @@ TEST(Choice, BuildChoiceDedupesAndSortsAscending) {
       build_choice(s, ChoiceKind::HandToTopOfDraw, CardId::Strike);
 
   ASSERT_EQ(pc.num_options, 2);
-  EXPECT_EQ(pc.options[0], CardId::Strike);  // ascending CardId order
-  EXPECT_EQ(pc.options[1], CardId::Bash);
+  EXPECT_EQ(pc.options[0].card_id, CardId::Strike);  // ascending CardId order
+  EXPECT_EQ(pc.options[1].card_id, CardId::Bash);
 }
 
 TEST(Choice, UpgradeFilterExcludesUpgradedAndStatusCards) {
@@ -71,7 +72,7 @@ TEST(Choice, UpgradeFilterExcludesUpgradedAndStatusCards) {
       build_choice(s, ChoiceKind::UpgradeCardInHand, kSourceStandIn);
 
   ASSERT_EQ(pc.num_options, 1);
-  EXPECT_EQ(pc.options[0], CardId::Strike);
+  EXPECT_EQ(pc.options[0].card_id, CardId::Strike);
 }
 
 TEST(Choice, DualWieldFilterKeepsOnlyAttacksAndPowers) {
@@ -85,7 +86,7 @@ TEST(Choice, DualWieldFilterKeepsOnlyAttacksAndPowers) {
 
   ASSERT_EQ(pc.num_options, 2);
   for (int i = 0; i < pc.num_options; ++i) {
-    const CardType t = CARD_DATABASE.at(pc.options[i]).type;
+    const CardType t = CARD_DATABASE.at(pc.options[i].card_id).type;
     EXPECT_TRUE(t == CardType::Attack || t == CardType::Power);
   }
 }
@@ -104,11 +105,11 @@ TEST(Choice, ChoicesReadTheCorrectSourcePile) {
       build_choice(s, ChoiceKind::ExhaustToHand, CardId::Strike);
 
   ASSERT_EQ(hand.num_options, 1);
-  EXPECT_EQ(hand.options[0], CardId::Strike);
+  EXPECT_EQ(hand.options[0].card_id, CardId::Strike);
   ASSERT_EQ(discard.num_options, 1);
-  EXPECT_EQ(discard.options[0], CardId::Bash);
+  EXPECT_EQ(discard.options[0].card_id, CardId::Bash);
   ASSERT_EQ(exhaust.num_options, 1);
-  EXPECT_EQ(exhaust.options[0], CardId::Defend);
+  EXPECT_EQ(exhaust.options[0].card_id, CardId::Defend);
 }
 
 TEST(Choice, RequestChoiceSuspendsTheRestOfTheQueue) {
@@ -248,7 +249,7 @@ TEST(Choice, WarcryMovesAHandCardToTopOfDraw) {
 
   request_choice_then_marker(s, ChoiceKind::HandToTopOfDraw, CardId::Strike);
   // Options are ascending by CardId: [Strike, Bash]. Pick Bash (index 1).
-  ASSERT_EQ(s.pending_choice.options[1], CardId::Bash);
+  ASSERT_EQ(s.pending_choice.options[1].card_id, CardId::Bash);
   ASSERT_TRUE(resolve_choice(s, 1));
 
   ASSERT_EQ(s.current_hand.size(), 1u);  // the filler Strike remains
@@ -264,7 +265,7 @@ TEST(Choice, HeadbuttMovesADiscardCardToTopOfDraw) {
 
   request_choice_then_marker(s, ChoiceKind::DiscardToTopOfDraw,
                              CardId::Strike);
-  ASSERT_EQ(s.pending_choice.options[1], CardId::Bash);
+  ASSERT_EQ(s.pending_choice.options[1].card_id, CardId::Bash);
   ASSERT_TRUE(resolve_choice(s, 1));
 
   ASSERT_EQ(s.discard_pile.size(), 1u);  // the filler Strike remains
@@ -278,7 +279,7 @@ TEST(Choice, ExhumeMovesAnExhaustedCardToHand) {
   s.exhaust_pile.push_back(Card{CardId::Strike});  // 2nd option -> real pause
 
   request_choice_then_marker(s, ChoiceKind::ExhaustToHand, CardId::Strike);
-  ASSERT_EQ(s.pending_choice.options[1], CardId::Bash);
+  ASSERT_EQ(s.pending_choice.options[1].card_id, CardId::Bash);
   ASSERT_TRUE(resolve_choice(s, 1));
 
   // The one sanctioned removal from the exhaust pile (it only grows otherwise).
@@ -311,7 +312,7 @@ TEST(Choice, UpgradeAffectsOnlyOneCopyOfADuplicate) {
                              kSourceStandIn);
   // Strike appears twice but dedupes to ONE option; Defend is the second.
   ASSERT_EQ(s.pending_choice.num_options, 2);
-  ASSERT_EQ(s.pending_choice.options[0], CardId::Strike);
+  ASSERT_EQ(s.pending_choice.options[0].card_id, CardId::Strike);
   ASSERT_TRUE(resolve_choice(s, 0));
 
   EXPECT_EQ(s.current_hand[0].card_id, CardId::StrikePlus);
@@ -571,7 +572,7 @@ TEST(ChoiceCards, ArmamentsGainsBlockAndUpgradesTheChosenCard) {
   ASSERT_EQ(s.pending_choice.kind, ChoiceKind::UpgradeCardInHand);
 
   // Answer via the action space, as an agent would.
-  ASSERT_EQ(s.pending_choice.options[0], CardId::Strike);
+  ASSERT_EQ(s.pending_choice.options[0].card_id, CardId::Strike);
   ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 0));
 
   EXPECT_FALSE(s.pending_choice.active());
@@ -608,7 +609,7 @@ TEST(ChoiceCards, WarcryDrawsFirstThenChoosesFromTheResultingHand) {
   // The drawn Bash is on offer alongside the Defend already in hand.
   bool saw_bash = false;
   for (int i = 0; i < s.pending_choice.num_options; ++i) {
-    if (s.pending_choice.options[i] == CardId::Bash) saw_bash = true;
+    if (s.pending_choice.options[i].card_id == CardId::Bash) saw_bash = true;
   }
   EXPECT_TRUE(saw_bash) << "Warcry must draw before offering the choice";
 }
@@ -638,7 +639,7 @@ TEST(ChoiceCards, HeadbuttDealsDamageThenMovesADiscardCardToTopOfDraw) {
 
   EXPECT_EQ(s.enemies[0].hp, hp - 9);  // damage resolves before the choice
   ASSERT_TRUE(s.pending_choice.active());
-  ASSERT_EQ(s.pending_choice.options[1], CardId::Bash);
+  ASSERT_EQ(s.pending_choice.options[1].card_id, CardId::Bash);
   ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 1));
 
   ASSERT_EQ(s.draw_pile.size(), 1u);
@@ -680,7 +681,7 @@ TEST(ChoiceCards, ExhumeRetrievesFromExhaustAndCannotRetrieveItself) {
   // Exhume is in flight (already out of hand) when the choice is built, so it
   // is not among its own options.
   for (int i = 0; i < s.pending_choice.num_options; ++i) {
-    EXPECT_NE(s.pending_choice.options[i], CardId::Exhume);
+    EXPECT_NE(s.pending_choice.options[i].card_id, CardId::Exhume);
   }
   ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 1));  // Bash
 
@@ -735,9 +736,9 @@ TEST(ChoiceCards, DualWieldOnlyOffersAttacksAndPowers) {
 
   ASSERT_TRUE(s.pending_choice.active());
   for (int i = 0; i < s.pending_choice.num_options; ++i) {
-    const CardType t = CARD_DATABASE.at(s.pending_choice.options[i]).type;
+    const CardType t = CARD_DATABASE.at(s.pending_choice.options[i].card_id).type;
     EXPECT_TRUE(t == CardType::Attack || t == CardType::Power);
-    EXPECT_NE(s.pending_choice.options[i], CardId::Defend);
+    EXPECT_NE(s.pending_choice.options[i].card_id, CardId::Defend);
   }
 }
 
@@ -796,4 +797,211 @@ TEST(ChoiceCards, ChoiceCardPauseSurvivesCloneEndToEnd) {
   EXPECT_EQ(b.current_hand[0].card_id, CardId::Strike);
   EXPECT_EQ(b.current_hand[1].card_id, CardId::DefendPlus);
   EXPECT_TRUE(s.pending_choice.active());  // parent untouched
+}
+
+// ============================================================================
+// Per-instance card state: Rampage and Searing Blow.
+// The point of these tests is that two copies of the SAME card can differ.
+// ============================================================================
+
+TEST(PerInstance, RampageGrowsTheCopyThatWasPlayed) {
+  CombatState s = make_minimal_state(0);
+  const int hp0 = s.enemies[0].hp;
+
+  // First play: base 8.
+  ASSERT_TRUE(play(s, CardId::Rampage));
+  EXPECT_EQ(s.enemies[0].hp, hp0 - 8);
+
+  // The copy went to the discard carrying its growth.
+  ASSERT_EQ(s.discard_pile.size(), 1u);
+  EXPECT_EQ(s.discard_pile[0].card_id, CardId::Rampage);
+  EXPECT_EQ(s.discard_pile[0].bonus_damage, 5);
+
+  // Play that same copy again: 8 + 5.
+  s.current_hand.push_back(s.discard_pile[0]);
+  s.discard_pile.clear();
+  s.character.energy = 3;
+  const int hp1 = s.enemies[0].hp;
+  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Rampage) * kMaxEnemies));
+  EXPECT_EQ(s.enemies[0].hp, hp1 - 13);
+  EXPECT_EQ(s.discard_pile[0].bonus_damage, 10);  // grew again
+}
+
+TEST(PerInstance, RampagePlusGrowsByEight) {
+  CombatState s = make_minimal_state(0);
+  ASSERT_TRUE(play(s, CardId::RampagePlus));
+  ASSERT_EQ(s.discard_pile.size(), 1u);
+  EXPECT_EQ(s.discard_pile[0].bonus_damage, 8);
+}
+
+TEST(PerInstance, TwoRampagesScaleSeparately) {
+  // "Each copy scales separately" (wiki) — the whole reason instance state
+  // exists. Playing one copy must not buff the other.
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Rampage});
+  s.current_hand.push_back(Card{CardId::Rampage});
+
+  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Rampage) * kMaxEnemies));
+
+  // One copy grew; the one still in hand did not.
+  ASSERT_EQ(s.discard_pile.size(), 1u);
+  EXPECT_EQ(s.discard_pile[0].bonus_damage, 5);
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].bonus_damage, 0);
+}
+
+TEST(PerInstance, SearingBlowDamageFollowsTheWikiProgression) {
+  // n(n+7)/2 + 12, verified against the published table.
+  const int want[] = {12, 16, 21, 27, 34, 42, 51, 61, 72, 84, 97};
+  CombatState s = make_minimal_state(0);
+  for (int n = 0; n <= 10; ++n) {
+    Card c{CardId::SearingBlow};
+    c.upgrades = n;
+    EXPECT_EQ(instance_card_damage(s, c), want[n]) << "at " << n << " upgrades";
+  }
+}
+
+TEST(PerInstance, SearingBlowDealsItsInstanceDamage) {
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  Card blow{CardId::SearingBlow};
+  blow.upgrades = 3;  // 27 damage
+  s.current_hand.push_back(blow);
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(
+      apply_action(s, static_cast<int>(CardId::SearingBlow) * kMaxEnemies));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 27);
+  // The upgrade count rode back into the discard pile with the copy.
+  ASSERT_EQ(s.discard_pile.size(), 1u);
+  EXPECT_EQ(s.discard_pile[0].upgrades, 3);
+}
+
+TEST(PerInstance, ArmamentsUpgradesSearingBlowInPlace) {
+  // Searing Blow has no "++" id, so Armaments must bump its counter.
+  CombatState s = make_minimal_state(0);
+  Card blow{CardId::SearingBlow};
+  blow.upgrades = 2;
+  s.current_hand.push_back(blow);
+  s.current_hand.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(play(s, CardId::Armaments));
+  ASSERT_TRUE(s.pending_choice.active());
+  // Pick the Searing Blow.
+  int slot = -1;
+  for (int i = 0; i < s.pending_choice.num_options; ++i) {
+    if (s.pending_choice.options[i].card_id == CardId::SearingBlow) slot = i;
+  }
+  ASSERT_GE(slot, 0);
+  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + slot));
+
+  bool found = false;
+  for (const Card& c : s.current_hand) {
+    if (c.card_id == CardId::SearingBlow) {
+      EXPECT_EQ(c.upgrades, 3);  // 2 -> 3, id unchanged
+      found = true;
+    }
+  }
+  EXPECT_TRUE(found);
+}
+
+TEST(PerInstance, ChoiceOffersDifferingCopiesSeparately) {
+  // Two Rampages at different bonuses are NOT interchangeable, so they must be
+  // two distinct options — the dedup keys on (id, instance state).
+  CombatState s = make_minimal_state(0);
+  Card weak{CardId::Rampage};
+  Card strong{CardId::Rampage};
+  strong.bonus_damage = 10;
+  s.current_hand.push_back(weak);
+  s.current_hand.push_back(strong);
+
+  const PendingChoice pc =
+      build_choice(s, ChoiceKind::HandToTopOfDraw, kSourceStandIn);
+
+  ASSERT_EQ(pc.num_options, 2);
+  EXPECT_EQ(pc.options[0].bonus_damage, 0);   // ascending instance state
+  EXPECT_EQ(pc.options[1].bonus_damage, 10);
+}
+
+TEST(PerInstance, ChoiceStillCollapsesIdenticalCopies) {
+  // Identical copies remain interchangeable and collapse to one option.
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Rampage});
+  s.current_hand.push_back(Card{CardId::Rampage});
+
+  const PendingChoice pc =
+      build_choice(s, ChoiceKind::HandToTopOfDraw, kSourceStandIn);
+
+  EXPECT_EQ(pc.num_options, 1);
+}
+
+TEST(PerInstance, ChoiceTakesTheCopyThatWasChosen) {
+  // Picking the buffed Rampage must move THAT copy, not an arbitrary one.
+  CombatState s = make_minimal_state(0);
+  Card weak{CardId::Rampage};
+  Card strong{CardId::Rampage};
+  strong.bonus_damage = 10;
+  s.current_hand.push_back(weak);
+  s.current_hand.push_back(strong);
+
+  request_choice_then_marker(s, ChoiceKind::HandToTopOfDraw, kSourceStandIn);
+  ASSERT_EQ(s.pending_choice.num_options, 2);
+  ASSERT_TRUE(resolve_choice(s, 1));  // the +10 copy
+
+  ASSERT_EQ(s.draw_pile.size(), 1u);
+  EXPECT_EQ(s.draw_pile.back().bonus_damage, 10);  // the chosen one moved
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].bonus_damage, 0);    // the other stayed
+}
+
+TEST(PerInstance, DualWieldCopiesInheritInstanceState) {
+  CombatState s = make_minimal_state(0);
+  Card strong{CardId::Rampage};
+  strong.bonus_damage = 10;
+  s.current_hand.push_back(strong);
+  s.current_hand.push_back(Card{CardId::Bash});
+
+  ASSERT_TRUE(play(s, CardId::DualWield));
+  ASSERT_TRUE(s.pending_choice.active());
+  int slot = -1;
+  for (int i = 0; i < s.pending_choice.num_options; ++i) {
+    if (s.pending_choice.options[i].card_id == CardId::Rampage) slot = i;
+  }
+  ASSERT_GE(slot, 0);
+  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + slot));
+
+  int buffed = 0;
+  for (const Card& c : s.current_hand) {
+    if (c.card_id == CardId::Rampage && c.bonus_damage == 10) buffed++;
+  }
+  EXPECT_EQ(buffed, 2) << "the copy should inherit the +10";
+}
+
+TEST(PerInstance, ObsPublishesPerOptionInstanceDamage) {
+  // Two Rampages at different bonuses must be distinguishable in the OBS, not
+  // just in the mask — otherwise the agent sees "2 Rampage" and cannot choose.
+  CombatState s = make_minimal_state(0);
+  Card weak{CardId::Rampage};
+  Card strong{CardId::Rampage};
+  strong.bonus_damage = 10;
+  s.current_hand.push_back(weak);
+  s.current_hand.push_back(strong);
+  s.pending_choice = build_choice(s, ChoiceKind::HandToTopOfDraw,
+                                  kSourceStandIn);
+  ASSERT_EQ(s.pending_choice.num_options, 2);
+
+  CombatEnv env(std::move(s), 0.0f);
+  const auto obs = env.obs();
+  const int stride = CombatEnv::kChoiceSlotStride;
+
+  // Same card id in both slots...
+  EXPECT_FLOAT_EQ(obs[kSlotBase + 0 * stride + 1],
+                  static_cast<float>(static_cast<int>(CardId::Rampage)));
+  EXPECT_FLOAT_EQ(obs[kSlotBase + 1 * stride + 1],
+                  static_cast<float>(static_cast<int>(CardId::Rampage)));
+  // ...but different damage payloads.
+  EXPECT_FLOAT_EQ(obs[kSlotBase + 0 * stride + 2], 8.0f);
+  EXPECT_FLOAT_EQ(obs[kSlotBase + 1 * stride + 2], 18.0f);
 }

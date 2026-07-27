@@ -184,7 +184,12 @@ PYBIND11_MODULE(_core, m) {
       .value("Exhume", CardId::Exhume)
       .value("ExhumePlus", CardId::ExhumePlus)
       .value("DualWield", CardId::DualWield)
-      .value("DualWieldPlus", CardId::DualWieldPlus);
+      .value("DualWieldPlus", CardId::DualWieldPlus)
+      // Per-instance cards.
+      .value("Rampage", CardId::Rampage)
+      .value("RampagePlus", CardId::RampagePlus)
+      .value("SearingBlow", CardId::SearingBlow)
+      .value("SearingBlowPlus", CardId::SearingBlowPlus);
 
   // EnemyKind (ROB-79) — so the TUI can name per-slot enemies via enemy_kinds().
   py::enum_<EnemyKind>(m, "EnemyKind")
@@ -232,7 +237,8 @@ PYBIND11_MODULE(_core, m) {
       .def_readonly("source_card", &ChoiceView::source_card)
       .def_readonly("is_optional", &ChoiceView::is_optional)
       .def_readonly("copies", &ChoiceView::copies)
-      .def_readonly("options", &ChoiceView::options);
+      .def_readonly("options", &ChoiceView::options)
+      .def_readonly("option_damage", &ChoiceView::option_damage);
 
   // Card data model (ROB-49 -> ROB-78) — lets the TUI render what each card does.
   py::enum_<Debuff>(m, "Debuff")

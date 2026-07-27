@@ -8,6 +8,7 @@
 
 #include "card.h"
 #include "enemy.h"
+#include "query.h"  // instance_card_damage (per-instance cards)
 #include "status_effect.h"
 #include "turn_loop.h"
 
@@ -62,6 +63,10 @@ constexpr std::array<CardId, kNumCardTypes> kObsCardOrder = {
     CardId::WarcryPlus, CardId::Headbutt, CardId::HeadbuttPlus,
     CardId::Exhume, CardId::ExhumePlus, CardId::DualWield,
     CardId::DualWieldPlus,
+    // Per-instance cards: the pile counts here are per TYPE; a copy's
+    // individual damage is carried in the choice block's payload instead.
+    CardId::Rampage, CardId::RampagePlus, CardId::SearingBlow,
+    CardId::SearingBlowPlus,
 };
 static_assert(kObsCardOrder.size() == kNumCardTypes,
               "kObsCardOrder must list every card type");
@@ -324,9 +329,14 @@ void CombatEnv::compute_obs() {
     const int slots = kChoiceBase + kChoiceHeaderSize;
     for (int i = 0; i < pc.num_options; ++i) {
       const int base = slots + i * kChoiceSlotStride;
-      o[base + 0] = 1.0f;                                       // occupied
-      o[base + 1] = static_cast<float>(static_cast<int>(pc.options[i]));
-      o[base + 2] = 0.0f;  // cost: reserved for v2 (shop gold); 0 for cards
+      o[base + 0] = 1.0f;  // occupied
+      o[base + 1] =
+          static_cast<float>(static_cast<int>(pc.options[i].card_id));
+      // Payload value: for card options this is the INSTANCE damage, so two
+      // Rampages at different bonuses are distinguishable in the obs and not
+      // just in the mask. (v2's shop reuses this float for gold cost.)
+      o[base + 2] =
+          static_cast<float>(instance_card_damage(state_, pc.options[i]));
     }
   }
 }
@@ -363,7 +373,11 @@ ChoiceView CombatEnv::choice_view() const {
   out.is_optional = pc.is_optional;
   out.copies = pc.copies;
   out.options.reserve(pc.num_options);
-  for (int i = 0; i < pc.num_options; ++i) out.options.push_back(pc.options[i]);
+  out.option_damage.reserve(pc.num_options);
+  for (int i = 0; i < pc.num_options; ++i) {
+    out.options.push_back(pc.options[i].card_id);
+    out.option_damage.push_back(instance_card_damage(state_, pc.options[i]));
+  }
   return out;
 }
 

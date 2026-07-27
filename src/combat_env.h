@@ -41,6 +41,9 @@ struct ChoiceView {
   bool is_optional = false;
   int copies = 1;
   std::vector<CardId> options;
+  // Per-option effective damage, parallel to `options`. Lets the TUI show two
+  // Rampages apart ("Rampage (8)" vs "Rampage (13)"); 0 for non-attacks.
+  std::vector<int> option_damage;
 };
 
 // CombatEnv wraps CombatState + TurnLoop into a Gym-shaped env that owns its

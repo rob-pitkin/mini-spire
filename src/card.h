@@ -137,12 +137,18 @@ enum class CardId {
   ExhumePlus,
   DualWield,
   DualWieldPlus,
+  // Per-instance state: these cards' damage depends on the individual copy,
+  // not just its type (see struct Card).
+  Rampage,
+  RampagePlus,
+  SearingBlow,
+  SearingBlowPlus,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
 // action-space size (card x target). Update CARD_DATABASE + kObsCardOrder in
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
-inline constexpr int kNumCardTypes = 112;
+inline constexpr int kNumCardTypes = 116;
 
 // A card's inherent StS type. This is a real property, NOT inferable from
 // damage/block: an Attack can gain block (Body Slam) and a Skill can deal
@@ -170,9 +176,6 @@ enum class CardTarget {
 // current energy; X = the energy spent. Stored in CardData::cost.
 inline constexpr int kXCost = -2;
 
-// How a card's base damage is computed (Stage 4b). Most cards just use
-// CardData::damage; a few derive it from state, which is a QUERY (pulled at
-// resolution), not a stored value. Resolved by base_card_damage in query.cc.
 // ---------------------------------------------------------------------------
 // Mid-resolution player choices (Stage 4c; docs/design/decision-points.md).
 //
@@ -192,16 +195,49 @@ enum class ChoiceKind {
   // v2.0.0 (map / shop / events) appends here — no encoding change.
 };
 
+// How a card's base damage is computed (Stage 4b). Most cards just use
+// CardData::damage; a few derive it from state, which is a QUERY (pulled at
+// resolution), not a stored value. Resolved by base_card_damage in query.cc.
 enum class DamageRule {
   Normal,           // use CardData::damage
   EqualToBlock,     // Body Slam: the player's current block
   PerStrikeInDeck,  // Perfected Strike: + amount per "Strike"-named card
+  // Searing Blow: damage = n(n+7)/2 + 12 at n upgrades (wiki-verified against
+  // the published progression 12/16/21/27/34/...). Read from the card
+  // INSTANCE's upgrade count, not from CardData.
+  SearingBlow,
 };
 
-// FUTURE: per-instance card state (e.g. Ritual Dagger's accumulated damage,
-// Searing Blow's cumulative upgrades) will require widening this struct.
+// A card INSTANCE. Most cards are fully described by their CardId, but a few
+// carry state that differs between two copies of the same card:
+//
+//   Rampage      — permanently gains +N damage each time it is played, so two
+//                  Rampages in the same deck can have different damage.
+//   Searing Blow — can be upgraded any number of times; `upgrades` is the count
+//                  (there is no "Searing Blow++" CardId).
+//
+// Consequences, which the engine honours rather than papering over: two cards
+// of the same type are interchangeable ONLY when their instance state matches
+// (see build_choice's dedup), and the obs carries a per-card-type instance
+// block so a buffed Rampage is visible.
+//
+// Kept a small POD so piles stay plain vectors and clone() stays a deep copy.
 struct Card {
   CardId card_id;
+  // Extra damage accumulated this combat (Rampage). Combat-scoped.
+  int bonus_damage = 0;
+  // Times this specific card has been upgraded (Searing Blow). Run-scoped in
+  // v2; today it only changes if something upgrades the card mid-combat.
+  int upgrades = 0;
+
+  // Do these two instances play identically? Used to decide whether they
+  // collapse into one option in a choice.
+  bool same_as(const Card& other) const {
+    return card_id == other.card_id && bonus_damage == other.bonus_damage &&
+           upgrades == other.upgrades;
+  }
+  // Does this instance carry any state beyond its id?
+  bool has_instance_state() const { return bonus_damage != 0 || upgrades != 0; }
 };
 
 struct CardData {
@@ -247,6 +283,9 @@ struct CardData {
   bool upgrades_whole_hand = false;
   // Dual Wield+ adds 2 copies rather than 1.
   int choice_copies = 1;
+  // Rampage: playing this card permanently adds N damage to THAT COPY for the
+  // rest of the combat ("each copy scales separately" — wiki).
+  int bonus_damage_per_play = 0;
 };
 
 // What a card becomes when upgraded (Armaments; v2's rest-site smith).
@@ -318,12 +357,39 @@ inline const std::unordered_map<CardId, CardId> CARD_UPGRADES = {
     {CardId::Headbutt, CardId::HeadbuttPlus},
     {CardId::Exhume, CardId::ExhumePlus},
     {CardId::DualWield, CardId::DualWieldPlus},
+    {CardId::Rampage, CardId::RampagePlus},
+    // NOTE: Searing Blow is deliberately absent — it upgrades by incrementing
+    // the INSTANCE's counter, not by swapping CardId (see upgrade_card_in_place
+    // and is_instance_upgradable). There is no "Searing Blow++" id to map to.
 };
+
+// Searing Blow can be upgraded without limit, so its upgrades live on the card
+// instance rather than in CARD_UPGRADES. Anything that upgrades a card must
+// consult this first.
+inline bool is_instance_upgradable(CardId id) {
+  return id == CardId::SearingBlow || id == CardId::SearingBlowPlus;
+}
+
+// Upgrade a card IN PLACE, handling both models: normally the id is swapped
+// for its "+" form; for Searing Blow the instance's upgrade counter grows.
+// Returns false if the card cannot be upgraded at all.
+inline bool upgrade_card_in_place(Card& card) {
+  if (is_instance_upgradable(card.card_id)) {
+    ++card.upgrades;
+    return true;
+  }
+  auto it = CARD_UPGRADES.find(card.card_id);
+  if (it == CARD_UPGRADES.end()) return false;
+  card.card_id = it->second;
+  return true;
+}
 
 // Can this card be upgraded? False for already-upgraded cards and for Status
 // cards (Slimed, Dazed). Armaments' candidate filter reads this.
 inline bool is_upgradable(CardId id) {
-  return CARD_UPGRADES.count(id) > 0;
+  // Searing Blow is upgradable without limit via its instance counter, so it
+  // qualifies even though it has no entry in CARD_UPGRADES.
+  return CARD_UPGRADES.count(id) > 0 || is_instance_upgradable(id);
 }
 
 // Upper bound on simultaneous options. Set to kNumCardTypes so a pile choice
@@ -343,7 +409,10 @@ struct PendingChoice {
   bool is_optional = false;             // may the agent decline?
   int copies = 1;                       // Dual Wield+ adds 2
   int num_options = 0;
-  std::array<CardId, kNumOptionSlots> options{};
+  // Card INSTANCES, not just ids: two Rampages at different bonuses are
+  // genuinely different choices, so they occupy separate slots (only truly
+  // identical copies collapse). Still POD, so clone() stays a plain copy.
+  std::array<Card, kNumOptionSlots> options{};
 
   bool active() const { return kind != ChoiceKind::None; }
 };
@@ -508,6 +577,16 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     // Dual Wield: copy an Attack/Power in hand. The + adds 2 copies.
     {CardId::DualWield, {"Dual Wield", 1, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::CopyAttackOrPowerInHand, false, /*choice_copies=*/1}},
     {CardId::DualWieldPlus, {"Dual Wield+", 1, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::CopyAttackOrPowerInHand, false, /*choice_copies=*/2}},
+    // --- Per-instance cards. Their damage depends on the individual copy, so
+    // CardData holds only the BASE; the instance carries the rest.
+    // Rampage: 8 damage, and that copy permanently gains +5 (+8) this combat.
+    {CardId::Rampage, {"Rampage", 1, 8, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/5}},
+    {CardId::RampagePlus, {"Rampage+", 1, 8, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    // Searing Blow: damage comes entirely from the instance's upgrade count
+    // via DamageRule::SearingBlow, so CardData::damage is unused. The "+"
+    // form is just the n=1 starting point.
+    {CardId::SearingBlow, {"Searing Blow", 2, 0, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::SearingBlow}},
+    {CardId::SearingBlowPlus, {"Searing Blow+", 2, 0, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::SearingBlow}},
 };
 
 // Whether a card needs the player to PICK a specific enemy slot (ROB-80). Only
