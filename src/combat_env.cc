@@ -77,6 +77,11 @@ constexpr std::array<CardId, kNumCardTypes> kObsCardOrder = {
     // Simple new mechanisms.
     CardId::SwordBoomerang, CardId::SwordBoomerangPlus, CardId::LimitBreak,
     CardId::LimitBreakPlus, CardId::SpotWeakness, CardId::SpotWeaknessPlus,
+    // Exhaust-driven cards.
+    CardId::TrueGrit, CardId::TrueGritPlus, CardId::BurningPact,
+    CardId::BurningPactPlus, CardId::SecondWind, CardId::SecondWindPlus,
+    CardId::FiendFire, CardId::FiendFirePlus, CardId::Sentinel,
+    CardId::SentinelPlus,
 };
 static_assert(kObsCardOrder.size() == kNumCardTypes,
               "kObsCardOrder must list every card type");
@@ -131,6 +136,7 @@ int choice_source_pile(ChoiceKind kind) {
     case ChoiceKind::UpgradeCardInHand:
     case ChoiceKind::HandToTopOfDraw:
     case ChoiceKind::CopyAttackOrPowerInHand:
+    case ChoiceKind::ExhaustCardInHand:
       return 0;  // hand
     case ChoiceKind::DiscardToTopOfDraw:
       return 2;  // discard

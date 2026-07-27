@@ -72,6 +72,12 @@ int base_card_damage(const CombatState& state, CardId card) {
       // card being played, which is in flight (out of hand) at this point.
       return data.damage +
              data.damage_rule_amount * (count_strikes_in_deck(state) + 1);
+    case DamageRule::SearingBlow:
+      // Depends on the card INSTANCE's upgrade count, so it cannot be answered
+      // from the type alone — instance_card_damage handles it. Reaching here
+      // means a caller used the type-level query on a per-instance card;
+      // return the 0-upgrade damage rather than silently reporting 0.
+      return 12;
   }
   return data.damage;
 }

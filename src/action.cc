@@ -716,11 +716,17 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         state.enemies[a.target].is_asleep = false;
       }
       break;
-    case ActionKind::ExhaustCard:
+    case ActionKind::ExhaustCard: {
       move_to_exhaust(state, a.as_card());
+      // Sentinel: energy when THIS card is exhausted — by any means, and
+      // notably not by being played (playing it discards instead). Corruption,
+      // True Grit and Fiend Fire are the usual triggers.
+      const int energy = CARD_DATABASE.at(a.card).energy_when_exhausted;
+      if (energy > 0) gain_energy(state, energy);
       // Feel No Pain / Dark Embrace: whenever a card is exhausted.
       fire_player_power_hooks(state, Hook::CardExhausted, q, a.card);
       break;
+    }
     case ActionKind::DiscardCard:
       move_to_discard(state, a.as_card());
       break;
@@ -869,6 +875,17 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
           // Copies inherit the instance state (a copied +10 Rampage is +10).
           for (int i = 0; i < a.copies; ++i) add_card_to_hand(state, chosen);
           break;
+        case ChoiceKind::ExhaustCardInHand:
+          // Burning Pact / True Grit+: exhaust the chosen card. Queued as an
+          // action so Feel No Pain, Dark Embrace and Sentinel all see it.
+          if (take_from_pile(state.current_hand, chosen)) {
+            Action ex = make_action(ActionKind::ExhaustCard);
+            ex.card = chosen.card_id;
+            ex.card_bonus_damage = chosen.bonus_damage;
+            ex.card_upgrades = chosen.upgrades;
+            q.push_front(ex);
+          }
+          break;
         case ChoiceKind::None:
           break;
       }
@@ -938,6 +955,7 @@ bool card_qualifies(ChoiceKind kind, CardId id) {
     case ChoiceKind::HandToTopOfDraw:
     case ChoiceKind::DiscardToTopOfDraw:
     case ChoiceKind::ExhaustToHand:
+    case ChoiceKind::ExhaustCardInHand:
       return true;  // any card in the source pile
     case ChoiceKind::None:
       return false;
@@ -954,6 +972,7 @@ const std::vector<Card>& source_pile(const CombatState& state,
     case ChoiceKind::UpgradeCardInHand:
     case ChoiceKind::HandToTopOfDraw:
     case ChoiceKind::CopyAttackOrPowerInHand:
+    case ChoiceKind::ExhaustCardInHand:
     case ChoiceKind::None:
       break;
   }

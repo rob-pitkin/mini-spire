@@ -207,7 +207,18 @@ PYBIND11_MODULE(_core, m) {
       .value("LimitBreak", CardId::LimitBreak)
       .value("LimitBreakPlus", CardId::LimitBreakPlus)
       .value("SpotWeakness", CardId::SpotWeakness)
-      .value("SpotWeaknessPlus", CardId::SpotWeaknessPlus);
+      .value("SpotWeaknessPlus", CardId::SpotWeaknessPlus)
+      // Exhaust-driven cards.
+      .value("TrueGrit", CardId::TrueGrit)
+      .value("TrueGritPlus", CardId::TrueGritPlus)
+      .value("BurningPact", CardId::BurningPact)
+      .value("BurningPactPlus", CardId::BurningPactPlus)
+      .value("SecondWind", CardId::SecondWind)
+      .value("SecondWindPlus", CardId::SecondWindPlus)
+      .value("FiendFire", CardId::FiendFire)
+      .value("FiendFirePlus", CardId::FiendFirePlus)
+      .value("Sentinel", CardId::Sentinel)
+      .value("SentinelPlus", CardId::SentinelPlus);
 
   // EnemyKind (ROB-79) — so the TUI can name per-slot enemies via enemy_kinds().
   py::enum_<EnemyKind>(m, "EnemyKind")
@@ -248,7 +259,8 @@ PYBIND11_MODULE(_core, m) {
       .value("HandToTopOfDraw", ChoiceKind::HandToTopOfDraw)
       .value("DiscardToTopOfDraw", ChoiceKind::DiscardToTopOfDraw)
       .value("ExhaustToHand", ChoiceKind::ExhaustToHand)
-      .value("CopyAttackOrPowerInHand", ChoiceKind::CopyAttackOrPowerInHand);
+      .value("CopyAttackOrPowerInHand", ChoiceKind::CopyAttackOrPowerInHand)
+      .value("ExhaustCardInHand", ChoiceKind::ExhaustCardInHand);
   py::class_<ChoiceView>(m, "ChoiceView")
       .def_readonly("active", &ChoiceView::active)
       .def_readonly("kind", &ChoiceView::kind)

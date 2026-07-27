@@ -359,6 +359,7 @@ CHOICE_PROMPTS = {
     "DiscardToTopOfDraw": "Put a card from your discard pile on top of your draw pile",
     "ExhaustToHand": "Put a card from your exhaust pile into your hand",
     "CopyAttackOrPowerInHand": "Choose an Attack or Power to copy",
+    "ExhaustCardInHand": "Exhaust a card from your hand",
 }
 
 

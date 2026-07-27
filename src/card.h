@@ -171,12 +171,24 @@ enum class CardId {
   LimitBreakPlus,
   SpotWeakness,
   SpotWeaknessPlus,
+  // Exhaust-driven cards: they exhaust other cards (randomly, by choice, or
+  // wholesale) or react to being exhausted themselves.
+  TrueGrit,
+  TrueGritPlus,
+  BurningPact,
+  BurningPactPlus,
+  SecondWind,
+  SecondWindPlus,
+  FiendFire,
+  FiendFirePlus,
+  Sentinel,
+  SentinelPlus,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
 // action-space size (card x target). Update CARD_DATABASE + kObsCardOrder in
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
-inline constexpr int kNumCardTypes = 134;
+inline constexpr int kNumCardTypes = 144;
 
 // A card's inherent StS type. This is a real property, NOT inferable from
 // damage/block: an Attack can gain block (Body Slam) and a Skill can deal
@@ -220,7 +232,16 @@ enum class ChoiceKind {
   DiscardToTopOfDraw,       // Headbutt: discard pile -> top of draw
   ExhaustToHand,            // Exhume: exhaust pile -> hand
   CopyAttackOrPowerInHand,  // Dual Wield: copy an Attack/Power in hand
+  ExhaustCardInHand,        // Burning Pact, True Grit+: exhaust a chosen card
   // v2.0.0 (map / shop / events) appends here — no encoding change.
+};
+
+// Which cards a card exhausts wholesale from the hand. Sever Soul's variant
+// (non-attacks, no scaling) predates this and stays on its own flag.
+enum class ExhaustHandRule {
+  None,
+  NonAttacks,  // Second Wind
+  All,         // Fiend Fire
 };
 
 // Where a generated card lands. StS is specific per card, and the difference
@@ -344,6 +365,16 @@ struct CardData {
   // Spot Weakness: grant this much Strength only if the target's queued intent
   // is an attack.
   int strength_if_target_attacking = 0;
+  // True Grit: exhaust N RANDOM cards from hand (the + lets you choose, via
+  // ChoiceKind::ExhaustCardInHand instead).
+  int exhaust_random_from_hand = 0;
+  // Second Wind / Fiend Fire: exhaust a swathe of the hand, then scale an
+  // effect by how many were exhausted. `exhausts_hand` selects which cards go.
+  ExhaustHandRule exhausts_hand = ExhaustHandRule::None;
+  int block_per_exhausted = 0;   // Second Wind
+  int damage_per_exhausted = 0;  // Fiend Fire
+  // Sentinel: gain this much energy when this card is EXHAUSTED (not played).
+  int energy_when_exhausted = 0;
 };
 
 // What a card becomes when upgraded (Armaments; v2's rest-site smith).
@@ -424,6 +455,11 @@ inline const std::unordered_map<CardId, CardId> CARD_UPGRADES = {
     {CardId::SwordBoomerang, CardId::SwordBoomerangPlus},
     {CardId::LimitBreak, CardId::LimitBreakPlus},
     {CardId::SpotWeakness, CardId::SpotWeaknessPlus},
+    {CardId::TrueGrit, CardId::TrueGritPlus},
+    {CardId::BurningPact, CardId::BurningPactPlus},
+    {CardId::SecondWind, CardId::SecondWindPlus},
+    {CardId::FiendFire, CardId::FiendFirePlus},
+    {CardId::Sentinel, CardId::SentinelPlus},
     // NOTE: Searing Blow is deliberately absent — it upgrades by incrementing
     // the INSTANCE's counter, not by swapping CardId (see upgrade_card_in_place
     // and is_instance_upgradable). There is no "Searing Blow++" id to map to.
@@ -687,6 +723,24 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     // Spot Weakness: 3 (4) Strength, but only if the target intends to attack.
     {CardId::SpotWeakness, {"Spot Weakness", 1, 0, 1, 0, CardTarget::Enemy, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, /*strength_if_target_attacking=*/3}},
     {CardId::SpotWeaknessPlus, {"Spot Weakness+", 1, 0, 1, 0, CardTarget::Enemy, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, /*strength_if_target_attacking=*/4}},
+    // --- Exhaust-driven cards.
+    // True Grit: 7 block, exhaust a RANDOM card. The + lets you CHOOSE, which
+    // makes it a choice card rather than a bigger number.
+    {CardId::TrueGrit, {"True Grit", 1, 0, 1, 7, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, /*exhaust_random_from_hand=*/1}},
+    {CardId::TrueGritPlus, {"True Grit+", 1, 0, 1, 9, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, /*requests_choice=*/ChoiceKind::ExhaustCardInHand}},
+    // Burning Pact: exhaust a CHOSEN card, then draw 2 (3).
+    {CardId::BurningPact, {"Burning Pact", 1, 0, 1, 0, CardTarget::None, {}, {}, CardType::Skill, false, false, false, /*draw=*/2, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, /*requests_choice=*/ChoiceKind::ExhaustCardInHand}},
+    {CardId::BurningPactPlus, {"Burning Pact+", 1, 0, 1, 0, CardTarget::None, {}, {}, CardType::Skill, false, false, false, /*draw=*/3, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, /*requests_choice=*/ChoiceKind::ExhaustCardInHand}},
+    // Second Wind: exhaust all non-Attacks, 5 (7) block for each.
+    {CardId::SecondWind, {"Second Wind", 1, 0, 1, 0, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::NonAttacks, /*block_per_exhausted=*/5}},
+    {CardId::SecondWindPlus, {"Second Wind+", 1, 0, 1, 0, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::NonAttacks, /*block_per_exhausted=*/7}},
+    // Fiend Fire: exhaust the WHOLE hand, 7 (10) damage per card exhausted.
+    {CardId::FiendFire, {"Fiend Fire", 2, 0, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, /*exhaust=*/true, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::All, 0, /*damage_per_exhausted=*/7}},
+    {CardId::FiendFirePlus, {"Fiend Fire+", 2, 0, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, /*exhaust=*/true, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::All, 0, /*damage_per_exhausted=*/10}},
+    // Sentinel: 5 (8) block, and 2 (3) energy IF this card is exhausted —
+    // which playing it normally does NOT do (Corruption, True Grit etc. do).
+    {CardId::Sentinel, {"Sentinel", 1, 0, 1, 5, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::None, 0, 0, /*energy_when_exhausted=*/2}},
+    {CardId::SentinelPlus, {"Sentinel+", 1, 0, 1, 8, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::None, 0, 0, /*energy_when_exhausted=*/3}},
 };
 
 // Whether a card needs the player to PICK a specific enemy slot (ROB-80). Only

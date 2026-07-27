@@ -1269,3 +1269,213 @@ TEST(SimpleMechanisms, SwordBoomerangIsDeterministicForASeed) {
   };
   EXPECT_EQ(run(42), run(42));
 }
+
+// ============================================================================
+// Exhaust-driven cards: True Grit, Burning Pact, Second Wind, Fiend Fire,
+// Sentinel. What unites them is that exhausting is the EFFECT, not a cost.
+// ============================================================================
+
+TEST(ExhaustCards, TrueGritExhaustsARandomCardAndGainsBlock) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(play(s, CardId::TrueGrit));
+
+  EXPECT_EQ(s.character.current_block, 7);
+  EXPECT_EQ(s.exhaust_pile.size(), 1u);   // one random card left the hand
+  EXPECT_EQ(s.current_hand.size(), 1u);
+  EXPECT_FALSE(s.pending_choice.active());  // random, so no prompt
+}
+
+TEST(ExhaustCards, TrueGritPlusLetsYouChooseWhichCardToExhaust) {
+  // The upgrade changes the choice's SHAPE (random -> chosen), not a number.
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(play(s, CardId::TrueGritPlus));
+
+  EXPECT_EQ(s.character.current_block, 9);
+  ASSERT_TRUE(s.pending_choice.active());
+  ASSERT_EQ(s.pending_choice.kind, ChoiceKind::ExhaustCardInHand);
+  // Pick the Defend.
+  int slot = -1;
+  for (int i = 0; i < s.pending_choice.num_options; ++i) {
+    if (s.pending_choice.options[i].card_id == CardId::Defend) slot = i;
+  }
+  ASSERT_GE(slot, 0);
+  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + slot));
+
+  ASSERT_EQ(s.exhaust_pile.size(), 1u);
+  EXPECT_EQ(s.exhaust_pile[0].card_id, CardId::Defend);
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].card_id, CardId::Strike);  // the other stayed
+}
+
+TEST(ExhaustCards, TrueGritWithAnEmptyHandExhaustsNothing) {
+  CombatState s = make_minimal_state(0);
+  ASSERT_TRUE(play(s, CardId::TrueGrit));  // hand holds only True Grit itself
+  EXPECT_EQ(s.character.current_block, 7);
+  EXPECT_TRUE(s.exhaust_pile.empty());
+}
+
+TEST(ExhaustCards, BurningPactExhaustsAChosenCardThenDraws) {
+  CombatState s = make_minimal_state(0);
+  for (int i = 0; i < 5; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Bash});
+
+  ASSERT_TRUE(play(s, CardId::BurningPact));
+  ASSERT_TRUE(s.pending_choice.active());
+  ASSERT_EQ(s.pending_choice.kind, ChoiceKind::ExhaustCardInHand);
+  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 0));
+
+  EXPECT_EQ(s.exhaust_pile.size(), 1u);
+  // Started with 2, exhausted 1, drew 2 => 3.
+  EXPECT_EQ(s.current_hand.size(), 3u);
+}
+
+TEST(ExhaustCards, BurningPactPlusDrawsThree) {
+  CombatState s = make_minimal_state(0);
+  for (int i = 0; i < 5; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Bash});
+
+  ASSERT_TRUE(play(s, CardId::BurningPactPlus));
+  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 0));
+
+  EXPECT_EQ(s.current_hand.size(), 4u);  // 2 - 1 exhausted + 3 drawn
+}
+
+TEST(ExhaustCards, SecondWindExhaustsNonAttacksAndBlocksPerCard) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Defend});   // Skill -> exhausted
+  s.current_hand.push_back(Card{CardId::Inflame});  // Power -> exhausted
+  s.current_hand.push_back(Card{CardId::Strike});   // Attack -> kept
+
+  ASSERT_TRUE(play(s, CardId::SecondWind));
+
+  EXPECT_EQ(s.exhaust_pile.size(), 2u);
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].card_id, CardId::Strike);
+  EXPECT_EQ(s.character.current_block, 10);  // 2 exhausted x 5
+}
+
+TEST(ExhaustCards, SecondWindPlusBlocksSevenPerCard) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(play(s, CardId::SecondWindPlus));
+
+  EXPECT_EQ(s.character.current_block, 14);  // 2 x 7
+}
+
+TEST(ExhaustCards, SecondWindWithNoNonAttacksGivesNoBlock) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(play(s, CardId::SecondWind));
+
+  EXPECT_EQ(s.character.current_block, 0);
+  EXPECT_TRUE(s.exhaust_pile.empty());
+}
+
+TEST(ExhaustCards, FiendFireExhaustsTheWholeHandAndScalesDamage) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Inflame});
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(play(s, CardId::FiendFire));
+
+  EXPECT_TRUE(s.current_hand.empty()) << "Fiend Fire exhausts the WHOLE hand";
+  EXPECT_EQ(s.enemies[0].hp, hp - 3 * 7);
+  // 3 hand cards plus Fiend Fire itself (it exhausts on play).
+  EXPECT_EQ(s.exhaust_pile.size(), 4u);
+}
+
+TEST(ExhaustCards, FiendFirePlusDealsTenPerCard) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(play(s, CardId::FiendFirePlus));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 2 * 10);
+}
+
+TEST(ExhaustCards, FiendFireWithAnEmptyHandDealsNothing) {
+  CombatState s = make_minimal_state(0);
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(play(s, CardId::FiendFire));
+
+  EXPECT_EQ(s.enemies[0].hp, hp);
+}
+
+TEST(ExhaustCards, SentinelGivesNoEnergyWhenSimplyPlayed) {
+  // "If this card is Exhausted" — playing it normally discards it instead.
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+
+  ASSERT_TRUE(play(s, CardId::Sentinel));
+
+  EXPECT_EQ(s.character.current_block, 5);
+  EXPECT_EQ(s.character.energy, 2);  // paid 1, gained none back
+  EXPECT_EQ(s.discard_pile.size(), 1u);
+  EXPECT_TRUE(s.exhaust_pile.empty());
+}
+
+TEST(ExhaustCards, SentinelGivesEnergyWhenExhaustedByAnotherCard) {
+  // Fiend Fire exhausts the hand, which triggers Sentinel's energy.
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Sentinel});
+  s.character.energy = 3;
+
+  ASSERT_TRUE(play(s, CardId::FiendFire));  // costs 2
+
+  // 3 - 2 for Fiend Fire, + 2 from the exhausted Sentinel.
+  EXPECT_EQ(s.character.energy, 3);
+}
+
+TEST(ExhaustCards, SentinelPlusGivesThreeEnergyWhenExhausted) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::SentinelPlus});
+  s.character.energy = 3;
+
+  ASSERT_TRUE(play(s, CardId::FiendFire));
+
+  EXPECT_EQ(s.character.energy, 4);  // 3 - 2 + 3
+}
+
+TEST(ExhaustCards, SentinelTriggersUnderCorruption) {
+  // Corruption exhausts every Skill played, so it turns Sentinel's own play
+  // into an exhaust — the classic interaction.
+  CombatState s = make_minimal_state(0);
+  s.character.powers[Power::Corruption] = 1;
+  s.character.energy = 3;
+
+  ASSERT_TRUE(play(s, CardId::Sentinel));
+
+  EXPECT_EQ(s.character.current_block, 5);
+  EXPECT_EQ(s.exhaust_pile.size(), 1u);  // Corruption exhausted it
+  // Corruption made it free, and the exhaust paid 2 energy.
+  EXPECT_EQ(s.character.energy, 5);
+}
+
+TEST(ExhaustCards, ExhaustsFromTheseCardsFeedFeelNoPain) {
+  // The exhausts are real actions, so the exhaust hooks see them.
+  CombatState s = make_minimal_state(0);
+  s.character.powers[Power::FeelNoPain] = 3;
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(play(s, CardId::SecondWind));
+
+  // 2 x 5 from Second Wind itself, plus 2 x 3 from Feel No Pain.
+  EXPECT_EQ(s.character.current_block, 10 + 6);
+}

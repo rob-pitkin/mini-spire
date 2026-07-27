@@ -119,21 +119,61 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   // 3a. Pre-damage hand/block effects (Stage 4b). These resolve BEFORE the
   // card's damage: Sever Soul's exhausts must feed Feel No Pain first, and
   // Entrench's doubling must land before a Body Slam reads block.
-  if (data.exhausts_non_attacks_in_hand) {
-    // Sever Soul: exhaust every non-Attack in hand (the card itself is already
-    // in flight, so it can't exhaust itself).
+  // Wholesale hand exhausts. Sever Soul (non-Attacks, no scaling), Second Wind
+  // (non-Attacks, block per card) and Fiend Fire (whole hand, damage per card)
+  // share this path. The played card is already in flight, so it never
+  // exhausts itself.
+  int exhausted_from_hand = 0;
+  const bool exhausts_non_attacks =
+      data.exhausts_non_attacks_in_hand ||
+      data.exhausts_hand == ExhaustHandRule::NonAttacks;
+  const bool exhausts_whole_hand = data.exhausts_hand == ExhaustHandRule::All;
+  if (exhausts_non_attacks || exhausts_whole_hand) {
     std::vector<Card> keep;
     for (const Card& c : state.current_hand) {
-      if (CARD_DATABASE.at(c.card_id).type == CardType::Attack) {
+      const bool goes = exhausts_whole_hand ||
+                        CARD_DATABASE.at(c.card_id).type != CardType::Attack;
+      if (!goes) {
         keep.push_back(c);
-      } else {
-        Action a;
-        a.kind = ActionKind::ExhaustCard;
-        a.card = c.card_id;
-        q.push_back(a);
+        continue;
       }
+      Action a;
+      a.kind = ActionKind::ExhaustCard;
+      a.card = c.card_id;
+      a.card_bonus_damage = c.bonus_damage;
+      a.card_upgrades = c.upgrades;
+      q.push_back(a);
+      ++exhausted_from_hand;
     }
     state.current_hand = std::move(keep);
+  }
+  // True Grit: exhaust N RANDOM cards from hand. Rolled here (translation) so
+  // the count is known; the exhausts themselves are actions, so Feel No Pain /
+  // Dark Embrace / Sentinel all see them.
+  for (int i = 0; i < data.exhaust_random_from_hand; ++i) {
+    if (state.current_hand.empty()) break;
+    std::uniform_int_distribution<std::size_t> pick(
+        0, state.current_hand.size() - 1);
+    const std::size_t idx = pick(state.rng);
+    const Card c = state.current_hand[idx];
+    state.current_hand.erase(state.current_hand.begin() + idx);
+    Action a;
+    a.kind = ActionKind::ExhaustCard;
+    a.card = c.card_id;
+    a.card_bonus_damage = c.bonus_damage;
+    a.card_upgrades = c.upgrades;
+    q.push_back(a);
+    ++exhausted_from_hand;
+  }
+  // Second Wind: block per card exhausted. Queued after the exhausts so the
+  // count is final.
+  if (data.block_per_exhausted > 0 && exhausted_from_hand > 0) {
+    Action a;
+    a.kind = ActionKind::GainBlock;
+    a.target = kPlayerSlot;
+    a.amount = data.block_per_exhausted * exhausted_from_hand;
+    a.card_block = true;  // Dexterity/Frail apply — it is block from a card
+    q.push_back(a);
   }
   if (data.doubles_block) {
     // Entrench: double current block. Queued as a GainBlock of the current
@@ -152,7 +192,12 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   // Damage is read from the INSTANCE (Rampage's accumulated bonus, Searing
   // Blow's upgrade count) BEFORE Rampage's growth is applied below — the card
   // reads "deal 8 damage, [then] increase this card's damage by 5".
-  const int card_damage = instance_card_damage(state, played);
+  // Fiend Fire deals damage_per_exhausted for EACH card its hand-wipe
+  // exhausted, so its damage is only known after that count is final.
+  const int card_damage =
+      data.damage_per_exhausted > 0
+          ? data.damage_per_exhausted * exhausted_from_hand
+          : instance_card_damage(state, played);
   // Rampage: this copy permanently gains damage for the rest of the combat.
   // Applied after the damage read, before the pile move, so the growth rides
   // back into the pile on this instance.
