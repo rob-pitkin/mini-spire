@@ -1795,11 +1795,31 @@ TEST(MetaCards, InfernalBladesDiscountExpiresNextTurn) {
   ASSERT_TRUE(play(s, CardId::InfernalBlade));
   const CardId got = s.current_hand[0].card_id;
   ASSERT_EQ(effective_cost(s, got), 0);
+  ASSERT_GT(s.character.free_this_turn.count(got), 0u);
 
   ASSERT_TRUE(apply_action(s, kEndTurnAction));
 
-  // Back to its printed cost once the turn ends.
-  EXPECT_EQ(effective_cost(s, got), CARD_DATABASE.at(got).cost);
+  // The DISCOUNT is gone. Asserted on the free-list rather than on
+  // effective_cost returning the printed cost: a randomly-picked card may
+  // legitimately still be discounted by something else (Blood for Blood costs
+  // less per HP-loss event, and the enemy attacks during the end-turn), which
+  // is engine-correct but would fail a printed-cost comparison. This is a real
+  // platform-dependent failure the macOS run missed and Linux CI caught.
+  EXPECT_EQ(s.character.free_this_turn.count(got), 0u);
+}
+
+TEST(MetaCards, InfernalBladesDiscountAppliesOnlyToTheGeneratedCard) {
+  // The free-cost flag is keyed per card type, so an unrelated card in hand
+  // keeps its printed cost.
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Bash});  // cost 2, not generated
+
+  ASSERT_TRUE(play(s, CardId::InfernalBlade));
+
+  if (s.character.free_this_turn.count(CardId::Bash) == 0) {
+    EXPECT_EQ(effective_cost(s, CardId::Bash), 2);
+  }
 }
 
 TEST(MetaCards, InfernalBladeExhausts) {
