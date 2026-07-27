@@ -567,6 +567,19 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       break;
     }
     case ActionKind::DealFixedDamage:
+      if (a.target == kPlayerSlot) {
+        // Fixed damage TO the player (Burn's end-of-turn tick). Blockable,
+        // and it is damage rather than HP loss, so Rupture does not fire.
+        if (a.amount > 0) {
+          const int hp_before = state.character.hp;
+          apply_damage_to_hp_block(state.character.hp,
+                                   state.character.current_block, a.amount);
+          if (state.character.hp < hp_before) {
+            state.character.hp_loss_events += 1;  // Blood for Blood counts it
+          }
+        }
+        break;
+      }
       apply_fixed_damage(state, a.target, a.amount, q, ctx);
       break;
     case ActionKind::DamageAllEnemies: {
@@ -682,6 +695,30 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
     case ActionKind::DiscardCard:
       move_to_discard(state, a.as_card());
       break;
+    case ActionKind::AddCardToPile: {
+      // A generated card is always fresh (no inherited instance state), except
+      // Anger's self-copy, which carries the played copy's state.
+      const Card made = a.as_card();
+      switch (static_cast<GeneratedPile>(a.amount)) {
+        case GeneratedPile::Discard:
+          move_to_discard(state, made);
+          break;
+        case GeneratedPile::Hand:
+          add_card_to_hand(state, made);
+          break;
+        case GeneratedPile::ShuffleDraw: {
+          // SHUFFLE into the draw pile: insert at a uniformly random position
+          // so it isn't deterministically the next draw. Consumes RNG only
+          // when such a card is actually generated.
+          std::uniform_int_distribution<std::size_t> pos(
+              0, state.draw_pile.size());
+          state.draw_pile.insert(state.draw_pile.begin() + pos(state.rng),
+                                 made);
+          break;
+        }
+      }
+      break;
+    }
     case ActionKind::EnemyEscape:
       // Escape (ROB-74): the enemy flees by setting its own hp to 0. It leaves
       // the fight — everything keys on hp>0, so it's no longer targetable or
@@ -805,10 +842,21 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // exhaust is seen by Feel No Pain / Dark Embrace — StS handles the hand
       // before end-of-turn powers, so those responses queue ahead of Combust.
       for (const Card& c : state.current_hand) {
-        Action move = make_action(CARD_DATABASE.at(c.card_id).ethereal
-                                      ? ActionKind::ExhaustCard
-                                      : ActionKind::DiscardCard);
+        const CardData& cd = CARD_DATABASE.at(c.card_id);
+        // Burn: damage for sitting in hand at end of turn. Queued BEFORE the
+        // card leaves, and as DealFixedDamage so block absorbs it (StS calls
+        // it damage, not HP loss — "unblocked damage from Burn").
+        if (cd.end_of_turn_damage_in_hand > 0) {
+          Action burn = make_action(ActionKind::DealFixedDamage);
+          burn.target = kPlayerSlot;
+          burn.amount = cd.end_of_turn_damage_in_hand;
+          q.push_back(burn);
+        }
+        Action move = make_action(cd.ethereal ? ActionKind::ExhaustCard
+                                              : ActionKind::DiscardCard);
         move.card = c.card_id;
+        move.card_bonus_damage = c.bonus_damage;
+        move.card_upgrades = c.upgrades;
         q.push_back(move);
       }
       state.current_hand.clear();

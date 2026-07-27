@@ -1005,3 +1005,134 @@ TEST(PerInstance, ObsPublishesPerOptionInstanceDamage) {
   EXPECT_FLOAT_EQ(obs[kSlotBase + 0 * stride + 2], 8.0f);
   EXPECT_FLOAT_EQ(obs[kSlotBase + 1 * stride + 2], 18.0f);
 }
+
+// ============================================================================
+// Card-generating cards. StS is specific about WHERE the generated card goes,
+// and the difference is strategically real: a shuffled card can be drawn this
+// combat, a discarded one cannot until reshuffle, one in hand clogs it now.
+// ============================================================================
+
+TEST(GeneratedCards, WildStrikeShufflesAWoundIntoTheDrawPile) {
+  CombatState s = make_minimal_state(0);
+  for (int i = 0; i < 5; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(play(s, CardId::WildStrike));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 12);
+  EXPECT_EQ(s.draw_pile.size(), 6u);  // the Wound went into the DRAW pile
+  int wounds = 0;
+  for (const Card& c : s.draw_pile) {
+    if (c.card_id == CardId::Wound) wounds++;
+  }
+  EXPECT_EQ(wounds, 1);
+  // Not in hand or discard.
+  for (const Card& c : s.current_hand) EXPECT_NE(c.card_id, CardId::Wound);
+}
+
+TEST(GeneratedCards, PowerThroughAddsTwoWoundsToHand) {
+  CombatState s = make_minimal_state(0);
+
+  ASSERT_TRUE(play(s, CardId::PowerThrough));
+
+  EXPECT_EQ(s.character.current_block, 15);
+  int wounds = 0;
+  for (const Card& c : s.current_hand) {
+    if (c.card_id == CardId::Wound) wounds++;
+  }
+  EXPECT_EQ(wounds, 2) << "Power Through's Wounds go to HAND";
+  EXPECT_TRUE(s.draw_pile.empty());
+}
+
+TEST(GeneratedCards, ImmolateAddsABurnToTheDiscardPile) {
+  CombatState s = make_minimal_state(0);
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(play(s, CardId::Immolate));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 21);
+  int burns = 0;
+  for (const Card& c : s.discard_pile) {
+    if (c.card_id == CardId::Burn) burns++;
+  }
+  EXPECT_EQ(burns, 1) << "Immolate's Burn goes to the DISCARD pile";
+}
+
+TEST(GeneratedCards, RecklessChargeShufflesADazedIntoTheDrawPile) {
+  CombatState s = make_minimal_state(0);
+  for (int i = 0; i < 3; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(play(s, CardId::RecklessCharge));
+
+  int dazed = 0;
+  for (const Card& c : s.draw_pile) {
+    if (c.card_id == CardId::Dazed) dazed++;
+  }
+  EXPECT_EQ(dazed, 1);
+}
+
+TEST(GeneratedCards, AngerAddsACopyOfItselfToTheDiscard) {
+  CombatState s = make_minimal_state(0);
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(play(s, CardId::Anger));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 6);
+  // Two Angers in the discard: the played one and its copy.
+  int angers = 0;
+  for (const Card& c : s.discard_pile) {
+    if (c.card_id == CardId::Anger) angers++;
+  }
+  EXPECT_EQ(angers, 2);
+}
+
+TEST(GeneratedCards, WoundAndBurnAreUnplayable) {
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Wound});
+  s.current_hand.push_back(Card{CardId::Burn});
+
+  const auto mask = valid_actions(s);
+  EXPECT_FALSE(mask[static_cast<int>(CardId::Wound) * kMaxEnemies]);
+  EXPECT_FALSE(mask[static_cast<int>(CardId::Burn) * kMaxEnemies]);
+  // And the apply path agrees with the mask.
+  EXPECT_FALSE(apply_action(s, static_cast<int>(CardId::Wound) * kMaxEnemies));
+}
+
+TEST(GeneratedCards, BurnDamagesThePlayerAtEndOfTurnAndThenDiscards) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Burn});
+  s.enemies[0].hp = 0;  // no enemy attack, so Burn is the only damage source
+  const int hp = s.character.hp;
+
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+
+  // 2 damage from Burn (the fight ends as a win, so no enemy phase damage).
+  EXPECT_EQ(s.character.hp, hp - 2);
+}
+
+TEST(GeneratedCards, BurnDamageIsAbsorbedByBlock) {
+  // StS calls it damage, not HP loss ("unblocked damage from Burn"), so block
+  // stops it.
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Burn});
+  s.character.current_block = 10;
+  s.enemies[0].hp = 0;
+  const int hp = s.character.hp;
+
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+
+  EXPECT_EQ(s.character.hp, hp) << "block should absorb Burn";
+}
+
+TEST(GeneratedCards, BurnOnlyTicksWhileItIsInHand) {
+  // A Burn sitting in the discard pile does nothing.
+  CombatState s = make_minimal_state(0);
+  s.discard_pile.push_back(Card{CardId::Burn});
+  s.enemies[0].hp = 0;
+  const int hp = s.character.hp;
+
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+
+  EXPECT_EQ(s.character.hp, hp);
+}

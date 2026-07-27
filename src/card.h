@@ -143,12 +143,32 @@ enum class CardId {
   RampagePlus,
   SearingBlow,
   SearingBlowPlus,
+  // Status cards added by the player's own cards (Wild Strike, Power Through,
+  // Reckless Charge, Immolate). Unplayable, like Slimed/Dazed.
+  //
+  // No Burn+ here: it exists in StS only through relic/curse upgrade paths we
+  // don't model, and nothing in this engine can generate one (Immolate adds
+  // the base Burn, and Status cards are not upgradable). An unreachable CardId
+  // would still cost 5 action indices and 4 obs floats.
+  Wound,
+  Burn,
+  // Cards that add a Status card, or a copy of themselves, to a pile.
+  WildStrike,
+  WildStrikePlus,
+  PowerThrough,
+  PowerThroughPlus,
+  Immolate,
+  ImmolatePlus,
+  RecklessCharge,
+  RecklessChargePlus,
+  Anger,
+  AngerPlus,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
 // action-space size (card x target). Update CARD_DATABASE + kObsCardOrder in
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
-inline constexpr int kNumCardTypes = 116;
+inline constexpr int kNumCardTypes = 128;
 
 // A card's inherent StS type. This is a real property, NOT inferable from
 // damage/block: an Attack can gain block (Body Slam) and a Skill can deal
@@ -193,6 +213,15 @@ enum class ChoiceKind {
   ExhaustToHand,            // Exhume: exhaust pile -> hand
   CopyAttackOrPowerInHand,  // Dual Wield: copy an Attack/Power in hand
   // v2.0.0 (map / shop / events) appends here — no encoding change.
+};
+
+// Where a generated card lands. StS is specific per card, and the difference
+// matters: a shuffled card can be drawn this combat, one added to the discard
+// cannot until the pile reshuffles, and one added to hand clogs it now.
+enum class GeneratedPile {
+  Discard,       // Immolate's Burn, Anger's copy
+  Hand,          // Power Through's Wounds
+  ShuffleDraw,   // Wild Strike's Wound, Reckless Charge's Dazed
 };
 
 // How a card's base damage is computed (Stage 4b). Most cards just use
@@ -286,6 +315,19 @@ struct CardData {
   // Rampage: playing this card permanently adds N damage to THAT COPY for the
   // rest of the combat ("each copy scales separately" — wiki).
   int bonus_damage_per_play = 0;
+  // Burn: while this card sits in HAND at end of turn, the player takes N
+  // damage (blockable, unlike a lose-HP effect). The card then discards
+  // normally rather than exhausting.
+  int end_of_turn_damage_in_hand = 0;
+  // Cards that generate other cards. `generated_card` is what to make,
+  // `generated_count` how many, and `generated_pile` where it lands — StS is
+  // specific about this (Wild Strike SHUFFLES a Wound into the draw pile,
+  // Power Through adds Wounds to HAND, Immolate adds a Burn to the DISCARD).
+  CardId generated_card = CardId::Strike;
+  int generated_count = 0;
+  GeneratedPile generated_pile = GeneratedPile::Discard;
+  // Anger: adds a copy of ITSELF (rather than a fixed card) to the discard.
+  bool generates_self_copy = false;
 };
 
 // What a card becomes when upgraded (Armaments; v2's rest-site smith).
@@ -358,6 +400,11 @@ inline const std::unordered_map<CardId, CardId> CARD_UPGRADES = {
     {CardId::Exhume, CardId::ExhumePlus},
     {CardId::DualWield, CardId::DualWieldPlus},
     {CardId::Rampage, CardId::RampagePlus},
+    {CardId::WildStrike, CardId::WildStrikePlus},
+    {CardId::PowerThrough, CardId::PowerThroughPlus},
+    {CardId::Immolate, CardId::ImmolatePlus},
+    {CardId::RecklessCharge, CardId::RecklessChargePlus},
+    {CardId::Anger, CardId::AngerPlus},
     // NOTE: Searing Blow is deliberately absent — it upgrades by incrementing
     // the INSTANCE's counter, not by swapping CardId (see upgrade_card_in_place
     // and is_instance_upgradable). There is no "Searing Blow++" id to map to.
@@ -587,6 +634,29 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     // form is just the n=1 starting point.
     {CardId::SearingBlow, {"Searing Blow", 2, 0, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::SearingBlow}},
     {CardId::SearingBlowPlus, {"Searing Blow+", 2, 0, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::SearingBlow}},
+    // --- Status cards the player's own cards generate. Unplayable, like
+    // Slimed and Dazed (which enemies generate).
+    // Wound: pure dead weight — clogs the hand and does nothing else.
+    {CardId::Wound, {"Wound", 0, 0, 1, 0, CardTarget::None, {}, {}, CardType::Status, /*exhaust=*/false, /*ethereal=*/false, /*unplayable=*/true}},
+    // Burn: 2 damage at end of turn while in hand, then discards normally.
+    {CardId::Burn, {"Burn", 0, 0, 1, 0, CardTarget::None, {}, {}, CardType::Status, false, false, /*unplayable=*/true, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, /*end_of_turn_damage_in_hand=*/2}},
+    // --- Cards that generate other cards. Where the generated card lands is
+    // card-specific in StS and materially different (see GeneratedPile).
+    // Wild Strike: 12 damage, SHUFFLE a Wound into the draw pile.
+    {CardId::WildStrike, {"Wild Strike", 1, 12, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Wound, 1, GeneratedPile::ShuffleDraw}},
+    {CardId::WildStrikePlus, {"Wild Strike+", 1, 17, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Wound, 1, GeneratedPile::ShuffleDraw}},
+    // Power Through: 15 block, add 2 Wounds to HAND.
+    {CardId::PowerThrough, {"Power Through", 1, 0, 1, 15, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Wound, 2, GeneratedPile::Hand}},
+    {CardId::PowerThroughPlus, {"Power Through+", 1, 0, 1, 20, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Wound, 2, GeneratedPile::Hand}},
+    // Immolate: 21 AoE damage, add a Burn to the DISCARD pile.
+    {CardId::Immolate, {"Immolate", 2, 21, 1, 0, CardTarget::AllEnemies, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Burn, 1, GeneratedPile::Discard}},
+    {CardId::ImmolatePlus, {"Immolate+", 2, 28, 1, 0, CardTarget::AllEnemies, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Burn, 1, GeneratedPile::Discard}},
+    // Reckless Charge: 7 damage, SHUFFLE a Dazed into the draw pile.
+    {CardId::RecklessCharge, {"Reckless Charge", 0, 7, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Dazed, 1, GeneratedPile::ShuffleDraw}},
+    {CardId::RecklessChargePlus, {"Reckless Charge+", 0, 10, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Dazed, 1, GeneratedPile::ShuffleDraw}},
+    // Anger: 6 damage, add a copy of ITSELF to the discard pile.
+    {CardId::Anger, {"Anger", 0, 6, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 1, GeneratedPile::Discard, /*generates_self_copy=*/true}},
+    {CardId::AngerPlus, {"Anger+", 0, 8, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 1, GeneratedPile::Discard, /*generates_self_copy=*/true}},
 };
 
 // Whether a card needs the player to PICK a specific enemy slot (ROB-80). Only

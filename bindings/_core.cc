@@ -189,7 +189,19 @@ PYBIND11_MODULE(_core, m) {
       .value("Rampage", CardId::Rampage)
       .value("RampagePlus", CardId::RampagePlus)
       .value("SearingBlow", CardId::SearingBlow)
-      .value("SearingBlowPlus", CardId::SearingBlowPlus);
+      .value("SearingBlowPlus", CardId::SearingBlowPlus)
+      .value("Wound", CardId::Wound)
+      .value("Burn", CardId::Burn)
+      .value("WildStrike", CardId::WildStrike)
+      .value("WildStrikePlus", CardId::WildStrikePlus)
+      .value("PowerThrough", CardId::PowerThrough)
+      .value("PowerThroughPlus", CardId::PowerThroughPlus)
+      .value("Immolate", CardId::Immolate)
+      .value("ImmolatePlus", CardId::ImmolatePlus)
+      .value("RecklessCharge", CardId::RecklessCharge)
+      .value("RecklessChargePlus", CardId::RecklessChargePlus)
+      .value("Anger", CardId::Anger)
+      .value("AngerPlus", CardId::AngerPlus);
 
   // EnemyKind (ROB-79) — so the TUI can name per-slot enemies via enemy_kinds().
   py::enum_<EnemyKind>(m, "EnemyKind")

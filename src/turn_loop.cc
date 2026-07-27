@@ -227,6 +227,25 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
     a.amount = data.lose_hp;
     q.push_back(a);
   }
+  // Generated cards (Wild Strike's Wound, Power Through's Wounds, Immolate's
+  // Burn, Anger's self-copy). Queued after the card's own effects so e.g.
+  // Power Through's Wounds cannot be caught by its own block calculation.
+  if (data.generated_count > 0) {
+    for (int i = 0; i < data.generated_count; ++i) {
+      Action a;
+      a.kind = ActionKind::AddCardToPile;
+      a.amount = static_cast<int>(data.generated_pile);
+      if (data.generates_self_copy) {
+        // Anger: the copy inherits this instance's state.
+        a.card = card_id;
+        a.card_bonus_damage = played.bonus_damage;
+        a.card_upgrades = played.upgrades;
+      } else {
+        a.card = data.generated_card;
+      }
+      q.push_back(a);
+    }
+  }
   // Dropkick: if the TARGET is Vulnerable, gain 1 energy and draw 1. Checked at
   // translation, i.e. against the Vulnerable state before this card's own
   // damage — which is what the player sees when choosing the card.

@@ -67,6 +67,13 @@ constexpr std::array<CardId, kNumCardTypes> kObsCardOrder = {
     // individual damage is carried in the choice block's payload instead.
     CardId::Rampage, CardId::RampagePlus, CardId::SearingBlow,
     CardId::SearingBlowPlus,
+    // Player-generated status cards.
+    CardId::Wound, CardId::Burn,
+    // Cards that generate other cards.
+    CardId::WildStrike, CardId::WildStrikePlus, CardId::PowerThrough,
+    CardId::PowerThroughPlus, CardId::Immolate, CardId::ImmolatePlus,
+    CardId::RecklessCharge, CardId::RecklessChargePlus, CardId::Anger,
+    CardId::AngerPlus,
 };
 static_assert(kObsCardOrder.size() == kNumCardTypes,
               "kObsCardOrder must list every card type");

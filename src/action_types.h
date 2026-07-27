@@ -54,6 +54,9 @@ enum class ActionKind {
   Wake,           // set target's is_asleep = false
   ExhaustCard,    // put `card` in the exhaust pile (played or generated)
   DiscardCard,    // put `card` in the discard pile
+  AddCardToPile,  // generate a card into a pile (Wild Strike's Wound, Power
+                  // Through's Wounds, Immolate's Burn, Anger's self-copy).
+                  // `amount` is the GeneratedPile.
   EnemyEscape,    // target flees: hp -> 0, NOT a death (no on-death; ROB-74)
   EnemySplit,     // target dies and spawns its split_children at its current
                   // HP (ROB-64) — the reallocation is one flat executor step
