@@ -125,12 +125,24 @@ enum class CardId {
   BarricadePlus,
   Corruption,
   CorruptionPlus,
+  // Tier E (Stage 4c) — the choice cards: each pauses resolution to let the
+  // player pick a card from a pile.
+  Armaments,
+  ArmamentsPlus,
+  Warcry,
+  WarcryPlus,
+  Headbutt,
+  HeadbuttPlus,
+  Exhume,
+  ExhumePlus,
+  DualWield,
+  DualWieldPlus,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
 // action-space size (card x target). Update CARD_DATABASE + kObsCardOrder in
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
-inline constexpr int kNumCardTypes = 102;
+inline constexpr int kNumCardTypes = 112;
 
 // A card's inherent StS type. This is a real property, NOT inferable from
 // damage/block: an Attack can gain block (Body Slam) and a Skill can deal
@@ -161,6 +173,25 @@ inline constexpr int kXCost = -2;
 // How a card's base damage is computed (Stage 4b). Most cards just use
 // CardData::damage; a few derive it from state, which is a QUERY (pulled at
 // resolution), not a stored value. Resolved by base_card_damage in query.cc.
+// ---------------------------------------------------------------------------
+// Mid-resolution player choices (Stage 4c; docs/design/decision-points.md).
+//
+// Every choice is "pick 1 of N from a labeled set". The engine builds the
+// candidate list (applying each card's filter and the canonical ordering), the
+// mask exposes it, and resolve_choice() consumes the answer. v2.0.0's
+// non-combat decisions become new ChoiceKind values with no interface change.
+// ---------------------------------------------------------------------------
+
+enum class ChoiceKind {
+  None,
+  UpgradeCardInHand,        // Armaments: upgrade a card in hand
+  HandToTopOfDraw,          // Warcry: put a hand card on top of the draw pile
+  DiscardToTopOfDraw,       // Headbutt: discard pile -> top of draw
+  ExhaustToHand,            // Exhume: exhaust pile -> hand
+  CopyAttackOrPowerInHand,  // Dual Wield: copy an Attack/Power in hand
+  // v2.0.0 (map / shop / events) appends here — no encoding change.
+};
+
 enum class DamageRule {
   Normal,           // use CardData::damage
   EqualToBlock,     // Body Slam: the player's current block
@@ -207,6 +238,15 @@ struct CardData {
   bool doubles_block = false;                 // Entrench
   bool no_draw_after = false;                 // Battle Trance
   bool bonus_if_target_vulnerable = false;    // Dropkick: +1 energy, +1 draw
+  // --- Mid-card choices (Stage 4c). `requests_choice` names the choice this
+  // card opens; the rest are its parameters, keeping the declarative pattern
+  // (the card says WHAT, the executor says HOW). ---
+  ChoiceKind requests_choice = ChoiceKind::None;
+  // Armaments+ upgrades the WHOLE hand — a shape change, not a number, so it
+  // skips the choice entirely rather than offering one.
+  bool upgrades_whole_hand = false;
+  // Dual Wield+ adds 2 copies rather than 1.
+  int choice_copies = 1;
 };
 
 // What a card becomes when upgraded (Armaments; v2's rest-site smith).
@@ -272,6 +312,12 @@ inline const std::unordered_map<CardId, CardId> CARD_UPGRADES = {
     {CardId::SeverSoul, CardId::SeverSoulPlus},
     {CardId::Barricade, CardId::BarricadePlus},
     {CardId::Corruption, CardId::CorruptionPlus},
+    // Tier E
+    {CardId::Armaments, CardId::ArmamentsPlus},
+    {CardId::Warcry, CardId::WarcryPlus},
+    {CardId::Headbutt, CardId::HeadbuttPlus},
+    {CardId::Exhume, CardId::ExhumePlus},
+    {CardId::DualWield, CardId::DualWieldPlus},
 };
 
 // Can this card be upgraded? False for already-upgraded cards and for Status
@@ -279,25 +325,6 @@ inline const std::unordered_map<CardId, CardId> CARD_UPGRADES = {
 inline bool is_upgradable(CardId id) {
   return CARD_UPGRADES.count(id) > 0;
 }
-
-// ---------------------------------------------------------------------------
-// Mid-resolution player choices (Stage 4c; docs/design/decision-points.md).
-//
-// Every choice is "pick 1 of N from a labeled set". The engine builds the
-// candidate list (applying each card's filter and the canonical ordering), the
-// mask exposes it, and resolve_choice() consumes the answer. v2.0.0's
-// non-combat decisions become new ChoiceKind values with no interface change.
-// ---------------------------------------------------------------------------
-
-enum class ChoiceKind {
-  None,
-  UpgradeCardInHand,        // Armaments: upgrade a card in hand
-  HandToTopOfDraw,          // Warcry: put a hand card on top of the draw pile
-  DiscardToTopOfDraw,       // Headbutt: discard pile -> top of draw
-  ExhaustToHand,            // Exhume: exhaust pile -> hand
-  CopyAttackOrPowerInHand,  // Dual Wield: copy an Attack/Power in hand
-  // v2.0.0 (map / shop / events) appends here — no encoding change.
-};
 
 // Upper bound on simultaneous options. Set to kNumCardTypes so a pile choice
 // can NEVER overflow: a pile cannot hold more distinct card types than exist.
@@ -314,6 +341,7 @@ struct PendingChoice {
   ChoiceKind kind = ChoiceKind::None;
   CardId source_card = CardId::Strike;  // the card that caused the pause
   bool is_optional = false;             // may the agent decline?
+  int copies = 1;                       // Dual Wield+ adds 2
   int num_options = 0;
   std::array<CardId, kNumOptionSlots> options{};
 
@@ -461,6 +489,25 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     {CardId::BarricadePlus, {"Barricade+", 2, 0, 0, 0, CardTarget::None, {}, {{Power::Barricade, 1, Target::Character}}, CardType::Power, false, false}},
     {CardId::Corruption, {"Corruption", 3, 0, 0, 0, CardTarget::None, {}, {{Power::Corruption, 1, Target::Character}}, CardType::Power, false, false}},
     {CardId::CorruptionPlus, {"Corruption+", 2, 0, 0, 0, CardTarget::None, {}, {{Power::Corruption, 1, Target::Character}}, CardType::Power, false, false}},
+    // --- Ironclad Tier E (Stage 4c): the choice cards. `requests_choice`
+    // names the pause; upgrades that change the choice's SHAPE (rather than a
+    // number) are parameters, not new ChoiceKinds.
+    // Armaments: gain 5 Block, upgrade a card in hand. Armaments+ upgrades the
+    // WHOLE hand, so it opens no choice at all.
+    {CardId::Armaments, {"Armaments", 1, 0, 0, 5, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::UpgradeCardInHand}},
+    {CardId::ArmamentsPlus, {"Armaments+", 1, 0, 0, 5, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, /*upgrades_whole_hand=*/true}},
+    // Warcry: draw, put a hand card on top of the draw pile, Exhaust.
+    {CardId::Warcry, {"Warcry", 0, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, /*exhaust=*/true, false, false, /*draw=*/1, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::HandToTopOfDraw}},
+    {CardId::WarcryPlus, {"Warcry+", 0, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, /*exhaust=*/true, false, false, /*draw=*/2, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::HandToTopOfDraw}},
+    // Headbutt: damage, then discard -> top of draw.
+    {CardId::Headbutt, {"Headbutt", 1, 9, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::DiscardToTopOfDraw}},
+    {CardId::HeadbuttPlus, {"Headbutt+", 1, 12, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::DiscardToTopOfDraw}},
+    // Exhume: exhaust pile -> hand. Exhausts itself (so it can't retrieve itself).
+    {CardId::Exhume, {"Exhume", 1, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, /*exhaust=*/true, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::ExhaustToHand}},
+    {CardId::ExhumePlus, {"Exhume+", 0, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, /*exhaust=*/true, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::ExhaustToHand}},
+    // Dual Wield: copy an Attack/Power in hand. The + adds 2 copies.
+    {CardId::DualWield, {"Dual Wield", 1, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::CopyAttackOrPowerInHand, false, /*choice_copies=*/1}},
+    {CardId::DualWieldPlus, {"Dual Wield+", 1, 0, 0, 0, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::CopyAttackOrPowerInHand, false, /*choice_copies=*/2}},
 };
 
 // Whether a card needs the player to PICK a specific enemy slot (ROB-80). Only

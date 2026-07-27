@@ -10,16 +10,14 @@
 using namespace minispire;
 using minispire::testing::make_minimal_state;
 
-// PendingChoice::source_card records which card caused the pause; it is
-// informational at this stage (the five choice cards — Armaments, Warcry,
-// Headbutt, Exhume, Dual Wield — arrive in step 4). These tests drive the
-// mechanism directly, so any CardId serves as the source.
+// These tests drive the choice MECHANISM directly (build_choice /
+// resolve_choice + a hand-built queue) rather than through a real card, so the
+// source card is informational. Tests for the actual cards — Armaments,
+// Warcry, Headbutt, Exhume, Dual Wield — live further down.
 constexpr CardId kSourceStandIn = CardId::Strike;
 
 // ============================================================================
-// Stage 4c step 2: the pause/resume mechanism.
-// No card requests a choice yet (that is step 4), so these drive the machinery
-// directly through build_choice / resolve_choice and a hand-built queue.
+// Stage 4c step 2: the pause/resume mechanism, driven directly.
 // ============================================================================
 
 namespace {
@@ -27,6 +25,9 @@ namespace {
 // Push a RequestChoice + a trailing marker action, then drain. The marker
 // (gain 7 block) proves whether the REMAINDER of the queue was suspended
 // rather than executed through the pause.
+//
+// NOTE: a choice with exactly ONE legal option auto-resolves (StS behaviour),
+// so tests that want an actual pause must offer at least two options.
 void request_choice_then_marker(CombatState& s, ChoiceKind kind,
                                 CardId source) {
   ActionQueue q;
@@ -113,6 +114,7 @@ TEST(Choice, ChoicesReadTheCorrectSourcePile) {
 TEST(Choice, RequestChoiceSuspendsTheRestOfTheQueue) {
   CombatState s = make_minimal_state(0);
   s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});  // 2nd option -> real pause
 
   request_choice_then_marker(s, ChoiceKind::UpgradeCardInHand,
                              kSourceStandIn);
@@ -126,6 +128,7 @@ TEST(Choice, RequestChoiceSuspendsTheRestOfTheQueue) {
 TEST(Choice, ResolveChoiceAppliesTheChoiceAndResumesTheQueue) {
   CombatState s = make_minimal_state(0);
   s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});  // 2nd option -> real pause
 
   request_choice_then_marker(s, ChoiceKind::UpgradeCardInHand,
                              kSourceStandIn);
@@ -153,6 +156,7 @@ TEST(Choice, NoLegalOptionsSkipsThePauseEntirely) {
 TEST(Choice, ResolveChoiceRejectsInvalidIndicesWithoutCorruptingState) {
   CombatState s = make_minimal_state(0);
   s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});  // 2nd option -> real pause
   request_choice_then_marker(s, ChoiceKind::UpgradeCardInHand,
                              kSourceStandIn);
   ASSERT_TRUE(s.pending_choice.active());
@@ -178,6 +182,7 @@ TEST(Choice, ResolveChoiceOnAnUnpausedStateIsRejected) {
 TEST(Choice, DecliningIsOnlyLegalForOptionalChoices) {
   CombatState s = make_minimal_state(0);
   s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});  // 2nd option -> real pause
   request_choice_then_marker(s, ChoiceKind::UpgradeCardInHand,
                              kSourceStandIn);
 
@@ -238,12 +243,16 @@ TEST(Choice, PauseSurvivesCloneAndResumesIndependentlyOnTheClone) {
 TEST(Choice, WarcryMovesAHandCardToTopOfDraw) {
   CombatState s = make_minimal_state(0);
   s.current_hand.push_back(Card{CardId::Bash});
+  s.current_hand.push_back(Card{CardId::Strike});  // 2nd option -> real pause
   s.draw_pile.push_back(Card{CardId::Defend});
 
   request_choice_then_marker(s, ChoiceKind::HandToTopOfDraw, CardId::Strike);
-  ASSERT_TRUE(resolve_choice(s, 0));
+  // Options are ascending by CardId: [Strike, Bash]. Pick Bash (index 1).
+  ASSERT_EQ(s.pending_choice.options[1], CardId::Bash);
+  ASSERT_TRUE(resolve_choice(s, 1));
 
-  EXPECT_TRUE(s.current_hand.empty());
+  ASSERT_EQ(s.current_hand.size(), 1u);  // the filler Strike remains
+  EXPECT_EQ(s.current_hand[0].card_id, CardId::Strike);
   ASSERT_EQ(s.draw_pile.size(), 2u);
   EXPECT_EQ(s.draw_pile.back().card_id, CardId::Bash);  // back() == top
 }
@@ -251,12 +260,14 @@ TEST(Choice, WarcryMovesAHandCardToTopOfDraw) {
 TEST(Choice, HeadbuttMovesADiscardCardToTopOfDraw) {
   CombatState s = make_minimal_state(0);
   s.discard_pile.push_back(Card{CardId::Bash});
+  s.discard_pile.push_back(Card{CardId::Strike});  // 2nd option -> real pause
 
   request_choice_then_marker(s, ChoiceKind::DiscardToTopOfDraw,
                              CardId::Strike);
-  ASSERT_TRUE(resolve_choice(s, 0));
+  ASSERT_EQ(s.pending_choice.options[1], CardId::Bash);
+  ASSERT_TRUE(resolve_choice(s, 1));
 
-  EXPECT_TRUE(s.discard_pile.empty());
+  ASSERT_EQ(s.discard_pile.size(), 1u);  // the filler Strike remains
   ASSERT_EQ(s.draw_pile.size(), 1u);
   EXPECT_EQ(s.draw_pile.back().card_id, CardId::Bash);
 }
@@ -264,12 +275,14 @@ TEST(Choice, HeadbuttMovesADiscardCardToTopOfDraw) {
 TEST(Choice, ExhumeMovesAnExhaustedCardToHand) {
   CombatState s = make_minimal_state(0);
   s.exhaust_pile.push_back(Card{CardId::Bash});
+  s.exhaust_pile.push_back(Card{CardId::Strike});  // 2nd option -> real pause
 
   request_choice_then_marker(s, ChoiceKind::ExhaustToHand, CardId::Strike);
-  ASSERT_TRUE(resolve_choice(s, 0));
+  ASSERT_EQ(s.pending_choice.options[1], CardId::Bash);
+  ASSERT_TRUE(resolve_choice(s, 1));
 
   // The one sanctioned removal from the exhaust pile (it only grows otherwise).
-  EXPECT_TRUE(s.exhaust_pile.empty());
+  ASSERT_EQ(s.exhaust_pile.size(), 1u);  // the filler Strike remains
   ASSERT_EQ(s.current_hand.size(), 1u);
   EXPECT_EQ(s.current_hand[0].card_id, CardId::Bash);
 }
@@ -277,24 +290,28 @@ TEST(Choice, ExhumeMovesAnExhaustedCardToHand) {
 TEST(Choice, DualWieldCopiesWithoutRemovingTheOriginal) {
   CombatState s = make_minimal_state(0);
   s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Bash});  // 2nd option -> real pause
 
   request_choice_then_marker(s, ChoiceKind::CopyAttackOrPowerInHand,
                              CardId::Strike);
-  ASSERT_TRUE(resolve_choice(s, 0));
+  ASSERT_TRUE(resolve_choice(s, 0));  // copy the Strike
 
-  ASSERT_EQ(s.current_hand.size(), 2u);  // original + copy
+  ASSERT_EQ(s.current_hand.size(), 3u);  // Strike, Bash, + the copy
   EXPECT_EQ(s.current_hand[0].card_id, CardId::Strike);
-  EXPECT_EQ(s.current_hand[1].card_id, CardId::Strike);
+  EXPECT_EQ(s.current_hand[2].card_id, CardId::Strike);  // the copy
 }
 
 TEST(Choice, UpgradeAffectsOnlyOneCopyOfADuplicate) {
   CombatState s = make_minimal_state(0);
   s.current_hand.push_back(Card{CardId::Strike});
   s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});  // 2nd distinct option
 
   request_choice_then_marker(s, ChoiceKind::UpgradeCardInHand,
                              kSourceStandIn);
-  ASSERT_EQ(s.pending_choice.num_options, 1);  // deduped to one option
+  // Strike appears twice but dedupes to ONE option; Defend is the second.
+  ASSERT_EQ(s.pending_choice.num_options, 2);
+  ASSERT_EQ(s.pending_choice.options[0], CardId::Strike);
   ASSERT_TRUE(resolve_choice(s, 0));
 
   EXPECT_EQ(s.current_hand[0].card_id, CardId::StrikePlus);
@@ -524,4 +541,259 @@ TEST(ChoiceEncoding, ObsAndMaskAgreeOnWhichSlotsAreOffered) {
     const bool legal = mask[kFirstOptionSlot + i] != 0;
     EXPECT_EQ(occupied, legal) << "obs/mask disagree at slot " << i;
   }
+}
+
+// ============================================================================
+// Stage 4c step 4: the five choice cards, driven end-to-end through
+// apply_action (play the card -> pause -> answer with a slot action).
+// ============================================================================
+
+namespace {
+
+// Play `card` from hand via the real action path, with enough energy.
+bool play(CombatState& s, CardId card, int target = 0) {
+  s.current_hand.push_back(Card{card});
+  s.character.energy = 3;
+  return apply_action(s, static_cast<int>(card) * kMaxEnemies + target);
+}
+
+}  // namespace
+
+TEST(ChoiceCards, ArmamentsGainsBlockAndUpgradesTheChosenCard) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(play(s, CardId::Armaments));
+
+  EXPECT_EQ(s.character.current_block, 5);  // Armaments gains 5 Block
+  ASSERT_TRUE(s.pending_choice.active());
+  ASSERT_EQ(s.pending_choice.kind, ChoiceKind::UpgradeCardInHand);
+
+  // Answer via the action space, as an agent would.
+  ASSERT_EQ(s.pending_choice.options[0], CardId::Strike);
+  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 0));
+
+  EXPECT_FALSE(s.pending_choice.active());
+  EXPECT_EQ(s.current_hand[0].card_id, CardId::StrikePlus);
+  EXPECT_EQ(s.current_hand[1].card_id, CardId::Defend);  // untouched
+}
+
+TEST(ChoiceCards, ArmamentsPlusUpgradesTheWholeHandWithNoChoice) {
+  // The upgrade changes the choice's SHAPE, so there is no pause at all.
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Slimed});  // Status: not upgradable
+
+  ASSERT_TRUE(play(s, CardId::ArmamentsPlus));
+
+  EXPECT_FALSE(s.pending_choice.active());
+  EXPECT_EQ(s.character.current_block, 5);
+  EXPECT_EQ(s.current_hand[0].card_id, CardId::StrikePlus);
+  EXPECT_EQ(s.current_hand[1].card_id, CardId::DefendPlus);
+  EXPECT_EQ(s.current_hand[2].card_id, CardId::Slimed);  // unchanged
+}
+
+TEST(ChoiceCards, WarcryDrawsFirstThenChoosesFromTheResultingHand) {
+  // Ordering matters: Warcry draws, and only THEN do you pick a card — so a
+  // just-drawn card must be a legal option.
+  CombatState s = make_minimal_state(0);
+  s.draw_pile.push_back(Card{CardId::Bash});  // back() is drawn first
+  s.current_hand.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(play(s, CardId::Warcry));
+
+  ASSERT_TRUE(s.pending_choice.active());
+  // The drawn Bash is on offer alongside the Defend already in hand.
+  bool saw_bash = false;
+  for (int i = 0; i < s.pending_choice.num_options; ++i) {
+    if (s.pending_choice.options[i] == CardId::Bash) saw_bash = true;
+  }
+  EXPECT_TRUE(saw_bash) << "Warcry must draw before offering the choice";
+}
+
+TEST(ChoiceCards, WarcryExhaustsItself) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Bash});
+
+  ASSERT_TRUE(play(s, CardId::Warcry));
+  if (s.pending_choice.active()) {
+    ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 0));
+  }
+
+  ASSERT_EQ(s.exhaust_pile.size(), 1u);
+  EXPECT_EQ(s.exhaust_pile[0].card_id, CardId::Warcry);
+  EXPECT_TRUE(s.discard_pile.empty());  // exhausted, not discarded
+}
+
+TEST(ChoiceCards, HeadbuttDealsDamageThenMovesADiscardCardToTopOfDraw) {
+  CombatState s = make_minimal_state(0);
+  const int hp = s.enemies[0].hp;
+  s.discard_pile.push_back(Card{CardId::Bash});
+  s.discard_pile.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(play(s, CardId::Headbutt));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 9);  // damage resolves before the choice
+  ASSERT_TRUE(s.pending_choice.active());
+  ASSERT_EQ(s.pending_choice.options[1], CardId::Bash);
+  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 1));
+
+  ASSERT_EQ(s.draw_pile.size(), 1u);
+  EXPECT_EQ(s.draw_pile.back().card_id, CardId::Bash);
+}
+
+TEST(ChoiceCards, HeadbuttWithASingleDiscardCardAutoResolves) {
+  // StS: "if there is only one card in your discard pile, it will
+  // automatically be placed on top of your draw pile" — no prompt.
+  CombatState s = make_minimal_state(0);
+  s.discard_pile.push_back(Card{CardId::Bash});
+
+  ASSERT_TRUE(play(s, CardId::Headbutt));
+
+  EXPECT_FALSE(s.pending_choice.active());  // never paused
+  ASSERT_EQ(s.draw_pile.size(), 1u);
+  EXPECT_EQ(s.draw_pile.back().card_id, CardId::Bash);
+}
+
+TEST(ChoiceCards, HeadbuttWithAnEmptyDiscardStillDealsDamage) {
+  CombatState s = make_minimal_state(0);
+  const int hp = s.enemies[0].hp;
+  ASSERT_TRUE(s.discard_pile.empty());
+
+  ASSERT_TRUE(play(s, CardId::Headbutt));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 9);
+  EXPECT_FALSE(s.pending_choice.active());
+}
+
+TEST(ChoiceCards, ExhumeRetrievesFromExhaustAndCannotRetrieveItself) {
+  CombatState s = make_minimal_state(0);
+  s.exhaust_pile.push_back(Card{CardId::Bash});
+  s.exhaust_pile.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(play(s, CardId::Exhume));
+
+  ASSERT_TRUE(s.pending_choice.active());
+  // Exhume is in flight (already out of hand) when the choice is built, so it
+  // is not among its own options.
+  for (int i = 0; i < s.pending_choice.num_options; ++i) {
+    EXPECT_NE(s.pending_choice.options[i], CardId::Exhume);
+  }
+  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 1));  // Bash
+
+  EXPECT_EQ(s.current_hand.back().card_id, CardId::Bash);
+  // Exhume itself exhausts.
+  bool exhume_exhausted = false;
+  for (const Card& c : s.exhaust_pile) {
+    if (c.card_id == CardId::Exhume) exhume_exhausted = true;
+  }
+  EXPECT_TRUE(exhume_exhausted);
+}
+
+TEST(ChoiceCards, DualWieldAddsOneCopyAndThePlusAddsTwo) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Bash});
+
+  ASSERT_TRUE(play(s, CardId::DualWield));
+  ASSERT_TRUE(s.pending_choice.active());
+  EXPECT_EQ(s.pending_choice.copies, 1);
+  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 0));  // copy the Strike
+
+  int strikes = 0;
+  for (const Card& c : s.current_hand) {
+    if (c.card_id == CardId::Strike) strikes++;
+  }
+  EXPECT_EQ(strikes, 2);  // original + 1 copy
+
+  // The upgraded version adds two.
+  CombatState s2 = make_minimal_state(0);
+  s2.current_hand.push_back(Card{CardId::Strike});
+  s2.current_hand.push_back(Card{CardId::Bash});
+  ASSERT_TRUE(play(s2, CardId::DualWieldPlus));
+  ASSERT_TRUE(s2.pending_choice.active());
+  EXPECT_EQ(s2.pending_choice.copies, 2);
+  ASSERT_TRUE(apply_action(s2, kFirstOptionSlot + 0));
+
+  int strikes2 = 0;
+  for (const Card& c : s2.current_hand) {
+    if (c.card_id == CardId::Strike) strikes2++;
+  }
+  EXPECT_EQ(strikes2, 3);  // original + 2 copies
+}
+
+TEST(ChoiceCards, DualWieldOnlyOffersAttacksAndPowers) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});   // Attack
+  s.current_hand.push_back(Card{CardId::Inflame});  // Power
+  s.current_hand.push_back(Card{CardId::Defend});   // Skill: excluded
+
+  ASSERT_TRUE(play(s, CardId::DualWield));
+
+  ASSERT_TRUE(s.pending_choice.active());
+  for (int i = 0; i < s.pending_choice.num_options; ++i) {
+    const CardType t = CARD_DATABASE.at(s.pending_choice.options[i]).type;
+    EXPECT_TRUE(t == CardType::Attack || t == CardType::Power);
+    EXPECT_NE(s.pending_choice.options[i], CardId::Defend);
+  }
+}
+
+TEST(ChoiceCards, CopiesOverflowToDiscardWhenTheHandIsFull) {
+  // StS: "if a copy surpasses the hand size limit, it goes to the discard
+  // pile" — verified for Dual Wield.
+  CombatState s = make_minimal_state(0);
+  for (int i = 0; i < HAND_SIZE_LIMIT - 1; ++i) {
+    s.current_hand.push_back(Card{CardId::Strike});
+  }
+  s.current_hand.push_back(Card{CardId::Bash});  // hand now at the limit
+  ASSERT_EQ(static_cast<int>(s.current_hand.size()), HAND_SIZE_LIMIT);
+
+  // Playing Dual Wield frees one slot (it leaves the hand), so one copy fits
+  // and the second (DualWield+) must overflow.
+  ASSERT_TRUE(play(s, CardId::DualWieldPlus));
+  ASSERT_TRUE(s.pending_choice.active());
+  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 0));
+
+  EXPECT_LE(static_cast<int>(s.current_hand.size()), HAND_SIZE_LIMIT);
+  EXPECT_FALSE(s.discard_pile.empty()) << "overflow copy must go to discard";
+}
+
+TEST(ChoiceCards, PlayingAChoiceCardMasksOffCombatUntilAnswered) {
+  // The agent cannot keep playing cards while a choice is open.
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(play(s, CardId::Armaments));
+  ASSERT_TRUE(s.pending_choice.active());
+
+  const auto mask = valid_actions(s);
+  EXPECT_FALSE(mask[kEndTurnAction]);
+  EXPECT_FALSE(mask[static_cast<int>(CardId::Strike) * kMaxEnemies]);
+  EXPECT_TRUE(mask[kFirstOptionSlot + 0]);
+}
+
+TEST(ChoiceCards, ChoiceCardPauseSurvivesCloneEndToEnd) {
+  // The MCTS property, but through the real card path rather than a synthetic
+  // queue: clone a paused state and resolve the branches differently.
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});
+  ASSERT_TRUE(play(s, CardId::Armaments));
+  ASSERT_TRUE(s.pending_choice.active());
+  ASSERT_EQ(s.pending_choice.num_options, 2);
+
+  CombatState a = s.clone();
+  CombatState b = s.clone();
+  ASSERT_TRUE(apply_action(a, kFirstOptionSlot + 0));  // upgrade Strike
+  ASSERT_TRUE(apply_action(b, kFirstOptionSlot + 1));  // upgrade Defend
+
+  EXPECT_EQ(a.current_hand[0].card_id, CardId::StrikePlus);
+  EXPECT_EQ(a.current_hand[1].card_id, CardId::Defend);
+  EXPECT_EQ(b.current_hand[0].card_id, CardId::Strike);
+  EXPECT_EQ(b.current_hand[1].card_id, CardId::DefendPlus);
+  EXPECT_TRUE(s.pending_choice.active());  // parent untouched
 }

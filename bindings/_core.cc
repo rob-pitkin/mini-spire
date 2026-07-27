@@ -173,7 +173,18 @@ PYBIND11_MODULE(_core, m) {
       .value("Barricade", CardId::Barricade)
       .value("BarricadePlus", CardId::BarricadePlus)
       .value("Corruption", CardId::Corruption)
-      .value("CorruptionPlus", CardId::CorruptionPlus);
+      .value("CorruptionPlus", CardId::CorruptionPlus)
+      // Tier E (Stage 4c) — the choice cards.
+      .value("Armaments", CardId::Armaments)
+      .value("ArmamentsPlus", CardId::ArmamentsPlus)
+      .value("Warcry", CardId::Warcry)
+      .value("WarcryPlus", CardId::WarcryPlus)
+      .value("Headbutt", CardId::Headbutt)
+      .value("HeadbuttPlus", CardId::HeadbuttPlus)
+      .value("Exhume", CardId::Exhume)
+      .value("ExhumePlus", CardId::ExhumePlus)
+      .value("DualWield", CardId::DualWield)
+      .value("DualWieldPlus", CardId::DualWieldPlus);
 
   // EnemyKind (ROB-79) — so the TUI can name per-slot enemies via enemy_kinds().
   py::enum_<EnemyKind>(m, "EnemyKind")

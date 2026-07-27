@@ -141,7 +141,7 @@ TEST(CardUpgrades, KnownPairsAreCorrect) {
   EXPECT_EQ(upgraded_card(CardId::Whirlwind), CardId::WhirlwindPlus);
   EXPECT_EQ(upgraded_card(CardId::DemonForm), CardId::DemonFormPlus);
   EXPECT_EQ(upgraded_card(CardId::Corruption), CardId::CorruptionPlus);
-  EXPECT_EQ(CARD_UPGRADES.size(), 50u);
+  EXPECT_EQ(CARD_UPGRADES.size(), 55u);
   // Status cards: not upgradable (StS).
   EXPECT_FALSE(is_upgradable(CardId::Slimed));
   EXPECT_FALSE(is_upgradable(CardId::Dazed));

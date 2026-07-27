@@ -89,6 +89,7 @@ struct Action {
   Power power = Power::None;       // ApplyPower / RemovePower payload
   MoveName move = MoveName::None;  // RewriteIntent payload
   bool card_block = false;  // GainBlock from a played card: apply Dex/Frail
+  int copies = 1;  // ApplyChoice: how many copies to add (Dual Wield+ = 2)
 };
 
 // Fixed-capacity ring buffer (no steady-state allocation — constraint §3.3).

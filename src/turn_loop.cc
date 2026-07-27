@@ -236,16 +236,25 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   // A Power card VANISHES (StS): it enters no pile at all, so it can never be
   // Exhumed or replayed — and, not being exhausted, it doesn't trigger Feel No
   // Pain / Dark Embrace.
+  // A card that opens a choice stays IN FLIGHT until the choice resolves, so
+  // its pile placement is deferred to after the RequestChoice below. Otherwise
+  // the card would be an option for its own effect: Exhume could retrieve
+  // itself, and Headbutt's own discarded copy would turn a should-auto-resolve
+  // single-card discard pile into a two-option prompt.
+  const bool defers_pile_move = data.requests_choice != ChoiceKind::None;
+  Action pile_move;
+  bool has_pile_move = false;
   if (data.type != CardType::Power) {
     // Corruption also EXHAUSTS every Skill played (not just making them free).
     const bool corrupted_skill =
         data.type == CardType::Skill &&
         get_status(state.character.powers, Power::Corruption) > 0;
-    Action a;
-    a.kind = (data.exhaust || corrupted_skill) ? ActionKind::ExhaustCard
-                                               : ActionKind::DiscardCard;
-    a.card = card_id;
-    q.push_back(a);
+    pile_move.kind = (data.exhaust || corrupted_skill)
+                         ? ActionKind::ExhaustCard
+                         : ActionKind::DiscardCard;
+    pile_move.card = card_id;
+    has_pile_move = true;
+    if (!defers_pile_move) q.push_back(pile_move);
   }
   // CardPlayed hook (Gremlin Nob Enrage), then deferred deaths, then draw.
   {
@@ -261,9 +270,28 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
     a.amount = data.draw;
     q.push_back(a);
   }
+  // Armaments+: upgrade the WHOLE hand — a shape change from the base card's
+  // single choice, so it resolves inline with no pause.
+  if (data.upgrades_whole_hand) {
+    for (Card& c : state.current_hand) c.card_id = upgraded_card(c.card_id);
+  }
+  // The card's choice (Stage 4c) queues LAST, after draw: Warcry draws first
+  // and you then pick from the resulting hand. The card itself has already
+  // left the hand (it is in flight), so it can never be its own option —
+  // which is what stops Exhume retrieving itself.
+  if (data.requests_choice != ChoiceKind::None) {
+    Action a;
+    a.kind = ActionKind::RequestChoice;
+    a.amount = static_cast<int>(data.requests_choice);
+    a.card = card_id;
+    q.push_back(a);
+    // The deferred pile move lands after the choice — the card was in flight
+    // for the whole of its own resolution.
+    if (has_pile_move) q.push_back(pile_move);
+  }
 
   // 4. Drain to completion — every mutation is a flat, sequential step; no
-  // live reference or open loop spans a mutation.
+  // live reference or open loop spans a mutation. May pause here on a choice.
   drain(state, q, ctx);
 
   // Battle Trance: no FURTHER draws this turn. Set after the drain so the

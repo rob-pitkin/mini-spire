@@ -472,6 +472,17 @@ bool valid_enemy_slot(const CombatState& state, int slot) {
   return slot >= 0 && slot < static_cast<int>(state.enemies.size());
 }
 
+// Add a card to the hand, overflowing to the DISCARD pile if the hand is full
+// (StS: "if a copy surpasses the hand size limit, it goes to the discard pile"
+// — verified for Dual Wield; the same limit applies to Exhume).
+void add_card_to_hand(CombatState& state, CardId id) {
+  if (static_cast<int>(state.current_hand.size()) >= HAND_SIZE_LIMIT) {
+    move_to_discard(state, Card{id});
+  } else {
+    state.current_hand.push_back(Card{id});
+  }
+}
+
 // Remove one instance of `id` from a pile. Returns false if absent.
 bool take_from_pile(std::vector<Card>& pile, CardId id) {
   for (auto it = pile.begin(); it != pile.end(); ++it) {
@@ -719,7 +730,22 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // (e.g. Exhume with an empty exhaust pile). No pause, drain continues.
       PendingChoice pc = build_choice(state, static_cast<ChoiceKind>(a.amount),
                                       a.card);
+      pc.copies = CARD_DATABASE.at(a.card).choice_copies;  // Dual Wield+ = 2
       if (pc.num_options == 0) break;
+      if (pc.num_options == 1 && !pc.is_optional) {
+        // Exactly one legal option: StS applies it without prompting ("if
+        // there is only one card in your discard pile, it will automatically
+        // be placed on top of your draw pile"). No pause — a choice with one
+        // answer has no decision content, and pausing would cost the agent a
+        // step whose mask has a single legal action.
+        Action apply;
+        apply.kind = ActionKind::ApplyChoice;
+        apply.card = pc.options[0];
+        apply.amount = a.amount;
+        apply.copies = pc.copies;
+        q.push_front(apply);
+        break;
+      }
       state.pending_choice = pc;
       // The drain loop sees the active choice and suspends the remainder.
       break;
@@ -752,12 +778,12 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
           // Exhume: exhaust -> hand. The exhaust pile only grows otherwise
           // (Rob's invariant), and this is the one sanctioned removal.
           if (take_from_pile(state.exhaust_pile, a.card)) {
-            state.current_hand.push_back(Card{a.card});
+            add_card_to_hand(state, a.card);
           }
           break;
         case ChoiceKind::CopyAttackOrPowerInHand:
-          // Dual Wield: ADD a copy; the original stays in hand.
-          state.current_hand.push_back(Card{a.card});
+          // Dual Wield: ADD copies; the original stays in hand. The + adds 2.
+          for (int i = 0; i < a.copies; ++i) add_card_to_hand(state, a.card);
           break;
         case ChoiceKind::None:
           break;
@@ -878,6 +904,7 @@ bool resolve_choice(CombatState& state, int option_index) {
   }
 
   const ChoiceKind kind = pc.kind;
+  const int copies = pc.copies;
   const CardId chosen = declining ? CardId::Strike : pc.options[option_index];
 
   // Clear the pause BEFORE resuming: the resumed drain may itself request
@@ -892,6 +919,7 @@ bool resolve_choice(CombatState& state, int option_index) {
     a.kind = ActionKind::ApplyChoice;
     a.card = chosen;
     a.amount = static_cast<int>(kind);
+    a.copies = copies;
     q.push_front(a);  // the choice applies before the card's remaining actions
   }
 
