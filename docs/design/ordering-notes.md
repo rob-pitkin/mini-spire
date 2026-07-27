@@ -175,6 +175,49 @@ half also means Corruption feeds Feel No Pain / Dark Embrace.
 The bonus is evaluated at translation, against the target's Vulnerable state
 as the player sees it when choosing — not after the card's own hit resolves.
 
+## Stage 4c (mid-card choices)
+
+### 18. A choice card stays IN FLIGHT until its choice resolves
+
+The played card's pile move is queued *after* its `RequestChoice`, so the card
+is in no pile while its own choice is being built. Without this, **Exhume could
+retrieve itself**, and **Headbutt's own discarded copy** turned a
+should-auto-resolve single-card discard pile into a two-option prompt. Both
+were caught by tests and fixed by the deferral; matches StS, where a card is in
+flight for the whole of its resolution.
+
+### 19. A single legal option auto-resolves
+
+Wiki: "if there is only one card in your discard pile, it will automatically be
+placed on top of your draw pile." One legal option means no decision content,
+so the engine applies it and the drain continues — no pause, and the agent
+doesn't spend a step on a mask with exactly one legal action. Zero options
+likewise skips silently (Exhume with an empty exhaust pile still plays).
+
+### 20. Choice-shape upgrades are parameters, not new ChoiceKinds
+
+Armaments+ upgrades the **whole hand** (no choice at all, `upgrades_whole_hand`)
+and Dual Wield+ adds **2 copies** (`choice_copies`). Both are data on the card;
+the `ChoiceKind` vocabulary stays at one entry per *kind of decision*, which is
+what keeps v2's map/shop/event additions cheap.
+
+### 21. Warcry draws BEFORE offering its choice
+
+Card text order is "Draw 1 card. Put a card from your hand onto the top of your
+draw pile" — so a just-drawn card must be a legal option. The `RequestChoice`
+is queued after `DrawCards`, and a test pins that the drawn card is on offer.
+
+### 22. Copies overflow to the discard pile at the hand limit
+
+Wiki (Dual Wield): "if a copy surpasses the hand size limit, it goes to the
+discard pile." Applied to Exhume as well, via a shared `add_card_to_hand`.
+
+### 23. A terminal outcome discards a pending choice
+
+Consistent with the Offering rule (§note 7 of Stage 4a's death precedence): if
+the fight ends mid-resolution, the pause and its suspended queue are dropped
+rather than left awaiting an answer on a finished fight.
+
 ## RNG stream
 
 Unchanged by the queue: within a card resolution, only draws consume RNG;

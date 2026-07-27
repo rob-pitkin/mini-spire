@@ -103,6 +103,23 @@ Checked in the code, not assumed — several overturned earlier assumptions:
 
 ## 5. The accepted design: the Option Slot Channel
 
+> **As built (Stage 4c complete).** The worked numbers below use the 102-card
+> pool this doc was written against. Tier E's ten choice cards then took the
+> pool to **112**, and every constant scaled with it exactly as designed —
+> nothing was re-encoded:
+>
+> | | at design time (102 cards) | as built (112 cards) |
+> |---|---|---|
+> | actions | 614 | **674** |
+> | obs floats | 834 | **904** |
+> | end turn | 510 | **560** |
+> | first option slot | 511 | **561** |
+> | decline | 613 | **673** |
+>
+> The slot count is `kNumCardTypes`, so it grew with the pool and overflow
+> stayed structurally impossible. That the numbers moved without any interface
+> rework is the property the design was chosen for.
+
 One generic mechanism for **every** decision point that is not "play a card" or
 "end turn". Derived from NLE's `menu_option_1..n` + contents-in-observation,
 sized so that truncation is impossible.
