@@ -160,16 +160,30 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   if (card_damage > 0) {
     // One DealDamage per hit per target; a multi-hit AoE (Whirlwind) sweeps
     // all targets each swing. Damage math runs at execution (Strength per hit).
-    for (int h = 0; h < hits; ++h) {
-      for (int slot : target_slots) {
+    if (data.hits_random_enemies) {
+      // Sword Boomerang: each hit rolls its own target, at EXECUTION time, so
+      // a hit that kills an enemy changes the pool for the next one.
+      for (int h = 0; h < hits; ++h) {
         Action a;
-        a.kind = ActionKind::DealDamage;
+        a.kind = ActionKind::DamageRandomEnemyAttack;
         a.actor = kPlayerSlot;
-        a.target = slot;
         a.amount = card_damage;
         a.card = card_id;
-        a.strength_mult = strength_multiplier(card_id);  // Heavy Blade 3x/5x
+        a.strength_mult = strength_multiplier(card_id);
         q.push_back(a);
+      }
+    } else {
+      for (int h = 0; h < hits; ++h) {
+        for (int slot : target_slots) {
+          Action a;
+          a.kind = ActionKind::DealDamage;
+          a.actor = kPlayerSlot;
+          a.target = slot;
+          a.amount = card_damage;
+          a.card = card_id;
+          a.strength_mult = strength_multiplier(card_id);  // Heavy Blade 3x/5x
+          q.push_back(a);
+        }
       }
     }
   }
@@ -226,6 +240,31 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
     a.kind = ActionKind::LoseHp;
     a.amount = data.lose_hp;
     q.push_back(a);
+  }
+  // Limit Break: multiply the player's Strength.
+  if (data.strength_multiply > 0) {
+    Action a;
+    a.kind = ActionKind::MultiplyStrength;
+    a.amount = data.strength_multiply;
+    q.push_back(a);
+  }
+  // Spot Weakness: Strength only if the TARGET's queued intent is an attack.
+  // Read at translation, against the intent the player can see when choosing.
+  if (data.strength_if_target_attacking > 0 && !target_slots.empty()) {
+    const Enemy& e = state.enemies[target_slots.front()];
+    bool attacking = false;
+    if (e.hp > 0 && e.last_move.has_value()) {
+      auto it = e.moves.find(*e.last_move);
+      attacking = it != e.moves.end() && it->second.damage > 0;
+    }
+    if (attacking) {
+      Action a;
+      a.kind = ActionKind::ApplyPower;
+      a.target = kPlayerSlot;
+      a.power = Power::Strength;
+      a.amount = data.strength_if_target_attacking;
+      q.push_back(a);
+    }
   }
   // Generated cards (Wild Strike's Wound, Power Through's Wounds, Immolate's
   // Burn, Anger's self-copy). Queued after the card's own effects so e.g.

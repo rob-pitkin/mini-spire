@@ -163,12 +163,20 @@ enum class CardId {
   RecklessChargePlus,
   Anger,
   AngerPlus,
+  // Simple new mechanisms: random per-hit targeting, a Strength multiplier,
+  // and an intent-conditional buff.
+  SwordBoomerang,
+  SwordBoomerangPlus,
+  LimitBreak,
+  LimitBreakPlus,
+  SpotWeakness,
+  SpotWeaknessPlus,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
 // action-space size (card x target). Update CARD_DATABASE + kObsCardOrder in
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
-inline constexpr int kNumCardTypes = 128;
+inline constexpr int kNumCardTypes = 134;
 
 // A card's inherent StS type. This is a real property, NOT inferable from
 // damage/block: an Attack can gain block (Body Slam) and a Skill can deal
@@ -328,6 +336,14 @@ struct CardData {
   GeneratedPile generated_pile = GeneratedPile::Discard;
   // Anger: adds a copy of ITSELF (rather than a fixed card) to the discard.
   bool generates_self_copy = false;
+  // Sword Boomerang: each hit picks its own random living enemy, rather than
+  // all hits landing on one chosen target.
+  bool hits_random_enemies = false;
+  // Limit Break: multiply the player's Strength (2 = double).
+  int strength_multiply = 0;
+  // Spot Weakness: grant this much Strength only if the target's queued intent
+  // is an attack.
+  int strength_if_target_attacking = 0;
 };
 
 // What a card becomes when upgraded (Armaments; v2's rest-site smith).
@@ -405,6 +421,9 @@ inline const std::unordered_map<CardId, CardId> CARD_UPGRADES = {
     {CardId::Immolate, CardId::ImmolatePlus},
     {CardId::RecklessCharge, CardId::RecklessChargePlus},
     {CardId::Anger, CardId::AngerPlus},
+    {CardId::SwordBoomerang, CardId::SwordBoomerangPlus},
+    {CardId::LimitBreak, CardId::LimitBreakPlus},
+    {CardId::SpotWeakness, CardId::SpotWeaknessPlus},
     // NOTE: Searing Blow is deliberately absent — it upgrades by incrementing
     // the INSTANCE's counter, not by swapping CardId (see upgrade_card_in_place
     // and is_instance_upgradable). There is no "Searing Blow++" id to map to.
@@ -657,6 +676,17 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     // Anger: 6 damage, add a copy of ITSELF to the discard pile.
     {CardId::Anger, {"Anger", 0, 6, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 1, GeneratedPile::Discard, /*generates_self_copy=*/true}},
     {CardId::AngerPlus, {"Anger+", 0, 8, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 1, GeneratedPile::Discard, /*generates_self_copy=*/true}},
+    // --- Simple new mechanisms.
+    // Sword Boomerang: 3 damage, 3 (4) times, each hit to a RANDOM enemy.
+    // CardTarget::None because the player picks no target.
+    {CardId::SwordBoomerang, {"Sword Boomerang", 1, 3, 3, 0, CardTarget::None, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, /*hits_random_enemies=*/true}},
+    {CardId::SwordBoomerangPlus, {"Sword Boomerang+", 1, 3, 4, 0, CardTarget::None, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, /*hits_random_enemies=*/true}},
+    // Limit Break: double your Strength. Exhausts (the + does not).
+    {CardId::LimitBreak, {"Limit Break", 1, 0, 1, 0, CardTarget::None, {}, {}, CardType::Skill, /*exhaust=*/true, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, /*strength_multiply=*/2}},
+    {CardId::LimitBreakPlus, {"Limit Break+", 1, 0, 1, 0, CardTarget::None, {}, {}, CardType::Skill, /*exhaust=*/false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, /*strength_multiply=*/2}},
+    // Spot Weakness: 3 (4) Strength, but only if the target intends to attack.
+    {CardId::SpotWeakness, {"Spot Weakness", 1, 0, 1, 0, CardTarget::Enemy, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, /*strength_if_target_attacking=*/3}},
+    {CardId::SpotWeaknessPlus, {"Spot Weakness+", 1, 0, 1, 0, CardTarget::Enemy, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, /*strength_if_target_attacking=*/4}},
 };
 
 // Whether a card needs the player to PICK a specific enemy slot (ROB-80). Only

@@ -43,6 +43,9 @@ enum class ActionKind {
                       // set is current
   DamageRandomEnemy,  // fixed damage to one uniformly-random living enemy
                       // (Juggernaut) — rolled at execution, per trigger
+  DamageRandomEnemyAttack,  // as above but an ATTACK (Strength/Weak/Vulnerable
+                            // apply, and it fires the attack-damage hooks) —
+                            // Sword Boomerang. Rolled per hit at execution.
   LoseHp,       // direct player HP loss — bypasses block, can kill (ROB-80)
   GainBlock,    // target gains `amount` block; card_block applies Dex/Frail
   GainEnergy,   // player gains `amount` energy
@@ -54,6 +57,7 @@ enum class ActionKind {
   Wake,           // set target's is_asleep = false
   ExhaustCard,    // put `card` in the exhaust pile (played or generated)
   DiscardCard,    // put `card` in the discard pile
+  MultiplyStrength,  // Limit Break: player Strength *= amount
   AddCardToPile,  // generate a card into a pile (Wild Strike's Wound, Power
                   // Through's Wounds, Immolate's Burn, Anger's self-copy).
                   // `amount` is the GeneratedPile.

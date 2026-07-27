@@ -74,6 +74,9 @@ constexpr std::array<CardId, kNumCardTypes> kObsCardOrder = {
     CardId::PowerThroughPlus, CardId::Immolate, CardId::ImmolatePlus,
     CardId::RecklessCharge, CardId::RecklessChargePlus, CardId::Anger,
     CardId::AngerPlus,
+    // Simple new mechanisms.
+    CardId::SwordBoomerang, CardId::SwordBoomerangPlus, CardId::LimitBreak,
+    CardId::LimitBreakPlus, CardId::SpotWeakness, CardId::SpotWeaknessPlus,
 };
 static_assert(kObsCardOrder.size() == kNumCardTypes,
               "kObsCardOrder must list every card type");

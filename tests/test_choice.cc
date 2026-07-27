@@ -1,8 +1,11 @@
 #include <gtest/gtest.h>
 
+#include <random>
+
 #include "action.h"
 #include "card.h"
 #include "combat_env.h"
+#include "enemy.h"
 #include "combat_state.h"
 #include "query.h"
 #include "test_helpers.h"
@@ -1135,4 +1138,134 @@ TEST(GeneratedCards, BurnOnlyTicksWhileItIsInHand) {
   ASSERT_TRUE(apply_action(s, kEndTurnAction));
 
   EXPECT_EQ(s.character.hp, hp);
+}
+
+// ============================================================================
+// Simple new mechanisms: random per-hit targeting, Strength multiplication,
+// and an intent-conditional buff.
+// ============================================================================
+
+TEST(SimpleMechanisms, LimitBreakDoublesStrength) {
+  CombatState s = make_minimal_state(0);
+  s.character.powers[Power::Strength] = 4;
+
+  ASSERT_TRUE(play(s, CardId::LimitBreak));
+
+  EXPECT_EQ(s.character.powers[Power::Strength], 8);
+  // The base version exhausts; the + does not.
+  EXPECT_EQ(s.exhaust_pile.size(), 1u);
+}
+
+TEST(SimpleMechanisms, LimitBreakPlusDoesNotExhaust) {
+  CombatState s = make_minimal_state(0);
+  s.character.powers[Power::Strength] = 3;
+
+  ASSERT_TRUE(play(s, CardId::LimitBreakPlus));
+
+  EXPECT_EQ(s.character.powers[Power::Strength], 6);
+  EXPECT_TRUE(s.exhaust_pile.empty());
+  EXPECT_EQ(s.discard_pile.size(), 1u);
+}
+
+TEST(SimpleMechanisms, LimitBreakDoublesNegativeStrengthToo) {
+  // Multiplying keeps the sign, so Limit Break after a Disarm makes it worse.
+  CombatState s = make_minimal_state(0);
+  s.character.powers[Power::Strength] = -3;
+
+  ASSERT_TRUE(play(s, CardId::LimitBreak));
+
+  EXPECT_EQ(s.character.powers[Power::Strength], -6);
+}
+
+TEST(SimpleMechanisms, LimitBreakOnZeroStrengthStaysZero) {
+  CombatState s = make_minimal_state(0);
+  ASSERT_TRUE(play(s, CardId::LimitBreak));
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 0);
+}
+
+TEST(SimpleMechanisms, SpotWeaknessGrantsStrengthWhenTheTargetAttacks) {
+  CombatState s = make_minimal_state(0);
+  // make_minimal_state's Jaw Worm is primed with an attacking intent.
+  const auto& e = s.enemies[0];
+  ASSERT_TRUE(e.last_move.has_value());
+  ASSERT_GT(e.moves.at(*e.last_move).damage, 0) << "fixture must be attacking";
+
+  ASSERT_TRUE(play(s, CardId::SpotWeakness));
+
+  EXPECT_EQ(s.character.powers[Power::Strength], 3);
+}
+
+TEST(SimpleMechanisms, SpotWeaknessGrantsNothingWhenTheTargetIsNotAttacking) {
+  CombatState s = make_minimal_state(0);
+  // Point the enemy's intent at a non-damaging move.
+  Move buff{MoveName::Bellow, 0, 0, {}};
+  s.enemies[0].moves[MoveName::Bellow] = buff;
+  s.enemies[0].last_move = MoveName::Bellow;
+
+  ASSERT_TRUE(play(s, CardId::SpotWeakness));
+
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 0);
+}
+
+TEST(SimpleMechanisms, SwordBoomerangHitsThreeTimes) {
+  // One enemy: all three hits land on it, so total damage is 3 x 3.
+  CombatState s = make_minimal_state(0);
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(play(s, CardId::SwordBoomerang));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 9);
+}
+
+TEST(SimpleMechanisms, SwordBoomerangPlusHitsFourTimes) {
+  CombatState s = make_minimal_state(0);
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(play(s, CardId::SwordBoomerangPlus));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 12);
+}
+
+TEST(SimpleMechanisms, SwordBoomerangAppliesStrengthPerHit) {
+  // It is an ATTACK, so Strength applies to each of the three hits.
+  CombatState s = make_minimal_state(0);
+  s.character.powers[Power::Strength] = 2;
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(play(s, CardId::SwordBoomerang));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 3 * (3 + 2));
+}
+
+TEST(SimpleMechanisms, SwordBoomerangSpreadsAcrossMultipleEnemies) {
+  // With several enemies the hits are distributed randomly, so total damage
+  // across all of them still equals hits x damage.
+  CombatState s = make_minimal_state(0);
+  std::mt19937 rng(7);
+  s.enemies.push_back(make_jaw_worm(rng));
+  s.enemies.push_back(make_jaw_worm(rng));
+  int total_before = 0;
+  for (const Enemy& e : s.enemies) total_before += e.hp;
+
+  ASSERT_TRUE(play(s, CardId::SwordBoomerang));
+
+  int total_after = 0;
+  for (const Enemy& e : s.enemies) total_after += e.hp;
+  EXPECT_EQ(total_before - total_after, 9) << "3 hits x 3 damage, spread";
+}
+
+TEST(SimpleMechanisms, SwordBoomerangIsDeterministicForASeed) {
+  // Its random targeting draws from the seeded stream, so the same seed must
+  // produce the same distribution.
+  auto run = [](uint32_t seed) {
+    CombatState s = make_minimal_state(seed);
+    std::mt19937 rng(seed);
+    s.enemies.push_back(make_jaw_worm(rng));
+    s.enemies.push_back(make_jaw_worm(rng));
+    EXPECT_TRUE(play(s, CardId::SwordBoomerang));
+    std::vector<int> hps;
+    for (const Enemy& e : s.enemies) hps.push_back(e.hp);
+    return hps;
+  };
+  EXPECT_EQ(run(42), run(42));
 }

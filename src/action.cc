@@ -517,6 +517,46 @@ void apply_fixed_damage(CombatState& state, int slot, int amount,
   if (hp_before > 0 && state.enemies[slot].hp <= 0) ctx.record_death(slot);
 }
 
+// One player attack landing on one enemy slot: the shared damage path for
+// targeted attacks and for Sword Boomerang's random hits.
+void player_attack_enemy(CombatState& state, int slot, int base,
+                         int strength_mult, ActionQueue& q,
+                         ResolutionContext& ctx) {
+  if (!valid_enemy_slot(state, slot)) return;
+  if (state.enemies[slot].hp <= 0) return;
+  const int hp_before = state.enemies[slot].hp;
+  const int dmg = compute_attack_damage(base, state.character.powers,
+                                        state.character.debuffs,
+                                        state.enemies[slot].debuffs,
+                                        strength_mult);
+  apply_damage_to_hp_block(state.enemies[slot].hp,
+                           state.enemies[slot].current_block, dmg);
+  if (state.enemies[slot].hp < hp_before) {
+    // The on-damaged hook family. OnDamaged first: the damage-wake
+    // RewriteIntent (guarded on is_asleep) sets the Stunned intent while still
+    // asleep; then the wake itself; then HP-threshold interrupts.
+    const bool was_asleep = state.enemies[slot].is_asleep;
+    fire_enemy_hooks(state, slot, Hook::EnemyDamaged, q);
+    fire_enemy_hooks(state, slot, Hook::OnAnyDamage, q);
+    if (was_asleep) fire_enemy_hooks(state, slot, Hook::EnemyWake, q);
+    fire_enemy_hooks(state, slot, Hook::EnemyHpThreshold, q);
+  }
+  if (hp_before > 0 && state.enemies[slot].hp <= 0) ctx.record_death(slot);
+}
+
+// A uniformly-random living enemy slot, or -1 if none. Consumes RNG only when
+// there is a choice to make.
+int pick_random_living_enemy(CombatState& state) {
+  std::vector<int> living;
+  for (std::size_t i = 0; i < state.enemies.size(); ++i) {
+    if (state.enemies[i].hp > 0) living.push_back(static_cast<int>(i));
+  }
+  if (living.empty()) return -1;
+  std::uniform_int_distribution<int> pick(
+      0, static_cast<int>(living.size()) - 1);
+  return living[pick(state.rng)];
+}
+
 void execute(CombatState& state, const Action& a, ActionQueue& q,
              ResolutionContext& ctx) {
   switch (a.kind) {
@@ -543,26 +583,15 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         break;
       }
       // Player -> enemy.
-      if (!valid_enemy_slot(state, a.target)) break;
-      if (state.enemies[a.target].hp <= 0) break;
-      const int hp_before = state.enemies[a.target].hp;
-      const int dmg = compute_attack_damage(
-          a.amount, state.character.powers, state.character.debuffs,
-          state.enemies[a.target].debuffs, a.strength_mult);
-      apply_damage_to_hp_block(state.enemies[a.target].hp,
-                               state.enemies[a.target].current_block, dmg);
-      if (state.enemies[a.target].hp < hp_before) {
-        // The on-damaged hook family. OnDamaged first: the damage-wake
-        // RewriteIntent (guarded on is_asleep) sets the Stunned intent while
-        // still asleep; then the wake itself; then HP-threshold interrupts.
-        const bool was_asleep = state.enemies[a.target].is_asleep;
-        fire_enemy_hooks(state, a.target, Hook::EnemyDamaged, q);
-        fire_enemy_hooks(state, a.target, Hook::OnAnyDamage, q);
-        if (was_asleep) fire_enemy_hooks(state, a.target, Hook::EnemyWake, q);
-        fire_enemy_hooks(state, a.target, Hook::EnemyHpThreshold, q);
-      }
-      if (hp_before > 0 && state.enemies[a.target].hp <= 0) {
-        ctx.record_death(a.target);
+      player_attack_enemy(state, a.target, a.amount, a.strength_mult, q, ctx);
+      break;
+    }
+    case ActionKind::DamageRandomEnemyAttack: {
+      // Sword Boomerang: each hit rolls its own target at EXECUTION time, so a
+      // hit that kills an enemy changes the pool for the next hit.
+      const int slot = pick_random_living_enemy(state);
+      if (slot >= 0) {
+        player_attack_enemy(state, slot, a.amount, a.strength_mult, q, ctx);
       }
       break;
     }
@@ -695,6 +724,15 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
     case ActionKind::DiscardCard:
       move_to_discard(state, a.as_card());
       break;
+    case ActionKind::MultiplyStrength: {
+      // Limit Break. Multiplying keeps the sign, so a negative Strength
+      // (Disarm, Siphon Soul) doubles into a worse debuff — faithful to StS.
+      const int str = get_status(state.character.powers, Power::Strength);
+      if (str != 0) {
+        state.character.powers[Power::Strength] = str * a.amount;
+      }
+      break;
+    }
     case ActionKind::AddCardToPile: {
       // A generated card is always fresh (no inherited instance state), except
       // Anger's self-copy, which carries the played copy's state.
