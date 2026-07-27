@@ -209,7 +209,9 @@ def run(seed: int, ascii_only: bool, pool=None, deck=None) -> int:
 
             end_turn_local = len(action_map)
             if local == end_turn_local:
-                global_action = _core.CombatEnv.NUM_ACTIONS - 1
+                # END_TURN_ACTION, not NUM_ACTIONS - 1: the option-slot channel
+                # follows the combat block, so the last index is now decline.
+                global_action = _core.CombatEnv.END_TURN_ACTION
             elif 0 <= local < len(action_map):
                 card_id = action_map[local]
                 global_action = _resolve_card_action(console, env, obs, card_id)

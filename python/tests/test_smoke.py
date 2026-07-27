@@ -36,14 +36,14 @@ def test_action_mask_shape_and_dtype():
 def test_end_turn_always_legal_at_start():
     env = minispire._core.CombatEnv()
     env.reset(seed=0)
-    end_turn = env.NUM_ACTIONS - 1
+    end_turn = env.END_TURN_ACTION
     assert env.action_mask()[end_turn]
 
 
 def test_step_returns_gym_tuple():
     env = minispire._core.CombatEnv()
     env.reset(seed=0)
-    end_turn = env.NUM_ACTIONS - 1
+    end_turn = env.END_TURN_ACTION
     result = env.step(end_turn)
     assert len(result) == 5
     obs, reward, terminated, truncated, info = result
@@ -72,7 +72,7 @@ def test_reset_info_has_metric_keys():
 def test_step_info_has_metric_keys():
     env = minispire._core.CombatEnv()
     env.reset(seed=0)
-    end_turn = env.NUM_ACTIONS - 1
+    end_turn = env.END_TURN_ACTION
     _, _, _, _, info = env.step(end_turn)
     assert "won" in info
     assert "final_hp" in info
@@ -86,7 +86,7 @@ def test_hp_fraction_is_float_division():
     # hp_fraction must equal final_hp / max_hp (80) with float division.
     env = minispire._core.CombatEnv()
     env.reset(seed=0)
-    end_turn = env.NUM_ACTIONS - 1
+    end_turn = env.END_TURN_ACTION
     _, _, _, _, info = env.step(end_turn)
     expected = info["final_hp"] / 80.0
     assert abs(info["hp_fraction"] - expected) < 1e-6
@@ -102,7 +102,7 @@ def test_won_flag_true_on_win():
     for seed in range(50):
         env = minispire._core.CombatEnv()
         env.reset(seed=seed)
-        end_turn = env.NUM_ACTIONS - 1
+        end_turn = env.END_TURN_ACTION
         for _ in range(500):
             mask = env.action_mask()
             action = end_turn
@@ -140,7 +140,7 @@ def test_clone_produces_independent_env():
     env = minispire._core.CombatEnv()
     env.reset(seed=7)
     copy = env.clone()
-    end_turn = env.NUM_ACTIONS - 1
+    end_turn = env.END_TURN_ACTION
     copy.step(end_turn)
     # Original unaffected.
     assert env.turn_number == 1
@@ -159,7 +159,7 @@ def test_obs_view_reflects_state_after_step():
     env = minispire._core.CombatEnv()
     obs, _ = env.reset(seed=0)
     hp_before = float(obs[0])
-    end_turn = env.NUM_ACTIONS - 1
+    end_turn = env.END_TURN_ACTION
     new_obs, _, _, _, _ = env.step(end_turn)
     # Character either took damage or has block; HP shouldn't increase
     # without a heal effect (none in v1).

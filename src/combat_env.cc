@@ -103,6 +103,25 @@ static_assert(kObsEnemyPowerOrder[kNumEnemyPowers - 1] ==
                   kObsPlayerPowerOrder[kNumEnemyPowers - 1],
               "enemy power order must prefix the player power order");
 
+// Which pile a choice draws from, as a small int for the obs header (Stage
+// 4c). 0 = hand, 1 = draw, 2 = discard, 3 = exhaust, 4 = external (v2's card
+// rewards / shop, which come from outside the deck).
+int choice_source_pile(ChoiceKind kind) {
+  switch (kind) {
+    case ChoiceKind::UpgradeCardInHand:
+    case ChoiceKind::HandToTopOfDraw:
+    case ChoiceKind::CopyAttackOrPowerInHand:
+      return 0;  // hand
+    case ChoiceKind::DiscardToTopOfDraw:
+      return 2;  // discard
+    case ChoiceKind::ExhaustToHand:
+      return 3;  // exhaust
+    case ChoiceKind::None:
+      break;
+  }
+  return 0;
+}
+
 template <typename Effect>
 float status_stacks(const std::unordered_map<Effect, int>& effects, Effect e) {
   auto it = effects.find(e);
@@ -126,10 +145,18 @@ CombatEnv::CombatEnv(float hp_reward_coeff, EncounterPool pool,
       hp_reward_coeff_(hp_reward_coeff),
       pool_(pool),
       deck_(deck.empty() ? starter_deck() : std::move(deck)) {
-  // Engine invariant: action space is the (card x target) cross-product plus
-  // a single end-turn action (ROB-60), sized from kNumCardTypes.
-  static_assert(kNumActions == kNumCardTypes * kMaxEnemies + 1,
-                "kNumActions must equal kNumCardTypes * kMaxEnemies + 1");
+  // Engine invariant: the action space is the combat block — (card x target)
+  // plus one end-turn action (ROB-60) — followed by the Stage 4c option-slot
+  // channel (one slot per possible option, plus decline).
+  static_assert(kEndTurnAction == kNumCardTypes * kMaxEnemies,
+                "end-turn must be the last index of the combat block");
+  static_assert(kNumActions == kNumCardTypes * kMaxEnemies + 1 +
+                                   kNumOptionSlots + 1,
+                "kNumActions must be the combat block plus the slot channel");
+  // Slots are sized so a pile choice can never overflow (a pile cannot hold
+  // more distinct card types than exist) — truncation would be a parity bug.
+  static_assert(kNumOptionSlots >= kNumCardTypes,
+                "option slots must cover every distinct card type");
   // And kNumCardTypes must match the actual card database.
   assert(static_cast<int>(CARD_DATABASE.size()) == kNumCardTypes &&
          "kNumCardTypes out of sync with CARD_DATABASE");
@@ -273,8 +300,30 @@ void CombatEnv::compute_obs() {
     o[kPileBase + 3 * kStride + i] = static_cast<float>(pile_count(state_.exhaust_pile, id));
   }
 
-  // --- Turn number (last slot) ---
-  o[kObsSize - 1] = static_cast<float>(state_.turn_number);
+  // --- Turn number ---
+  constexpr int kTurnOff = kPileBase + kPileObsSize;
+  o[kTurnOff] = static_cast<float>(state_.turn_number);
+
+  // --- Choice block (Stage 4c) ---
+  // Header, then one descriptor per option slot. Written every step (zeroed by
+  // the fill above when no choice pends), so the agent can always tell whether
+  // a menu is open — the NLE failure mode this block exists to prevent.
+  constexpr int kChoiceBase = kTurnOff + 1;
+  const PendingChoice& pc = state_.pending_choice;
+  if (pc.active()) {
+    o[kChoiceBase + 0] = 1.0f;
+    o[kChoiceBase + 1] = static_cast<float>(static_cast<int>(pc.kind));
+    o[kChoiceBase + 2] = static_cast<float>(choice_source_pile(pc.kind));
+    o[kChoiceBase + 3] = static_cast<float>(static_cast<int>(pc.source_card));
+    o[kChoiceBase + 4] = pc.is_optional ? 1.0f : 0.0f;
+    const int slots = kChoiceBase + kChoiceHeaderSize;
+    for (int i = 0; i < pc.num_options; ++i) {
+      const int base = slots + i * kChoiceSlotStride;
+      o[base + 0] = 1.0f;                                       // occupied
+      o[base + 1] = static_cast<float>(static_cast<int>(pc.options[i]));
+      o[base + 2] = 0.0f;  // cost: reserved for v2 (shop gold); 0 for cards
+    }
+  }
 }
 
 void CombatEnv::compute_mask() {

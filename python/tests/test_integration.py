@@ -12,7 +12,7 @@ def test_clone_through_wrapper_is_independent():
     env.reset(seed=7)
 
     cloned_core = env._env.clone()
-    end_turn = MinispireEnv.NUM_ACTIONS - 1
+    end_turn = MinispireEnv.END_TURN_ACTION
     cloned_core.step(end_turn)
 
     # Original wrapper's view is unchanged.

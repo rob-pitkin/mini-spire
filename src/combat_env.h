@@ -8,6 +8,7 @@
 #include "card.h"
 #include "combat_state.h"
 #include "encounter.h"
+#include "turn_loop.h"  // action-layout constants (kTotalActions, ...)
 
 namespace minispire {
 
@@ -61,15 +62,28 @@ class CombatEnv {
       3 + kEnemyStatusSize + kEnemyIntentSize;  // is_alive,hp,block + status + intent
   // 4 piles (hand/draw/discard/exhaust), each a per-card-type count vector.
   static constexpr int kPileObsSize = 4 * kNumCardTypes;
-  static constexpr int kObsSize =
-      kPlayerObsSize + kMaxEnemies * kEnemyObsStride + kPileObsSize + 1;
 
-  // Action space: (card x target) cross-product + end-turn (ROB-60).
-  //   action = card_idx * kMaxEnemies + enemy_idx   for card_idx in card types
-  //   end_turn = kNumCardTypes * kMaxEnemies          (last index)
-  // Currently 7*4 + 1 = 29. Enforced by a static_assert in the .cc against
-  // CARD_DATABASE.size().
-  static constexpr int kNumActions = kNumCardTypes * kMaxEnemies + 1;
+  // Choice block (Stage 4c; docs/design/decision-points.md §5.2). A 5-float
+  // header plus one 3-float descriptor per option slot. Appended last so every
+  // existing feature index keeps its position.
+  //   header: pending, kind, source_pile, source_card, is_optional
+  //   slot:   occupied, payload_id, cost
+  // The payload fields are reserved NOW and always written (zero for card
+  // choices) so v2.0.0's map/shop/event decisions are pure data — new
+  // ChoiceKind values, no obs shape change.
+  static constexpr int kChoiceHeaderSize = 5;
+  static constexpr int kChoiceSlotStride = 3;
+  static constexpr int kChoiceObsSize =
+      kChoiceHeaderSize + kNumOptionSlots * kChoiceSlotStride;
+
+  static constexpr int kObsSize = kPlayerObsSize +
+                                  kMaxEnemies * kEnemyObsStride + kPileObsSize +
+                                  1 + kChoiceObsSize;
+
+  // Action space: the combat block (card x target + end-turn, ROB-60) plus the
+  // Stage 4c option-slot channel. Layout constants live in turn_loop.h next to
+  // decode_action, so the env and the engine cannot disagree about it.
+  static constexpr int kNumActions = kTotalActions;
 
   // hp_reward_coeff is a per-env reward-shaping hyperparameter, fixed for the
   // env's lifetime. On a win the reward is 1 + coeff * (final_hp / max_hp);

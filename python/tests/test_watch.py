@@ -21,7 +21,7 @@ def test_watch_random_policy_terminates():
 
 def test_watch_returns_outcome_for_end_turn_policy():
     # Policy that always ends the turn — should terminate (likely a loss).
-    end_turn = MinispireEnv.NUM_ACTIONS - 1
+    end_turn = MinispireEnv.END_TURN_ACTION
 
     def always_end_turn(obs, mask):
         return end_turn

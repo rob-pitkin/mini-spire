@@ -2,6 +2,7 @@
 
 #include "action.h"
 #include "card.h"
+#include "combat_env.h"
 #include "combat_state.h"
 #include "test_helpers.h"
 #include "turn_loop.h"
@@ -325,4 +326,202 @@ TEST(Choice, TerminalOutcomeDiscardsAPendingChoice) {
   drain(s, q, ctx);
 
   EXPECT_FALSE(s.pending_choice.active());
+}
+
+// ============================================================================
+// Stage 4c step 3: the obs / mask encoding of a pending choice.
+// These pin the RL interface — the part that is expensive to change later.
+// ============================================================================
+
+TEST(ChoiceEncoding, CombatIndicesAreUnchangedByTheSlotChannel) {
+  // The whole point of appending the channel: a policy's learned mapping for
+  // playing cards must survive. Index arithmetic for the combat block is
+  // exactly what it was pre-4c.
+  EXPECT_EQ(kEndTurnAction, kNumCardTypes * kMaxEnemies);
+  EXPECT_EQ(kFirstOptionSlot, kEndTurnAction + 1);
+  EXPECT_EQ(kDeclineAction, kFirstOptionSlot + kNumOptionSlots);
+  EXPECT_EQ(kTotalActions, kDeclineAction + 1);
+  // A Strike at enemy slot 2 is still index (Strike * 5 + 2).
+  EXPECT_EQ(static_cast<int>(CardId::Strike) * kMaxEnemies + 2,
+            static_cast<int>(CardId::Strike) * kMaxEnemies + 2);
+}
+
+TEST(ChoiceEncoding, SlotsAreMaskedOffDuringNormalCombat) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  const auto mask = valid_actions(s);
+
+  ASSERT_FALSE(s.pending_choice.active());
+  for (int i = 0; i < kNumOptionSlots; ++i) {
+    EXPECT_FALSE(mask[kFirstOptionSlot + i]) << "slot " << i;
+  }
+  EXPECT_FALSE(mask[kDeclineAction]);
+  EXPECT_TRUE(mask[kEndTurnAction]);  // combat still legal
+}
+
+TEST(ChoiceEncoding, CombatIsMaskedOffDuringAPendingChoice) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.pending_choice = build_choice(s, ChoiceKind::UpgradeCardInHand,
+                                  kSourceStandIn);
+  ASSERT_TRUE(s.pending_choice.active());
+
+  const auto mask = valid_actions(s);
+  // Every combat index is illegal — including end-turn, which is otherwise
+  // always legal. The two blocks are mutually exclusive.
+  for (int i = 0; i <= kEndTurnAction; ++i) {
+    EXPECT_FALSE(mask[i]) << "combat action " << i << " legal during a choice";
+  }
+  // Exactly the offered slots are legal.
+  for (int i = 0; i < kNumOptionSlots; ++i) {
+    EXPECT_EQ(mask[kFirstOptionSlot + i], i < s.pending_choice.num_options)
+        << "slot " << i;
+  }
+}
+
+TEST(ChoiceEncoding, DeclineIsMaskedUnlessTheChoiceIsOptional) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.pending_choice = build_choice(s, ChoiceKind::UpgradeCardInHand,
+                                  kSourceStandIn);
+
+  EXPECT_FALSE(valid_actions(s)[kDeclineAction]);
+  s.pending_choice.is_optional = true;
+  EXPECT_TRUE(valid_actions(s)[kDeclineAction]);
+}
+
+TEST(ChoiceEncoding, ApplyActionRoutesSlotIndicesToResolveChoice) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.pending_choice = build_choice(s, ChoiceKind::UpgradeCardInHand,
+                                  kSourceStandIn);
+  ASSERT_EQ(s.pending_choice.num_options, 1);
+
+  EXPECT_TRUE(apply_action(s, kFirstOptionSlot + 0));
+
+  EXPECT_FALSE(s.pending_choice.active());
+  EXPECT_EQ(s.current_hand[0].card_id, CardId::StrikePlus);
+}
+
+TEST(ChoiceEncoding, ApplyActionRejectsCombatActionsWhilePaused) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.pending_choice = build_choice(s, ChoiceKind::UpgradeCardInHand,
+                                  kSourceStandIn);
+
+  // Playing a card or ending the turn mid-choice must be rejected outright.
+  EXPECT_FALSE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+  EXPECT_FALSE(apply_action(s, kEndTurnAction));
+  EXPECT_TRUE(s.pending_choice.active());  // still awaiting an answer
+}
+
+TEST(ChoiceEncoding, ApplyActionRejectsSlotActionsWhenNoChoicePends) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  ASSERT_FALSE(s.pending_choice.active());
+
+  EXPECT_FALSE(apply_action(s, kFirstOptionSlot));
+  EXPECT_FALSE(apply_action(s, kDeclineAction));
+}
+
+TEST(ChoiceEncoding, ApplyActionRejectsUnofferedSlots) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.pending_choice = build_choice(s, ChoiceKind::UpgradeCardInHand,
+                                  kSourceStandIn);
+  ASSERT_EQ(s.pending_choice.num_options, 1);
+
+  // Slot 1 exists in the action space but is not offered.
+  EXPECT_FALSE(apply_action(s, kFirstOptionSlot + 1));
+  EXPECT_TRUE(s.pending_choice.active());
+}
+
+// --- Observation ------------------------------------------------------------
+
+namespace {
+// Obs offsets, derived from the engine's constants (never hardcoded).
+constexpr int kChoiceBase = CombatEnv::kPlayerObsSize +
+                            kMaxEnemies * CombatEnv::kEnemyObsStride +
+                            CombatEnv::kPileObsSize + 1;
+constexpr int kSlotBase = kChoiceBase + CombatEnv::kChoiceHeaderSize;
+}  // namespace
+
+TEST(ChoiceEncoding, ObsChoiceBlockIsZeroWhenNoChoicePends) {
+  CombatEnv env;
+  env.reset(0);
+  const auto obs = env.obs();
+  for (int i = kChoiceBase; i < CombatEnv::kObsSize; ++i) {
+    EXPECT_FLOAT_EQ(obs[i], 0.0f) << "choice obs slot " << i;
+  }
+}
+
+TEST(ChoiceEncoding, ObsPublishesThePendingChoiceAndItsOptions) {
+  // R4 (the NLE lesson): the agent must always be able to tell that a menu is
+  // open, and what is on it.
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.pending_choice = build_choice(s, ChoiceKind::UpgradeCardInHand,
+                                  kSourceStandIn);
+  ASSERT_EQ(s.pending_choice.num_options, 2);
+
+  CombatEnv env(std::move(s), 0.0f);
+  const auto obs = env.obs();
+
+  EXPECT_FLOAT_EQ(obs[kChoiceBase + 0], 1.0f);  // pending
+  EXPECT_FLOAT_EQ(obs[kChoiceBase + 1],
+                  static_cast<float>(
+                      static_cast<int>(ChoiceKind::UpgradeCardInHand)));
+  EXPECT_FLOAT_EQ(obs[kChoiceBase + 2], 0.0f);  // source pile = hand
+  EXPECT_FLOAT_EQ(obs[kChoiceBase + 4], 0.0f);  // not optional
+
+  // Slot descriptors: occupied + the card id, in ascending-CardId order.
+  const int stride = CombatEnv::kChoiceSlotStride;
+  EXPECT_FLOAT_EQ(obs[kSlotBase + 0 * stride + 0], 1.0f);
+  EXPECT_FLOAT_EQ(obs[kSlotBase + 0 * stride + 1],
+                  static_cast<float>(static_cast<int>(CardId::Strike)));
+  EXPECT_FLOAT_EQ(obs[kSlotBase + 1 * stride + 0], 1.0f);
+  EXPECT_FLOAT_EQ(obs[kSlotBase + 1 * stride + 1],
+                  static_cast<float>(static_cast<int>(CardId::Defend)));
+  // The third slot is unoccupied.
+  EXPECT_FLOAT_EQ(obs[kSlotBase + 2 * stride + 0], 0.0f);
+}
+
+TEST(ChoiceEncoding, ObsSourcePileDistinguishesTheChoiceKinds) {
+  CombatState s = make_minimal_state(0);
+  s.discard_pile.push_back(Card{CardId::Strike});
+  s.pending_choice = build_choice(s, ChoiceKind::DiscardToTopOfDraw,
+                                  kSourceStandIn);
+  CombatEnv env(std::move(s), 0.0f);
+  EXPECT_FLOAT_EQ(env.obs()[kChoiceBase + 2], 2.0f);  // discard
+
+  CombatState s2 = make_minimal_state(0);
+  s2.exhaust_pile.push_back(Card{CardId::Strike});
+  s2.pending_choice = build_choice(s2, ChoiceKind::ExhaustToHand,
+                                   kSourceStandIn);
+  CombatEnv env2(std::move(s2), 0.0f);
+  EXPECT_FLOAT_EQ(env2.obs()[kChoiceBase + 2], 3.0f);  // exhaust
+}
+
+TEST(ChoiceEncoding, ObsAndMaskAgreeOnWhichSlotsAreOffered) {
+  // The invariant that matters: whatever the obs says is occupied is exactly
+  // what the mask says is legal.
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Bash});
+  s.pending_choice = build_choice(s, ChoiceKind::HandToTopOfDraw,
+                                  kSourceStandIn);
+
+  CombatEnv env(std::move(s), 0.0f);
+  const auto obs = env.obs();
+  const auto mask = env.action_mask();
+  const int stride = CombatEnv::kChoiceSlotStride;
+
+  for (int i = 0; i < kNumOptionSlots; ++i) {
+    const bool occupied = obs[kSlotBase + i * stride + 0] > 0.5f;
+    const bool legal = mask[kFirstOptionSlot + i] != 0;
+    EXPECT_EQ(occupied, legal) << "obs/mask disagree at slot " << i;
+  }
 }

@@ -12,11 +12,22 @@ from minispire._core import EncounterPool
 class MinispireEnv(gym.Env):
     """Single-combat Slay the Spire environment wrapping the C++ engine.
 
-    Action space is `Discrete(NUM_ACTIONS)` — indices 0..NUM_ACTIONS-2 play
-    a card by CardId, the last index ends the turn (see ROB-35).
+    Action space is `Discrete(NUM_ACTIONS)`, in two mutually-exclusive blocks
+    (docs/design/decision-points.md):
+
+    * **combat**, indices ``0 .. END_TURN_ACTION`` — play a card by
+      ``card_idx * MAX_ENEMIES + target``, and ``END_TURN_ACTION`` ends the
+      turn. Legal only when no choice is pending.
+    * **option slots**, ``FIRST_OPTION_SLOT .. DECLINE_ACTION`` — answer a
+      pending mid-card choice (Armaments, Warcry, ...). Legal only *during* a
+      choice.
+
+    Note ``END_TURN_ACTION`` is the last index of the combat block, **not**
+    ``NUM_ACTIONS - 1`` (that is ``DECLINE_ACTION``).
 
     Observation space is `Box(-inf, inf, shape=(OBS_SIZE,), dtype=float32)`
-    — raw, unnormalized values per ROB-40.
+    — raw, unnormalized values per ROB-40. The shape is fixed whether or not a
+    choice is pending; the trailing choice block says which.
 
     Use with sb3-contrib MaskablePPO: the env exposes `action_masks()` which
     MaskablePPO calls between policy forward passes.
@@ -25,6 +36,11 @@ class MinispireEnv(gym.Env):
     metadata = {"render_modes": ["human"]}
     OBS_SIZE = _CombatEnv.OBS_SIZE
     NUM_ACTIONS = _CombatEnv.NUM_ACTIONS
+    # Action-layout landmarks, engine-sourced so they can never drift.
+    END_TURN_ACTION = _CombatEnv.END_TURN_ACTION
+    FIRST_OPTION_SLOT = _CombatEnv.FIRST_OPTION_SLOT
+    DECLINE_ACTION = _CombatEnv.DECLINE_ACTION
+    NUM_OPTION_SLOTS = _CombatEnv.NUM_OPTION_SLOTS
 
     def __init__(
         self,

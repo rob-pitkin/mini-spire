@@ -12,7 +12,7 @@ def _first_legal_policy(obs, mask):
 
 
 def _end_turn_policy(obs, mask):
-    return MinispireEnv.NUM_ACTIONS - 1
+    return MinispireEnv.END_TURN_ACTION
 
 
 def test_evaluate_returns_well_formed_dict():

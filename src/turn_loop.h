@@ -44,13 +44,27 @@ CombatState start_combat(uint32_t seed, EncounterPool pool,
 // M1 / existing tests that want the deterministic Jaw Worm fight.
 CombatState start_v1_combat(uint32_t seed);
 
-// Action layout (ROB-60): (card x target) cross-product plus end-turn.
-//   action = card_idx * kMaxEnemies + target_idx   for card_idx in [0, num_cards)
-//   end_turn = num_card_ids * kMaxEnemies            (last index)
+// Action layout (ROB-60 + Stage 4c). Two mutually-exclusive blocks:
+//
+//   COMBAT (indices 0 .. kEndTurnAction) — legal only while no choice pends:
+//     action   = card_idx * kMaxEnemies + target_idx
+//     end_turn = kEndTurnAction                        (block's last index)
+//   CHOICE (indices kFirstOptionSlot .. kDeclineAction) — legal only DURING a
+//   pending choice (docs/design/decision-points.md §5.1):
+//     slot k   = kFirstOptionSlot + k    the k-th offered option
+//     decline  = kDeclineAction          optional choices only
+//
 // card_idx is the integer value of a CardId; target_idx is an enemy slot.
 // Untargeted cards (Defend) use the canonical target_idx 0; their other slots
-// are permanently masked (see valid_actions). Mask size is
-// num_card_ids * kMaxEnemies + 1.
+// are permanently masked (see valid_actions).
+//
+// The combat indices are byte-identical to pre-4c, so a policy's learned
+// card-playing mapping survives the addition of the choice channel.
+inline constexpr int kEndTurnAction = kNumCardTypes * kMaxEnemies;
+inline constexpr int kFirstOptionSlot = kEndTurnAction + 1;
+inline constexpr int kDeclineAction = kFirstOptionSlot + kNumOptionSlots;
+inline constexpr int kTotalActions = kDeclineAction + 1;
+
 struct DecodedAction {
   bool is_end_turn;
   CardId card;     // valid only if !is_end_turn

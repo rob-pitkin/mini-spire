@@ -618,11 +618,22 @@ bool card_action_is_legal(const CombatState& state, const DecodedAction& d) {
 
 std::vector<bool> valid_actions(const CombatState& state) {
   const int num_card_ids = static_cast<int>(CARD_DATABASE.size());
-  const int num_actions = num_card_ids * kMaxEnemies + 1;
-  std::vector<bool> mask(num_actions, false);
+  std::vector<bool> mask(kTotalActions, false);
 
   if (state.outcome != Outcome::InProgress) {
     return mask;  // all false
+  }
+
+  // Choice mode (Stage 4c): the combat block is entirely illegal and only the
+  // offered option slots are legal. Walks the option list (<= 102), never the
+  // action space — walking the action space is what cost 39% at Stage 4a.
+  if (state.pending_choice.active()) {
+    const PendingChoice& pc = state.pending_choice;
+    for (int i = 0; i < pc.num_options; ++i) {
+      mask[kFirstOptionSlot + i] = true;
+    }
+    if (pc.is_optional) mask[kDeclineAction] = true;
+    return mask;
   }
 
   // Walk the HAND, not the whole action space: a card not in hand is illegal in
@@ -640,20 +651,28 @@ std::vector<bool> valid_actions(const CombatState& state) {
     }
   }
 
-  // End turn is always legal while in progress.
-  mask[num_actions - 1] = true;
+  // End turn is always legal while in progress. (Named constant, not
+  // `size - 1`: the last index is now the decline action, not end-turn.)
+  mask[kEndTurnAction] = true;
   return mask;
 }
 
 bool apply_action(CombatState& state, int action) {
   if (state.outcome != Outcome::InProgress) return false;
+  if (action < 0 || action >= kTotalActions) return false;
 
-  const int num_actions =
-      static_cast<int>(CARD_DATABASE.size()) * kMaxEnemies + 1;
-  if (action < 0 || action >= num_actions) return false;
+  // Choice mode (Stage 4c): only the option-slot channel is legal, and it is
+  // legal ONLY here — the two blocks are mutually exclusive, which is what
+  // keeps an index from ever meaning two things at once.
+  if (state.pending_choice.active()) {
+    if (action == kDeclineAction) return resolve_choice(state, kDeclineChoice);
+    if (action < kFirstOptionSlot) return false;  // combat action while paused
+    return resolve_choice(state, action - kFirstOptionSlot);
+  }
+  if (action >= kFirstOptionSlot) return false;  // slot action with no choice
 
   // Validate just THIS action rather than building the whole mask (the action
-  // space is 400+ entries; building it here doubled the per-step mask cost).
+  // space is 600+ entries; building it here doubled the per-step mask cost).
   // Shares card_action_is_legal with valid_actions, so the two can't disagree.
   const DecodedAction d = decode_action(action);
   if (!d.is_end_turn && !card_action_is_legal(state, d)) return false;

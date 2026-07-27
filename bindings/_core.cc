@@ -341,6 +341,16 @@ PYBIND11_MODULE(_core, m) {
       .def_readonly_static("NUM_ENEMY_POWERS", &kNumEnemyPowers)
       .def_readonly_static("NUM_PLAYER_POWERS", &kNumPlayerPowers)
       .def_readonly_static("NUM_CARD_TYPES", &kNumCardTypes)
+      // Action-layout landmarks (Stage 4c). END_TURN_ACTION is the last index
+      // of the COMBAT block, not of the action space — the option-slot channel
+      // follows it. Never derive end-turn as NUM_ACTIONS - 1.
+      .def_readonly_static("END_TURN_ACTION", &kEndTurnAction)
+      .def_readonly_static("FIRST_OPTION_SLOT", &kFirstOptionSlot)
+      .def_readonly_static("DECLINE_ACTION", &kDeclineAction)
+      .def_readonly_static("NUM_OPTION_SLOTS", &kNumOptionSlots)
+      .def_readonly_static("CHOICE_HEADER_SIZE", &CombatEnv::kChoiceHeaderSize)
+      .def_readonly_static("CHOICE_SLOT_STRIDE", &CombatEnv::kChoiceSlotStride)
+      .def_readonly_static("CHOICE_OBS_SIZE", &CombatEnv::kChoiceObsSize)
       .def(
           "reset",
           [](CombatEnv& self, uint32_t seed) {

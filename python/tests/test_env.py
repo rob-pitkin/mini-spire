@@ -75,7 +75,7 @@ def _play_to_win_with_seed(env, seed, max_steps=500):
         int(minispire._core.CardId.StrikePlus),
         int(minispire._core.CardId.BashPlus),
     ]
-    end_turn = MinispireEnv.NUM_ACTIONS - 1
+    end_turn = MinispireEnv.END_TURN_ACTION
     obs, _ = env.reset(seed=seed)
     last_reward = 0.0
     for _ in range(max_steps):
@@ -162,7 +162,7 @@ def test_reset_different_seeds_produce_different_trajectories():
 
 def test_seeded_trajectory_determinism():
     """Same seed + same action sequence produces identical trajectories."""
-    end_turn = MinispireEnv.NUM_ACTIONS - 1
+    end_turn = MinispireEnv.END_TURN_ACTION
     actions = [end_turn] * 3
 
     env_a = MinispireEnv()
@@ -183,7 +183,7 @@ def test_seeded_trajectory_determinism():
 def test_step_returns_5_tuple():
     env = MinispireEnv()
     env.reset(seed=0)
-    end_turn = MinispireEnv.NUM_ACTIONS - 1
+    end_turn = MinispireEnv.END_TURN_ACTION
     result = env.step(end_turn)
     assert len(result) == 5
     obs, reward, terminated, truncated, info = result
@@ -200,7 +200,7 @@ def test_step_accepts_numpy_int():
     """Agents often pass np.int64 actions; wrapper must handle that."""
     env = MinispireEnv()
     env.reset(seed=0)
-    end_turn = np.int64(MinispireEnv.NUM_ACTIONS - 1)
+    end_turn = np.int64(MinispireEnv.END_TURN_ACTION)
     obs, _, _, _, _ = env.step(end_turn)
     assert obs.shape == (MinispireEnv.OBS_SIZE,)
 
@@ -222,7 +222,7 @@ def test_action_masks_returns_bool_array():
 def test_action_masks_end_turn_always_legal():
     env = MinispireEnv()
     env.reset(seed=0)
-    end_turn = MinispireEnv.NUM_ACTIONS - 1
+    end_turn = MinispireEnv.END_TURN_ACTION
     assert env.action_masks()[end_turn]
 
 

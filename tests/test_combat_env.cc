@@ -14,7 +14,10 @@ using namespace minispire;
 
 namespace {
 
-constexpr int kEndTurnAction = CombatEnv::kNumActions - 1;
+// End turn is the last index of the COMBAT block, no longer the last index of
+// the action space (the Stage 4c option-slot channel follows it). Use the
+// engine's constant rather than recomputing it.
+using minispire::kEndTurnAction;
 
 }  // namespace
 
@@ -41,11 +44,11 @@ TEST(CombatEnv, ObsBufferIsKObsSize) {
   CombatEnv env;
   env.reset(0);
   EXPECT_EQ(env.obs().size(), static_cast<std::size_t>(CombatEnv::kObsSize));
-  // Compute the layout from constants so this never goes stale as the obs grows:
-  // player + enemies + piles + turn(1).
+  // Compute the layout from constants so this never goes stale as the obs
+  // grows: player + enemies + piles + turn(1) + the Stage 4c choice block.
   const int expected = CombatEnv::kPlayerObsSize +
                        minispire::kMaxEnemies * CombatEnv::kEnemyObsStride +
-                       CombatEnv::kPileObsSize + 1;
+                       CombatEnv::kPileObsSize + 1 + CombatEnv::kChoiceObsSize;
   EXPECT_EQ(env.obs().size(), static_cast<std::size_t>(expected));
 }
 
@@ -54,9 +57,12 @@ TEST(CombatEnv, ActionMaskIsKNumActions) {
   env.reset(0);
   EXPECT_EQ(env.action_mask().size(),
             static_cast<std::size_t>(CombatEnv::kNumActions));
-  // card types x enemies + end-turn — from constants, never stale.
+  // Combat block (card types x enemies + end-turn) plus the option-slot
+  // channel (one slot per option + decline) — from constants, never stale.
   EXPECT_EQ(env.action_mask().size(),
-            static_cast<std::size_t>(minispire::kNumCardTypes * minispire::kMaxEnemies + 1));
+            static_cast<std::size_t>(minispire::kNumCardTypes *
+                                         minispire::kMaxEnemies +
+                                     1 + minispire::kNumOptionSlots + 1));
 }
 
 TEST(CombatEnv, EndTurnAlwaysLegalAfterReset) {
@@ -167,7 +173,12 @@ TEST(CombatEnv, ObsHandCountsMatchDeckDraw) {
 TEST(CombatEnv, ObsTurnNumberAfterReset) {
   CombatEnv env;
   env.reset(0);
-  EXPECT_FLOAT_EQ(env.obs()[CombatEnv::kObsSize - 1], 1.0f);
+  // Turn number sits after the pile block; the Stage 4c choice block follows
+  // it, so this is no longer the obs's last slot.
+  constexpr int kTurnOff = CombatEnv::kPlayerObsSize +
+                           minispire::kMaxEnemies * CombatEnv::kEnemyObsStride +
+                           CombatEnv::kPileObsSize;
+  EXPECT_FLOAT_EQ(env.obs()[kTurnOff], 1.0f);
 }
 
 TEST(CombatEnv, IntentDamageReflectsEnemyStrength) {
