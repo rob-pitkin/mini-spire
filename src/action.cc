@@ -55,6 +55,22 @@ int spend_all_energy(CombatState& state) {
   return x;
 }
 
+void heal_player(CombatState& state, int amount) {
+  if (amount <= 0 || state.character.hp <= 0) return;
+  state.character.hp += amount;
+  if (state.character.hp > state.character.max_hp) {
+    state.character.hp = state.character.max_hp;
+  }
+}
+
+void gain_max_hp(CombatState& state, int amount) {
+  if (amount <= 0) return;
+  // StS raises current HP alongside max HP, so Feed on a hurt player is a
+  // real heal as well as a cap increase.
+  state.character.max_hp += amount;
+  state.character.hp += amount;
+}
+
 void move_to_exhaust(CombatState& state, Card card) {
   state.exhaust_pile.push_back(card);
 }
@@ -531,6 +547,8 @@ void player_attack_enemy(CombatState& state, int slot, int base,
                                         strength_mult);
   apply_damage_to_hp_block(state.enemies[slot].hp,
                            state.enemies[slot].current_block, dmg);
+  // Track what actually reached HP — Reaper heals the unblocked total.
+  ctx.unblocked_damage_dealt += hp_before - state.enemies[slot].hp;
   if (state.enemies[slot].hp < hp_before) {
     // The on-damaged hook family. OnDamaged first: the damage-wake
     // RewriteIntent (guarded on is_asleep) sets the Stunned intent while still

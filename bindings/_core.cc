@@ -218,7 +218,12 @@ PYBIND11_MODULE(_core, m) {
       .value("FiendFire", CardId::FiendFire)
       .value("FiendFirePlus", CardId::FiendFirePlus)
       .value("Sentinel", CardId::Sentinel)
-      .value("SentinelPlus", CardId::SentinelPlus);
+      .value("SentinelPlus", CardId::SentinelPlus)
+      // Life-total cards.
+      .value("Feed", CardId::Feed)
+      .value("FeedPlus", CardId::FeedPlus)
+      .value("Reaper", CardId::Reaper)
+      .value("ReaperPlus", CardId::ReaperPlus);
 
   // EnemyKind (ROB-79) — so the TUI can name per-slot enemies via enemy_kinds().
   py::enum_<EnemyKind>(m, "EnemyKind")

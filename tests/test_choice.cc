@@ -1479,3 +1479,129 @@ TEST(ExhaustCards, ExhaustsFromTheseCardsFeedFeelNoPain) {
   // 2 x 5 from Second Wind itself, plus 2 x 3 from Feel No Pain.
   EXPECT_EQ(s.character.current_block, 10 + 6);
 }
+
+// ============================================================================
+// Life-total cards: Feed and Reaper — the first cards that heal or change
+// max HP, so they exercise paths the engine did not previously have.
+// ============================================================================
+
+TEST(LifeTotal, ReaperHealsTheUnblockedDamageItDealt) {
+  CombatState s = make_minimal_state(0);
+  s.character.hp = 40;  // room to heal
+  const int hp = s.character.hp;
+
+  ASSERT_TRUE(play(s, CardId::Reaper));
+
+  // One enemy, no block: all 4 damage lands, so heal 4.
+  EXPECT_EQ(s.character.hp, hp + 4);
+}
+
+TEST(LifeTotal, ReaperOnlyHealsUNBLOCKEDDamage) {
+  CombatState s = make_minimal_state(0);
+  s.character.hp = 40;
+  s.enemies[0].current_block = 3;  // absorbs 3 of the 4
+  const int hp = s.character.hp;
+
+  ASSERT_TRUE(play(s, CardId::Reaper));
+
+  EXPECT_EQ(s.character.hp, hp + 1) << "only the 1 unblocked point heals";
+}
+
+TEST(LifeTotal, ReaperHealsTheSumAcrossAllEnemies) {
+  // It is AoE, so the heal is the total unblocked damage.
+  CombatState s = make_minimal_state(0);
+  s.character.hp = 40;
+  std::mt19937 rng(3);
+  s.enemies.push_back(make_jaw_worm(rng));
+  s.enemies.push_back(make_jaw_worm(rng));
+  const int hp = s.character.hp;
+
+  ASSERT_TRUE(play(s, CardId::Reaper));
+
+  EXPECT_EQ(s.character.hp, hp + 12) << "3 enemies x 4 damage";
+}
+
+TEST(LifeTotal, ReaperCannotHealAboveMaxHp) {
+  CombatState s = make_minimal_state(0);
+  s.character.hp = s.character.max_hp;  // already full
+
+  ASSERT_TRUE(play(s, CardId::Reaper));
+
+  EXPECT_EQ(s.character.hp, s.character.max_hp);
+}
+
+TEST(LifeTotal, ReaperPlusDealsFive) {
+  CombatState s = make_minimal_state(0);
+  s.character.hp = 40;
+  const int enemy_hp = s.enemies[0].hp;
+  const int hp = s.character.hp;
+
+  ASSERT_TRUE(play(s, CardId::ReaperPlus));
+
+  EXPECT_EQ(s.enemies[0].hp, enemy_hp - 5);
+  EXPECT_EQ(s.character.hp, hp + 5);
+}
+
+TEST(LifeTotal, ReaperHealsNothingWhenFullyBlocked) {
+  CombatState s = make_minimal_state(0);
+  s.character.hp = 40;
+  s.enemies[0].current_block = 50;
+  const int hp = s.character.hp;
+
+  ASSERT_TRUE(play(s, CardId::Reaper));
+
+  EXPECT_EQ(s.character.hp, hp);
+}
+
+TEST(LifeTotal, FeedRaisesMaxHpWhenItKills) {
+  CombatState s = make_minimal_state(0);
+  s.enemies[0].hp = 5;  // dies to Feed's 10
+  const int max_hp = s.character.max_hp;
+  const int hp = s.character.hp;
+
+  ASSERT_TRUE(play(s, CardId::Feed));
+
+  EXPECT_EQ(s.character.max_hp, max_hp + 3);
+  EXPECT_EQ(s.character.hp, hp + 3) << "current HP rises with max HP";
+}
+
+TEST(LifeTotal, FeedGivesNothingWhenItDoesNotKill) {
+  CombatState s = make_minimal_state(0);
+  s.enemies[0].hp = 50;  // survives Feed's 10
+  const int max_hp = s.character.max_hp;
+
+  ASSERT_TRUE(play(s, CardId::Feed));
+
+  EXPECT_EQ(s.character.max_hp, max_hp);
+}
+
+TEST(LifeTotal, FeedPlusRaisesMaxHpByFour) {
+  CombatState s = make_minimal_state(0);
+  s.enemies[0].hp = 5;
+  const int max_hp = s.character.max_hp;
+
+  ASSERT_TRUE(play(s, CardId::FeedPlus));
+
+  EXPECT_EQ(s.character.max_hp, max_hp + 4);
+}
+
+TEST(LifeTotal, FeedExhausts) {
+  CombatState s = make_minimal_state(0);
+  ASSERT_TRUE(play(s, CardId::Feed));
+  ASSERT_EQ(s.exhaust_pile.size(), 1u);
+  EXPECT_EQ(s.exhaust_pile[0].card_id, CardId::Feed);
+  EXPECT_TRUE(s.discard_pile.empty());
+}
+
+TEST(LifeTotal, FeedMaxHpGainSurvivesWinningTheFight) {
+  // The kill that grants the HP also ends the combat; the gain must still be
+  // recorded rather than lost to the terminal short-circuit.
+  CombatState s = make_minimal_state(0);
+  s.enemies[0].hp = 5;
+  const int max_hp = s.character.max_hp;
+
+  ASSERT_TRUE(play(s, CardId::Feed));
+
+  EXPECT_EQ(s.outcome, Outcome::Won);
+  EXPECT_EQ(s.character.max_hp, max_hp + 3);
+}

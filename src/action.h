@@ -33,6 +33,10 @@ struct ResolutionContext {
   std::array<int, kMaxEnemies> died_slots{};
   int died_count = 0;
 
+  // Damage that actually reached enemy HP this resolution (Reaper heals the
+  // UNBLOCKED total, summed across its AoE targets).
+  int unblocked_damage_dealt = 0;
+
   void record_death(int slot) {
     assert(died_count < kMaxEnemies);
     died_slots[died_count++] = slot;
@@ -116,6 +120,14 @@ void lose_player_hp(CombatState& state, int amount);
 
 void gain_energy(CombatState& state, int amount);
 void spend_energy(CombatState& state, int amount);
+
+// Heal the player, capped at max HP (Reaper). A heal on a dead player does
+// nothing — the terminal check has already fired.
+void heal_player(CombatState& state, int amount);
+
+// Raise max HP, and current HP with it (Feed). "Permanent" in StS means
+// run-scoped; within a single combat it simply persists on the state.
+void gain_max_hp(CombatState& state, int amount);
 
 // Spend ALL energy (X-cost cards); returns the amount spent (= X).
 int spend_all_energy(CombatState& state);

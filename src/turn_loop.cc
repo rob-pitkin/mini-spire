@@ -416,6 +416,18 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   // card's own draw (queued above) still resolves. Cleared at turn start.
   if (data.no_draw_after) state.character.no_draw_this_turn = true;
 
+  // Life-total effects, applied after the drain because both depend on what
+  // the card's damage actually did.
+  // Reaper: heal the UNBLOCKED total across its AoE targets.
+  if (data.heals_unblocked_damage && ctx.unblocked_damage_dealt > 0) {
+    heal_player(state, ctx.unblocked_damage_dealt);
+  }
+  // Feed: "If Fatal" — max HP only if this card's damage killed something.
+  // None of the Act 1 roster are minions, the only case StS excludes.
+  if (data.max_hp_on_kill > 0 && ctx.died_count > 0) {
+    gain_max_hp(state, data.max_hp_on_kill);
+  }
+
   // 5. Terminal checks. DEATH takes precedence over victory: if the card's
   // self-damage (a lose-HP card — ROB-80) killed the player, it's a Loss even
   // if the same card also cleared the room (e.g. Hemokinesis at 2 HP killing

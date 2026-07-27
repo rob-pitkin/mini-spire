@@ -183,12 +183,17 @@ enum class CardId {
   FiendFirePlus,
   Sentinel,
   SentinelPlus,
+  // Life-total cards: the first to heal or raise max HP.
+  Feed,
+  FeedPlus,
+  Reaper,
+  ReaperPlus,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
 // action-space size (card x target). Update CARD_DATABASE + kObsCardOrder in
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
-inline constexpr int kNumCardTypes = 144;
+inline constexpr int kNumCardTypes = 148;
 
 // A card's inherent StS type. This is a real property, NOT inferable from
 // damage/block: an Attack can gain block (Body Slam) and a Skill can deal
@@ -375,6 +380,13 @@ struct CardData {
   int damage_per_exhausted = 0;  // Fiend Fire
   // Sentinel: gain this much energy when this card is EXHAUSTED (not played).
   int energy_when_exhausted = 0;
+  // Feed: raise max HP by this much if this card's damage KILLS an enemy
+  // ("If Fatal"). None of the Act 1 roster are minions, which is the only
+  // exclusion StS applies.
+  int max_hp_on_kill = 0;
+  // Reaper: heal the player for the UNBLOCKED damage this card dealt (summed
+  // across all targets, since Reaper is AoE).
+  bool heals_unblocked_damage = false;
 };
 
 // What a card becomes when upgraded (Armaments; v2's rest-site smith).
@@ -460,6 +472,8 @@ inline const std::unordered_map<CardId, CardId> CARD_UPGRADES = {
     {CardId::SecondWind, CardId::SecondWindPlus},
     {CardId::FiendFire, CardId::FiendFirePlus},
     {CardId::Sentinel, CardId::SentinelPlus},
+    {CardId::Feed, CardId::FeedPlus},
+    {CardId::Reaper, CardId::ReaperPlus},
     // NOTE: Searing Blow is deliberately absent — it upgrades by incrementing
     // the INSTANCE's counter, not by swapping CardId (see upgrade_card_in_place
     // and is_instance_upgradable). There is no "Searing Blow++" id to map to.
@@ -741,6 +755,13 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     // which playing it normally does NOT do (Corruption, True Grit etc. do).
     {CardId::Sentinel, {"Sentinel", 1, 0, 1, 5, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::None, 0, 0, /*energy_when_exhausted=*/2}},
     {CardId::SentinelPlus, {"Sentinel+", 1, 0, 1, 8, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::None, 0, 0, /*energy_when_exhausted=*/3}},
+    // --- Life-total cards. Both exhaust.
+    // Feed: 10 (12) damage; if it KILLS, +3 (+4) max HP.
+    {CardId::Feed, {"Feed", 1, 10, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, /*exhaust=*/true, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::None, 0, 0, 0, /*max_hp_on_kill=*/3}},
+    {CardId::FeedPlus, {"Feed+", 1, 12, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, /*exhaust=*/true, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::None, 0, 0, 0, /*max_hp_on_kill=*/4}},
+    // Reaper: 4 (5) damage to ALL enemies, heal the unblocked total.
+    {CardId::Reaper, {"Reaper", 2, 4, 1, 0, CardTarget::AllEnemies, {}, {}, CardType::Attack, /*exhaust=*/true, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::None, 0, 0, 0, 0, /*heals_unblocked_damage=*/true}},
+    {CardId::ReaperPlus, {"Reaper+", 2, 5, 1, 0, CardTarget::AllEnemies, {}, {}, CardType::Attack, /*exhaust=*/true, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::None, 0, 0, 0, 0, /*heals_unblocked_damage=*/true}},
 };
 
 // Whether a card needs the player to PICK a specific enemy slot (ROB-80). Only
