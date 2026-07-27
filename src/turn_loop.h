@@ -81,6 +81,25 @@ DecodedAction decode_action(int action);
 // canonical target slot 0 is legal. End-turn is always legal while in progress.
 std::vector<bool> valid_actions(const CombatState& state);
 
+// How a card came to be played. A normal play pays energy and leaves the hand;
+// re-entrant plays (Double Tap's free replay, Havoc playing off the draw pile)
+// do neither. Modelled as a mode rather than duplicated functions so a card
+// behaves identically however it was played.
+struct PlayContext {
+  bool pay_energy = true;      // false for a free replay
+  bool take_from_hand = true;  // false when the card is already in flight
+  bool force_exhaust = false;  // Havoc: the played card always exhausts
+  bool enters_pile = true;     // false for Double Tap's second copy
+  Card instance{CardId::Strike};  // the copy being played, when not from hand
+  int forced_x = -1;           // reuse the first play's X (Double Tap)
+};
+
+// Resolve one card. Public because the PlayCard ACTION re-enters it: a
+// meta-card (Double Tap, Havoc) pushes a PlayCard action rather than calling
+// this directly, so the nested play is a flat queue step like everything else.
+void handle_play_card(CombatState& state, CardId card_id, int target,
+                      const PlayContext& ctx_play = PlayContext{});
+
 // Apply a player action. Returns false (silently, no exception) if the
 // action is invalid; state is not mutated in that case. Combat must be
 // in progress (Outcome::InProgress). Debug builds may log on rejection.

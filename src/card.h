@@ -188,12 +188,20 @@ enum class CardId {
   FeedPlus,
   Reaper,
   ReaperPlus,
+  // Meta-cards: they cause OTHER cards to be played or generated. These are
+  // the re-entrant cases the action queue was built for.
+  DoubleTap,
+  DoubleTapPlus,
+  Havoc,
+  HavocPlus,
+  InfernalBlade,
+  InfernalBladePlus,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
 // action-space size (card x target). Update CARD_DATABASE + kObsCardOrder in
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
-inline constexpr int kNumCardTypes = 148;
+inline constexpr int kNumCardTypes = 154;
 
 // A card's inherent StS type. This is a real property, NOT inferable from
 // damage/block: an Attack can gain block (Body Slam) and a Skill can deal
@@ -387,6 +395,10 @@ struct CardData {
   // Reaper: heal the player for the UNBLOCKED damage this card dealt (summed
   // across all targets, since Reaper is AoE).
   bool heals_unblocked_damage = false;
+  // Havoc: play the top card of the draw pile, then force-exhaust it.
+  bool plays_top_of_draw = false;
+  // Infernal Blade: add a random Attack to hand, costing 0 this turn.
+  bool generates_random_attack = false;
 };
 
 // What a card becomes when upgraded (Armaments; v2's rest-site smith).
@@ -474,6 +486,9 @@ inline const std::unordered_map<CardId, CardId> CARD_UPGRADES = {
     {CardId::Sentinel, CardId::SentinelPlus},
     {CardId::Feed, CardId::FeedPlus},
     {CardId::Reaper, CardId::ReaperPlus},
+    {CardId::DoubleTap, CardId::DoubleTapPlus},
+    {CardId::Havoc, CardId::HavocPlus},
+    {CardId::InfernalBlade, CardId::InfernalBladePlus},
     // NOTE: Searing Blow is deliberately absent — it upgrades by incrementing
     // the INSTANCE's counter, not by swapping CardId (see upgrade_card_in_place
     // and is_instance_upgradable). There is no "Searing Blow++" id to map to.
@@ -762,6 +777,17 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     // Reaper: 4 (5) damage to ALL enemies, heal the unblocked total.
     {CardId::Reaper, {"Reaper", 2, 4, 1, 0, CardTarget::AllEnemies, {}, {}, CardType::Attack, /*exhaust=*/true, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::None, 0, 0, 0, 0, /*heals_unblocked_damage=*/true}},
     {CardId::ReaperPlus, {"Reaper+", 2, 5, 1, 0, CardTarget::AllEnemies, {}, {}, CardType::Attack, /*exhaust=*/true, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::None, 0, 0, 0, 0, /*heals_unblocked_damage=*/true}},
+    // --- Meta-cards: they play or generate OTHER cards.
+    // Double Tap: this turn, the next 1 (2) Attacks are played twice. Modelled
+    // as a turn-scoped Power so the charge count is visible in the obs.
+    {CardId::DoubleTap, {"Double Tap", 1, 0, 1, 0, CardTarget::None, {}, {{Power::DoubleTap, 1, Target::Character}}, CardType::Skill, false, false}},
+    {CardId::DoubleTapPlus, {"Double Tap+", 1, 0, 1, 0, CardTarget::None, {}, {{Power::DoubleTap, 2, Target::Character}}, CardType::Skill, false, false}},
+    // Havoc: play the top card of the draw pile and force-exhaust it.
+    {CardId::Havoc, {"Havoc", 1, 0, 1, 0, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::None, 0, 0, 0, 0, false, /*plays_top_of_draw=*/true}},
+    {CardId::HavocPlus, {"Havoc+", 0, 0, 1, 0, CardTarget::None, {}, {}, CardType::Skill, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::None, 0, 0, 0, 0, false, /*plays_top_of_draw=*/true}},
+    // Infernal Blade: add a random Attack to hand; it costs 0 this turn.
+    {CardId::InfernalBlade, {"Infernal Blade", 1, 0, 1, 0, CardTarget::None, {}, {}, CardType::Skill, /*exhaust=*/true, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::None, 0, 0, 0, 0, false, false, /*generates_random_attack=*/true}},
+    {CardId::InfernalBladePlus, {"Infernal Blade+", 0, 0, 1, 0, CardTarget::None, {}, {}, CardType::Skill, /*exhaust=*/true, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::None, 0, 0, 0, 0, false, false, /*generates_random_attack=*/true}},
 };
 
 // Whether a card needs the player to PICK a specific enemy slot (ROB-80). Only

@@ -76,17 +76,26 @@ int find_first_in_hand(const std::vector<Card>& hand, CardId id) {
 // LAST (ROB-80 Tier B). Hook responses are pushed to the BACK of the queue as
 // they fire (§7 default ordering) — divergences from the pre-queue nested
 // timing are recorded in docs/design/ordering-notes.md.
-void handle_play_card(CombatState& state, CardId card_id, int target) {
+}  // namespace
+
+void handle_play_card(CombatState& state, CardId card_id, int target,
+                      const PlayContext& ctx_play) {
   const CardData& data = CARD_DATABASE.at(card_id);
 
   // 1. Pay energy at translation time — an X-cost card's X (= its hit count)
-  // must be known before its hits can be queued.
+  // must be known before its hits can be queued. A free replay pays nothing
+  // and reuses the original X ("the second play of an X-cost Attack will use
+  // the same value of X as the first").
   int x = 0;
-  const int cost = effective_cost(state, card_id);  // Corruption, Blood for Blood
-  if (cost == kXCost) {
-    x = spend_all_energy(state);
-  } else {
-    spend_energy(state, cost);
+  if (ctx_play.pay_energy) {
+    const int cost = effective_cost(state, card_id);  // Corruption, Blood for Blood
+    if (cost == kXCost) {
+      x = spend_all_energy(state);
+    } else {
+      spend_energy(state, cost);
+    }
+  } else if (ctx_play.forced_x >= 0) {
+    x = ctx_play.forced_x;
   }
   // hits: -1 means "X hits" (Whirlwind); otherwise the literal count.
   const int hits = (data.hits < 0) ? x : data.hits;
@@ -96,10 +105,13 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   // The INSTANCE is captured, not just the id: Rampage's accumulated bonus and
   // Searing Blow's upgrade count ride on the copy and must survive back into
   // the pile it lands in.
-  const int idx = find_first_in_hand(state.current_hand, card_id);
-  assert(idx >= 0 && "mask should have rejected this action");
-  Card played = state.current_hand[idx];
-  state.current_hand.erase(state.current_hand.begin() + idx);
+  Card played = ctx_play.instance;
+  if (ctx_play.take_from_hand) {
+    const int idx = find_first_in_hand(state.current_hand, card_id);
+    assert(idx >= 0 && "mask should have rejected this action");
+    played = state.current_hand[idx];
+    state.current_hand.erase(state.current_hand.begin() + idx);
+  }
 
   // The set of enemy slots this card resolves against.
   std::vector<int> target_slots;
@@ -358,12 +370,16 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   const bool defers_pile_move = data.requests_choice != ChoiceKind::None;
   Action pile_move;
   bool has_pile_move = false;
-  if (data.type != CardType::Power) {
+  // Double Tap's second copy enters NO pile ("not added to your draw or
+  // discard pile, and not Exhausted unless the card would Exhaust normally" —
+  // the first copy already handled that).
+  if (data.type != CardType::Power && ctx_play.enters_pile) {
     // Corruption also EXHAUSTS every Skill played (not just making them free).
     const bool corrupted_skill =
         data.type == CardType::Skill &&
         get_status(state.character.powers, Power::Corruption) > 0;
-    pile_move.kind = (data.exhaust || corrupted_skill)
+    // Havoc forces its card to exhaust regardless of what it would normally do.
+    pile_move.kind = (data.exhaust || corrupted_skill || ctx_play.force_exhaust)
                          ? ActionKind::ExhaustCard
                          : ActionKind::DiscardCard;
     pile_move.card = card_id;
@@ -389,9 +405,38 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
     q.push_back(a);
   }
   // Armaments+: upgrade the WHOLE hand — a shape change from the base card's
-  // single choice, so it resolves inline with no pause.
+  // single choice, so it needs no pause. Queued rather than applied inline so
+  // every gameplay mutation stays inside an executor.
   if (data.upgrades_whole_hand) {
-    for (Card& c : state.current_hand) c.card_id = upgraded_card(c.card_id);
+    q.push_back(Action{ActionKind::UpgradeHand});
+  }
+  // Infernal Blade: add a random Attack to hand, free for the rest of the turn.
+  if (data.generates_random_attack) {
+    q.push_back(Action{ActionKind::MakeCardFree});
+  }
+  // Havoc: play the top card of the draw pile and force-exhaust it. Pushed as
+  // a PlayCard action (the kind the effects-architecture doc specced for
+  // exactly this) so the nested play is a flat queue step, not a nested call.
+  if (data.plays_top_of_draw) {
+    Action a;
+    a.kind = ActionKind::PlayCard;
+    a.amount = kPlayFromDrawPile;
+    q.push_back(a);
+  }
+  // Double Tap: if a charge is up and this was an Attack, replay it for free.
+  // Queued LAST so the replay resolves after the first play's effects; the
+  // charge is consumed by the executor, not here.
+  if (data.type == CardType::Attack && ctx_play.enters_pile &&
+      get_status(state.character.powers, Power::DoubleTap) > 0) {
+    Action a;
+    a.kind = ActionKind::PlayCard;
+    a.amount = kPlayDoubleTapReplay;
+    a.card = card_id;
+    a.card_bonus_damage = played.bonus_damage;
+    a.card_upgrades = played.upgrades;
+    a.target = target;
+    a.copies = x;  // reuse the first play's X
+    q.push_back(a);
   }
   // The card's choice (Stage 4c) queues LAST, after draw: Warcry draws first
   // and you then pick from the resulting hand. The card itself has already
@@ -436,6 +481,8 @@ void handle_play_card(CombatState& state, CardId card_id, int target) {
   if (state.outcome != Outcome::InProgress) return;
   check_enemy_terminal(state);
 }
+
+namespace {
 
 // Choose a uniform-random living ally (a slot != actor with hp > 0), or -1 if
 // there are none. Used by ally-targeting moves (ROB-77 Protect).
@@ -626,6 +673,7 @@ void handle_end_turn(CombatState& state) {
   if (block_resets_at_turn_start(state)) state.character.current_block = 0;
   state.character.energy = state.character.energy_per_turn;
   state.character.no_draw_this_turn = false;  // Battle Trance is turn-scoped
+  state.character.free_this_turn.clear();     // Infernal Blade's discount
   state.turn_number += 1;
   state.character_turn = true;
   {

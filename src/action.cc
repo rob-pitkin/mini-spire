@@ -79,6 +79,14 @@ void move_to_discard(CombatState& state, Card card) {
   state.discard_pile.push_back(card);
 }
 
+void add_card_to_hand(CombatState& state, const Card& card) {
+  if (static_cast<int>(state.current_hand.size()) >= HAND_SIZE_LIMIT) {
+    move_to_discard(state, card);
+  } else {
+    state.current_hand.push_back(card);
+  }
+}
+
 std::optional<CardId> draw_one(CombatState& state) {
   if (state.draw_pile.empty()) {
     if (state.discard_pile.empty()) return std::nullopt;
@@ -420,6 +428,10 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
       if (metallicize > 0) push_player_block(q, metallicize);
       // Rage lasts only the player's own turn.
       if (rage > 0) push_remove_player_power(q, Power::Rage);
+      // Double Tap's charges are "this turn" too — unused ones are lost.
+      if (get_status(state.character.powers, Power::DoubleTap) > 0) {
+        push_remove_player_power(q, Power::DoubleTap);
+      }
       break;
     case Hook::CardPlayed:
       // Rage: block whenever an Attack is played this turn.
@@ -486,17 +498,6 @@ namespace {
 
 bool valid_enemy_slot(const CombatState& state, int slot) {
   return slot >= 0 && slot < static_cast<int>(state.enemies.size());
-}
-
-// Add a card to the hand, overflowing to the DISCARD pile if the hand is full
-// (StS: "if a copy surpasses the hand size limit, it goes to the discard pile"
-// — verified for Dual Wield; the same limit applies to Exhume).
-void add_card_to_hand(CombatState& state, const Card& card) {
-  if (static_cast<int>(state.current_hand.size()) >= HAND_SIZE_LIMIT) {
-    move_to_discard(state, card);
-  } else {
-    state.current_hand.push_back(card);
-  }
 }
 
 // Remove one copy MATCHING `card` (id and instance state) from a pile.
@@ -748,6 +749,75 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
     case ActionKind::DiscardCard:
       move_to_discard(state, a.as_card());
       break;
+    case ActionKind::UpgradeHand:
+      // Armaments+: upgrade every card in hand, in place (Searing Blow bumps
+      // its counter rather than swapping id).
+      for (Card& c : state.current_hand) upgrade_card_in_place(c);
+      break;
+    case ActionKind::MakeCardFree: {
+      // Infernal Blade: a random Attack joins the hand, free for this turn.
+      // Rolled here (execution) rather than at translation, so it draws from
+      // the queue's RNG position like every other random effect.
+      std::vector<CardId> attacks;
+      for (const auto& [id, data] : CARD_DATABASE) {
+        if (data.type == CardType::Attack) attacks.push_back(id);
+      }
+      // CARD_DATABASE is unordered, so sort for a deterministic candidate list
+      // — otherwise the same seed could pick differently between runs.
+      std::sort(attacks.begin(), attacks.end());
+      if (attacks.empty()) break;
+      std::uniform_int_distribution<std::size_t> pick(0, attacks.size() - 1);
+      const CardId chosen_attack = attacks[pick(state.rng)];
+      add_card_to_hand(state, Card{chosen_attack});
+      state.character.free_this_turn[chosen_attack] += 1;
+      break;
+    }
+    case ActionKind::PlayCard: {
+      // Re-entrant card resolution — the case the action queue was built for
+      // (effects-architecture §2.4). The nested play happens as a flat queue
+      // step, so no resolution is open while it mutates state.
+      PlayContext pc;
+      pc.pay_energy = false;      // both cases are free plays
+      pc.take_from_hand = false;  // the card is not in hand
+      if (a.amount == kPlayFromDrawPile) {
+        // Havoc. Reshuffle first if the draw pile is empty ("it will shuffle
+        // your discard pile into your draw pile and target the new top card").
+        if (state.draw_pile.empty() && !state.discard_pile.empty()) {
+          state.draw_pile = std::move(state.discard_pile);
+          state.discard_pile.clear();
+          std::shuffle(state.draw_pile.begin(), state.draw_pile.end(),
+                       state.rng);
+        }
+        if (state.draw_pile.empty()) break;
+        const Card top = state.draw_pile.back();
+        state.draw_pile.pop_back();
+        // An unplayable card (Dazed, Wound) still exhausts but resolves nothing.
+        if (CARD_DATABASE.at(top.card_id).unplayable) {
+          move_to_exhaust(state, top);
+          break;
+        }
+        pc.force_exhaust = true;  // "and Exhaust it", whatever it would do
+        pc.instance = top;
+        pc.forced_x = 0;  // an X-cost card played this way gets X = 0
+        // The player chose no target, so auto-target at random.
+        const int slot = pick_random_living_enemy(state);
+        handle_play_card(state, top.card_id, slot < 0 ? 0 : slot, pc);
+        break;
+      }
+      // Double Tap's replay. Consume a charge here, at execution.
+      const int charges = get_status(state.character.powers, Power::DoubleTap);
+      if (charges <= 0) break;
+      if (charges - 1 <= 0) {
+        state.character.powers.erase(Power::DoubleTap);
+      } else {
+        state.character.powers[Power::DoubleTap] = charges - 1;
+      }
+      pc.enters_pile = false;  // the first copy already went to its pile
+      pc.instance = a.as_card();
+      pc.forced_x = a.copies;  // "uses the same value of X as the first"
+      handle_play_card(state, a.card, a.target, pc);
+      break;
+    }
     case ActionKind::MultiplyStrength: {
       // Limit Break. Multiplying keeps the sign, so a negative Strength
       // (Disarm, Siphon Soul) doubles into a worse debuff — faithful to StS.

@@ -137,6 +137,11 @@ int spend_all_energy(CombatState& state);
 void move_to_exhaust(CombatState& state, Card card);
 void move_to_discard(CombatState& state, Card card);
 
+// Add a card to the hand, overflowing to the DISCARD pile if the hand is full
+// (StS: "if a copy surpasses the hand size limit, it goes to the discard
+// pile"). Used by Dual Wield, Exhume, and Infernal Blade.
+void add_card_to_hand(CombatState& state, const Card& card);
+
 // Move all of discard_pile into draw_pile (if needed), shuffle, draw one card
 // to the hand. Returns the drawn card, or nullopt if nothing was drawn
 // (draw+discard empty, or hand at limit) — the CardDrawn hook needs the id.

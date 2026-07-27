@@ -21,6 +21,10 @@ namespace minispire {
 inline constexpr int kPlayerSlot = -1;
 inline constexpr int kNoSlot = -2;
 
+// PlayCard modes (Action::amount). Which re-entrant play this is.
+inline constexpr int kPlayFromDrawPile = 0;     // Havoc
+inline constexpr int kPlayDoubleTapReplay = 1;  // Double Tap
+
 // Helper: look up a stack count in a debuff/power map, returning 0 if absent.
 template <typename Effect>
 int get_status(const std::unordered_map<Effect, int>& m, Effect e) {
@@ -58,6 +62,12 @@ enum class ActionKind {
   ExhaustCard,    // put `card` in the exhaust pile (played or generated)
   DiscardCard,    // put `card` in the discard pile
   MultiplyStrength,  // Limit Break: player Strength *= amount
+  // Structure
+  PlayCard,       // resolve a card from inside a resolution (Double Tap's free
+                  // replay, Havoc playing off the draw pile). `amount` selects
+                  // which, via the kPlay* constants below.
+  UpgradeHand,    // Armaments+: upgrade every card in hand
+  MakeCardFree,   // Infernal Blade: `card` costs 0 for the rest of this turn
   AddCardToPile,  // generate a card into a pile (Wild Strike's Wound, Power
                   // Through's Wounds, Immolate's Burn, Anger's self-copy).
                   // `amount` is the GeneratedPile.

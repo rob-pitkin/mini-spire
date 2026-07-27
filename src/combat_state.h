@@ -46,6 +46,11 @@ struct Character {
   int hp_loss_events = 0;
   // Battle Trance: no further draws this turn. Cleared at turn start.
   bool no_draw_this_turn = false;
+  // Cards that cost 0 for the rest of THIS turn (Infernal Blade's generated
+  // attack). Keyed by card type: a generated card is fresh, so there is no
+  // instance to distinguish, and a duplicate of the same type would be
+  // indistinguishable to the player anyway. Cleared at turn start.
+  std::unordered_map<CardId, int> free_this_turn;
 };
 
 struct CombatState {

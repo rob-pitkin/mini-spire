@@ -1605,3 +1605,243 @@ TEST(LifeTotal, FeedMaxHpGainSurvivesWinningTheFight) {
   EXPECT_EQ(s.outcome, Outcome::Won);
   EXPECT_EQ(s.character.max_hp, max_hp + 3);
 }
+
+// ============================================================================
+// Meta-cards: Double Tap, Havoc, Infernal Blade. These cause OTHER cards to be
+// played or generated — the re-entrant case the action queue exists for. Each
+// nested play goes through a PlayCard ACTION, not a nested call, so no
+// resolution is ever open while state mutates.
+// ============================================================================
+
+TEST(MetaCards, DoubleTapReplaysTheNextAttack) {
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(play(s, CardId::DoubleTap));
+  ASSERT_EQ(get_status(s.character.powers, Power::DoubleTap), 1);
+
+  s.current_hand.push_back(Card{CardId::Strike});
+  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 12) << "Strike's 6 damage, twice";
+  EXPECT_EQ(get_status(s.character.powers, Power::DoubleTap), 0)
+      << "the charge is consumed";
+}
+
+TEST(MetaCards, DoubleTapReplayCostsNoEnergy) {
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  ASSERT_TRUE(play(s, CardId::DoubleTap));  // costs 1
+  const int energy = s.character.energy;
+
+  s.current_hand.push_back(Card{CardId::Strike});
+  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+
+  // Strike costs 1; the free replay costs nothing.
+  EXPECT_EQ(s.character.energy, energy - 1);
+}
+
+TEST(MetaCards, DoubleTapDoesNotAffectSkills) {
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  ASSERT_TRUE(play(s, CardId::DoubleTap));
+
+  s.current_hand.push_back(Card{CardId::Defend});
+  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Defend) * kMaxEnemies));
+
+  EXPECT_EQ(s.character.current_block, 5) << "Defend is a Skill, played once";
+  EXPECT_EQ(get_status(s.character.powers, Power::DoubleTap), 1)
+      << "the charge is not spent on a non-Attack";
+}
+
+TEST(MetaCards, DoubleTapPlusReplaysTwoAttacks) {
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 5;
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(play(s, CardId::DoubleTapPlus));
+  ASSERT_EQ(get_status(s.character.powers, Power::DoubleTap), 2);
+
+  s.current_hand.push_back(Card{CardId::Strike});
+  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+  s.current_hand.push_back(Card{CardId::Strike});
+  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 24) << "two Strikes, each played twice";
+  EXPECT_EQ(get_status(s.character.powers, Power::DoubleTap), 0);
+}
+
+TEST(MetaCards, DoubleTapSecondCopyEntersNoPile) {
+  // "Not added to your draw or discard pile" — only the first copy goes.
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  ASSERT_TRUE(play(s, CardId::DoubleTap));
+  s.discard_pile.clear();
+
+  s.current_hand.push_back(Card{CardId::Strike});
+  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+
+  int strikes = 0;
+  for (const Card& c : s.discard_pile) {
+    if (c.card_id == CardId::Strike) strikes++;
+  }
+  EXPECT_EQ(strikes, 1) << "one Strike discarded, not two";
+}
+
+TEST(MetaCards, DoubleTapChargesExpireAtEndOfTurn) {
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  ASSERT_TRUE(play(s, CardId::DoubleTap));
+  ASSERT_EQ(get_status(s.character.powers, Power::DoubleTap), 1);
+
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+
+  EXPECT_EQ(get_status(s.character.powers, Power::DoubleTap), 0)
+      << "\"this turn\" — unused charges are lost";
+}
+
+TEST(MetaCards, HavocPlaysTheTopCardOfTheDrawPile) {
+  CombatState s = make_minimal_state(0);
+  s.draw_pile.push_back(Card{CardId::Strike});  // back() is the top
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(play(s, CardId::Havoc));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 6) << "the Strike resolved";
+  EXPECT_TRUE(s.draw_pile.empty());
+}
+
+TEST(MetaCards, HavocForceExhaustsTheCardItPlays) {
+  // "and Exhaust it" — even a card that would normally discard.
+  CombatState s = make_minimal_state(0);
+  s.draw_pile.push_back(Card{CardId::Strike});  // normally discards
+
+  ASSERT_TRUE(play(s, CardId::Havoc));
+
+  bool strike_exhausted = false;
+  for (const Card& c : s.exhaust_pile) {
+    if (c.card_id == CardId::Strike) strike_exhausted = true;
+  }
+  EXPECT_TRUE(strike_exhausted);
+  for (const Card& c : s.discard_pile) {
+    EXPECT_NE(c.card_id, CardId::Strike) << "must not also discard";
+  }
+}
+
+TEST(MetaCards, HavocPlaysTheCardForFree) {
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  s.draw_pile.push_back(Card{CardId::Bash});  // normally costs 2
+
+  ASSERT_TRUE(play(s, CardId::Havoc));  // Havoc itself costs 1
+
+  EXPECT_EQ(s.character.energy, 2) << "only Havoc's own cost was paid";
+}
+
+TEST(MetaCards, HavocReshufflesWhenTheDrawPileIsEmpty) {
+  CombatState s = make_minimal_state(0);
+  ASSERT_TRUE(s.draw_pile.empty());
+  s.discard_pile.push_back(Card{CardId::Strike});
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(play(s, CardId::Havoc));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 6) << "the discard was shuffled in and played";
+}
+
+TEST(MetaCards, HavocWithNothingToPlayIsANoOp) {
+  CombatState s = make_minimal_state(0);
+  ASSERT_TRUE(s.draw_pile.empty());
+  ASSERT_TRUE(s.discard_pile.empty());
+
+  ASSERT_TRUE(play(s, CardId::Havoc));  // must not crash
+
+  EXPECT_EQ(s.outcome, Outcome::InProgress);
+}
+
+TEST(MetaCards, HavocExhaustsAnUnplayableCardWithoutResolvingIt) {
+  CombatState s = make_minimal_state(0);
+  s.draw_pile.push_back(Card{CardId::Dazed});  // unplayable
+  const int hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(play(s, CardId::Havoc));
+
+  EXPECT_EQ(s.enemies[0].hp, hp);  // nothing resolved
+  bool dazed_exhausted = false;
+  for (const Card& c : s.exhaust_pile) {
+    if (c.card_id == CardId::Dazed) dazed_exhausted = true;
+  }
+  EXPECT_TRUE(dazed_exhausted);
+}
+
+TEST(MetaCards, InfernalBladeAddsARandomAttackThatCostsZero) {
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+
+  ASSERT_TRUE(play(s, CardId::InfernalBlade));
+
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  const CardId got = s.current_hand[0].card_id;
+  EXPECT_EQ(CARD_DATABASE.at(got).type, CardType::Attack);
+  EXPECT_EQ(effective_cost(s, got), 0) << "costs 0 this turn";
+}
+
+TEST(MetaCards, InfernalBladesDiscountExpiresNextTurn) {
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  for (int i = 0; i < 10; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(play(s, CardId::InfernalBlade));
+  const CardId got = s.current_hand[0].card_id;
+  ASSERT_EQ(effective_cost(s, got), 0);
+
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+
+  // Back to its printed cost once the turn ends.
+  EXPECT_EQ(effective_cost(s, got), CARD_DATABASE.at(got).cost);
+}
+
+TEST(MetaCards, InfernalBladeExhausts) {
+  CombatState s = make_minimal_state(0);
+  ASSERT_TRUE(play(s, CardId::InfernalBlade));
+  bool found = false;
+  for (const Card& c : s.exhaust_pile) {
+    if (c.card_id == CardId::InfernalBlade) found = true;
+  }
+  EXPECT_TRUE(found);
+}
+
+TEST(MetaCards, MetaCardsAreDeterministicForASeed) {
+  // Havoc's targeting and Infernal Blade's card pick both draw from the seeded
+  // stream, so a seed must reproduce exactly.
+  auto run = [](uint32_t seed) {
+    CombatState s = make_minimal_state(seed);
+    s.character.energy = 5;
+    for (int i = 0; i < 6; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+    EXPECT_TRUE(play(s, CardId::InfernalBlade));
+    EXPECT_TRUE(play(s, CardId::Havoc));
+    std::vector<int> out{s.enemies[0].hp, s.character.energy,
+                         static_cast<int>(s.current_hand.size())};
+    for (const Card& c : s.current_hand) out.push_back(static_cast<int>(c.card_id));
+    return out;
+  };
+  EXPECT_EQ(run(11), run(11));
+}
+
+TEST(MetaCards, DoubleTapReplaysThroughTheQueueNotRecursion) {
+  // Regression guard for the architecture: the replay must leave the state
+  // consistent even when the replayed attack kills the last enemy — which,
+  // under nested resolution, is exactly where mutation-during-resolution bugs
+  // used to appear.
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  ASSERT_TRUE(play(s, CardId::DoubleTap));
+  s.enemies[0].hp = 8;  // survives the first Strike, dies to the replay
+
+  s.current_hand.push_back(Card{CardId::Strike});
+  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+
+  EXPECT_LE(s.enemies[0].hp, 0);
+  EXPECT_EQ(s.outcome, Outcome::Won);
+}

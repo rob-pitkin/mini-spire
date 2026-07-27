@@ -84,6 +84,9 @@ constexpr std::array<CardId, kNumCardTypes> kObsCardOrder = {
     CardId::SentinelPlus,
     // Life-total cards.
     CardId::Feed, CardId::FeedPlus, CardId::Reaper, CardId::ReaperPlus,
+    // Meta-cards.
+    CardId::DoubleTap, CardId::DoubleTapPlus, CardId::Havoc, CardId::HavocPlus,
+    CardId::InfernalBlade, CardId::InfernalBladePlus,
 };
 static_assert(kObsCardOrder.size() == kNumCardTypes,
               "kObsCardOrder must list every card type");
@@ -120,7 +123,7 @@ constexpr std::array<Power, kNumPlayerPowers> kObsPlayerPowerOrder = {
     Power::DarkEmbrace,  Power::Evolve,        Power::FireBreathing,
     Power::Rupture,      Power::Juggernaut,    Power::Rage,
     Power::FlameBarrier, Power::Brutality,     Power::Berserk,
-    Power::Corruption,   Power::Barricade,
+    Power::Corruption,   Power::Barricade,     Power::DoubleTap,
 };
 static_assert(kObsPlayerPowerOrder.size() == kNumPlayerPowers,
               "kObsPlayerPowerOrder must list every power");

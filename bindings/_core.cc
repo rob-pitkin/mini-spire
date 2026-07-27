@@ -223,7 +223,14 @@ PYBIND11_MODULE(_core, m) {
       .value("Feed", CardId::Feed)
       .value("FeedPlus", CardId::FeedPlus)
       .value("Reaper", CardId::Reaper)
-      .value("ReaperPlus", CardId::ReaperPlus);
+      .value("ReaperPlus", CardId::ReaperPlus)
+      // Meta-cards.
+      .value("DoubleTap", CardId::DoubleTap)
+      .value("DoubleTapPlus", CardId::DoubleTapPlus)
+      .value("Havoc", CardId::Havoc)
+      .value("HavocPlus", CardId::HavocPlus)
+      .value("InfernalBlade", CardId::InfernalBlade)
+      .value("InfernalBladePlus", CardId::InfernalBladePlus);
 
   // EnemyKind (ROB-79) — so the TUI can name per-slot enemies via enemy_kinds().
   py::enum_<EnemyKind>(m, "EnemyKind")
@@ -304,7 +311,8 @@ PYBIND11_MODULE(_core, m) {
       .value("Berserk", Power::Berserk)
       // Query-layer powers (Stage 4b).
       .value("Corruption", Power::Corruption)
-      .value("Barricade", Power::Barricade);
+      .value("Barricade", Power::Barricade)
+      .value("DoubleTap", Power::DoubleTap);
 
   py::enum_<Target>(m, "Target")
       .value("Character", Target::Character)

@@ -53,6 +53,7 @@ enum class Power {
   // in query.cc, not in a hook registry. ---
   Corruption,    // Skills cost 0 and exhaust when played
   Barricade,     // block is not removed at the start of your turn
+  DoubleTap,     // this turn, the next `stacks` Attacks are played twice
   None,          // sentinel: "no power" (default for unused fields)
 };
 
@@ -63,7 +64,7 @@ enum class Power {
 // enforce the counts match. (The None sentinels are excluded.)
 inline constexpr int kNumDebuffs = 4;
 inline constexpr int kNumEnemyPowers = 6;
-inline constexpr int kNumPlayerPowers = 20;
+inline constexpr int kNumPlayerPowers = 21;
 
 // FUTURE (multi-enemy): Target { Character, Enemy } collapses any "the enemy"
 // to a single entity, which is unambiguous in v1 with one enemy. Multi-enemy

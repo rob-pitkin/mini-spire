@@ -35,6 +35,13 @@ int effective_cost(const CombatState& state, CardId card) {
   const CardData& data = CARD_DATABASE.at(card);
   if (data.cost == kXCost) return kXCost;  // "spend all" — not a number
 
+  // Infernal Blade's generated attack costs 0 for the rest of this turn.
+  // Checked first: a free card is free regardless of the other modifiers.
+  auto free_it = state.character.free_this_turn.find(card);
+  if (free_it != state.character.free_this_turn.end() && free_it->second > 0) {
+    return 0;
+  }
+
   // Corruption: Skills cost 0.
   if (data.type == CardType::Skill &&
       get_status(state.character.powers, Power::Corruption) > 0) {
