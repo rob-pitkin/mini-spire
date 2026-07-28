@@ -326,8 +326,14 @@ Enemy make_acid_slime_m(std::mt19937& rng) {
       // After Tackle (banned): redistribute T's 0.40 over Lick/Spit (each 0.30
       // of the remaining 0.60) -> 0.5 / 0.5.
       {{MoveName::Tackle, 1}, {{MoveName::Lick, 0.5f}, {MoveName::CorrosiveSpit, 0.5f}}},
-      // After Lick (banned): Tackle/Spit over remaining 0.70 -> 4/7, 3/7.
+      // Lick and Spit are BOTH "other moves": only Tackle is capped at 1 in a
+      // row; the other two may repeat once and are banned on the 3rd (ROB-85).
+      // After Lick once (still legal): full base 40/30/30.
       {{MoveName::Lick, 1},
+       {{MoveName::Tackle, 0.4f}, {MoveName::Lick, 0.3f},
+        {MoveName::CorrosiveSpit, 0.3f}}},
+      // After Lick twice (banned): Tackle/Spit over remaining 0.70 -> 4/7, 3/7.
+      {{MoveName::Lick, 2},
        {{MoveName::Tackle, 4.0f / 7.0f}, {MoveName::CorrosiveSpit, 3.0f / 7.0f}}},
       // After Spit once (still legal): full base 40/30/30.
       {{MoveName::CorrosiveSpit, 1},
@@ -504,8 +510,11 @@ Enemy make_red_slaver(std::mt19937& rng) {
   // Shared move data. Pseudo-states (OpenerStab, CycleScrape1/2, CycleStab) map
   // to the same Stab/Scrape data; only their transition role differs.
   const Move stab{MoveName::Stab, 13, 0, {}};
+  // Scrape applies VULNERABLE, not Weak (ROB-85). Wiki: "Scrape — Deals 8
+  // damage. Applies 1 Vulnerable." The two are not interchangeable: Weak would
+  // weaken the slaver's own output, Vulnerable amplifies what the player takes.
   const Move scrape{MoveName::Scrape, 8, 0,
-                    {{Debuff::Weak, 1, Target::Character}}};
+                    {{Debuff::Vulnerable, 1, Target::Character}}};
   const Move entangle{MoveName::Entangle, 0, 0,
                       {{Debuff::Entangle, 1,
                         Target::Character}}};
@@ -620,7 +629,11 @@ Enemy make_acid_slime_l(std::mt19937& rng) {
 
   e.transitions = {
       {{MoveName::Tackle, 1}, {{MoveName::Lick, 0.5f}, {MoveName::CorrosiveSpit, 0.5f}}},
+      // Lick may repeat once, like Spit — only Tackle is capped at 1 (ROB-85).
       {{MoveName::Lick, 1},
+       {{MoveName::Tackle, 0.4f}, {MoveName::Lick, 0.3f},
+        {MoveName::CorrosiveSpit, 0.3f}}},
+      {{MoveName::Lick, 2},
        {{MoveName::Tackle, 4.0f / 7.0f}, {MoveName::CorrosiveSpit, 3.0f / 7.0f}}},
       {{MoveName::CorrosiveSpit, 1},
        {{MoveName::Tackle, 0.4f}, {MoveName::Lick, 0.3f},
@@ -749,12 +762,12 @@ Enemy make_mad_gremlin(std::mt19937& rng) {
 }
 
 Enemy make_gremlin_wizard(std::mt19937& rng) {
-  // Gremlin Wizard (HP 23-25): Ultimate Blast (25 dmg) after charging. First
+  // Gremlin Wizard (HP 21-25): Ultimate Blast (25 dmg) after charging. First
   // cycle charges 2 turns, then 3 turns every cycle after (ROB-64 enriched
   // states). Charge has no effect.
   Enemy e;
   e.kind = EnemyKind::GremlinWizard;
-  std::uniform_int_distribution<int> hp_roll(23, 25);
+  std::uniform_int_distribution<int> hp_roll(21, 25);
   e.max_hp = hp_roll(rng);
   e.hp = e.max_hp;
   e.current_block = 0;

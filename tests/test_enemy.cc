@@ -378,18 +378,41 @@ TEST(Enemy, AcidSlimeSStrictlyAlternates) {
   }
 }
 
-TEST(Enemy, AcidSlimeMNeverRepeatsTackleOrLick) {
-  // Tackle and Lick can't appear twice in a row; Corrosive Spit can (up to 2).
+TEST(Enemy, AcidSlimeMNeverRepeatsTackle) {
+  // ROB-85: only TACKLE is capped at one in a row. The wiki rule is "cannot use
+  // Tackle twice in a row and cannot use other moves three times in a row", so
+  // Lick — an "other move", like Corrosive Spit — may legally repeat once.
   std::mt19937 rng(0);
   Enemy e = make_acid_slime_m(rng);
   MoveName prev = *e.last_move;
   for (int i = 0; i < 1000; ++i) {
     MoveName next = select_next_move(e, rng);
-    if (next == MoveName::Tackle || next == MoveName::Lick) {
-      EXPECT_NE(next, prev) << "Tackle/Lick repeated";
-    }
+    if (next == MoveName::Tackle) EXPECT_NE(next, prev) << "Tackle repeated";
     prev = next;
   }
+}
+
+TEST(Enemy, AcidSlimeMAllowsLickTwiceButNeverThrice) {
+  // The other half of the same rule: a Lick pair must be reachable, and a Lick
+  // triple must be impossible. Pinning both directions is what makes this a
+  // real regression guard — asserting only "never three" would also pass under
+  // the old, too-strict "never two" table.
+  std::mt19937 rng(0);
+  Enemy e = make_acid_slime_m(rng);
+  MoveName p1 = *e.last_move, p2 = MoveName::Chomp;
+  bool saw_double_lick = false, two = false;
+  for (int i = 0; i < 2000; ++i) {
+    MoveName next = select_next_move(e, rng);
+    if (next == MoveName::Lick && p1 == MoveName::Lick) {
+      saw_double_lick = true;
+      if (two) {
+        EXPECT_NE(p2, MoveName::Lick) << "Lick three times in a row";
+      }
+    }
+    p2 = p1; p1 = next; two = true;
+  }
+  EXPECT_TRUE(saw_double_lick)
+      << "Lick must be able to repeat once; the old table made this impossible";
 }
 
 TEST(Enemy, AcidSlimeMNeverSpitsThreeInARow) {
@@ -555,7 +578,10 @@ TEST(Enemy, RedSlaverHpAndMoves) {
   EXPECT_GE(e.hp, 46); EXPECT_LE(e.hp, 50);
   EXPECT_EQ(e.moves.at(MoveName::Stab).damage, 13);
   EXPECT_EQ(e.moves.at(MoveName::Scrape).damage, 8);
-  EXPECT_EQ(e.moves.at(MoveName::Scrape).applies_debuffs.at(0).effect, Debuff::Weak);
+  // Scrape applies Vulnerable, not Weak (ROB-85 wiki audit).
+  EXPECT_EQ(e.moves.at(MoveName::Scrape).applies_debuffs.at(0).effect,
+            Debuff::Vulnerable);
+  EXPECT_EQ(e.moves.at(MoveName::Scrape).applies_debuffs.at(0).amount, 1);
   EXPECT_EQ(e.moves.at(MoveName::Entangle).applies_debuffs.at(0).effect, Debuff::Entangle);
   // Pseudo-states share data.
   EXPECT_EQ(e.moves.at(MoveName::OpenerStab).damage, 13);

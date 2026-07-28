@@ -59,7 +59,7 @@ enum class MoveName {
   // Slaver
   Stab,    // deal damage (12 Blue / 13 Red)
   Rake,    // Blue Slaver: deal 7, apply 1 Weak
-  Scrape,  // Red Slaver: deal 8, apply 1 Weak (post-Entangle Markov state)
+  Scrape,  // Red Slaver: deal 8, apply 1 Vulnerable
   Entangle,  // Red Slaver: apply Entangle to the player
   // --- Enriched pseudo-move-states (ROB-76): encode turn/phase/cycle position
   // as distinct names sharing another move's data. select_next_move keys on
