@@ -55,6 +55,52 @@ This section is the most important one. Read it before every session.
    approximate. If parity requires an engine change, that's the correct path.
    When unsure of the exact StS behavior, ask rather than guess.
 
+### Bash discipline — rule 1, with teeth
+
+Rule 1 has been violated repeatedly in practice, always with the same shape: a
+shortcut that was faster to *write* and worse to *review*. A one-line
+prohibition wasn't enough, so the failure modes are named here. **Recognize the
+rationalization, not just the rule.**
+
+**Bash is for commands. Dedicated tools are for content.**
+
+| Task | Use | Never |
+|------|-----|-------|
+| Read a file, or a region of one | Read | `cat`, `head`, `tail`, `sed -n` |
+| Change a file | Edit / Write | `sed -i`, `python3 - <<EOF`, `cat >> f <<EOF` |
+| Locate a symbol / count occurrences | Grep, Glob (Bash `grep -n` only if the tool is unavailable) | — |
+| Build, test, git, run a script | Bash | — |
+
+**The three rationalizations that keep winning, and why each is wrong:**
+
+1. *"This edit touches four files — one script is faster."* Four Edit calls is
+   the correct cost, and they can go in a single message anyway. The script
+   saves Claude time and costs Rob the reviewable diff. This one has won most
+   often; treat "multi-file" as a reason to be *more* careful, not less.
+2. *"It's only appending a block of tests."* Heredoc appends have already
+   mangled comments in `card.h`. If content must be assembled first, Write it
+   to the scratch directory, then Write/Edit the real file.
+3. *"I only need to check whether X exists."* Legitimate — but see the next
+   rule, which is the one that actually caused damage.
+
+**Grep can prove presence. Only reading proves absence.**
+
+A regex matches what you already expected to find, so zero hits proves nothing
+except that your pattern didn't match. This has already produced a *false
+all-clear* on this project: a sweep for "direct state mutations outside
+executors" checked only `state.character` and `state.enemies`, only `+=` and
+`-=`, and could not span newlines — so it never examined the card piles at all,
+and reported **0**. A broader pattern found 53 hits. The number was published
+as reassurance in a Linear issue before it was caught.
+
+So: never report "there are no X" on the strength of a grep. Either read the
+code, or state the claim as what it actually is — *"no matches for this
+pattern"* — and say what the pattern couldn't have seen.
+
+This matters most for **review and audit work**, where the whole deliverable is
+a claim about what isn't there. It applies to subagents too: an agent that
+greps will produce confident, wrong all-clears at scale.
+
 ### The interaction model
 
 Claude is used in three modes only:
