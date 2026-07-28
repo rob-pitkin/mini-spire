@@ -1865,3 +1865,165 @@ TEST(MetaCards, DoubleTapReplaysThroughTheQueueNotRecursion) {
   EXPECT_LE(s.enemies[0].hp, 0);
   EXPECT_EQ(s.outcome, Outcome::Won);
 }
+
+// ============================================================================
+// ROB-85 wiki-audit regressions. Each of these pins a defect that the existing
+// suite passed straight through — the fixes broke NO existing test, which is
+// exactly why they needed new ones.
+// ============================================================================
+
+TEST(WikiAudit, InfernalBladeDiscountIsConsumedByOnePlay) {
+  // The discount was keyed by CardId and never decremented, so "It costs 0 this
+  // turn" applied to the whole card TYPE. With 5 Strikes in the starter deck,
+  // rolling a Strike made every Strike free for the rest of the turn.
+  //
+  // Set the flag directly rather than playing Infernal Blade: its generated
+  // attack is a random draw, and the bug only shows when the roll COLLIDES with
+  // a card already in hand. The old test skipped its assertion on exactly that
+  // case, which is how this survived.
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 5;
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.character.free_this_turn[CardId::Strike] = 1;
+
+  const int start = s.character.energy;
+  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+  EXPECT_EQ(s.character.energy, start) << "the free copy costs nothing";
+
+  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+  EXPECT_EQ(s.character.energy, start - 1)
+      << "only ONE copy was free; the second pays its printed cost";
+}
+
+TEST(WikiAudit, InfernalBladeDiscountStillCoversItsOwnCard) {
+  // Guard the other direction: consuming the charge must not make the generated
+  // card cost energy on its first play.
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  ASSERT_TRUE(play(s, CardId::InfernalBlade));  // costs 1
+  const int after_blade = s.character.energy;
+
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  const CardId got = s.current_hand[0].card_id;
+  ASSERT_EQ(effective_cost(s, got), 0);
+
+  ASSERT_TRUE(apply_action(s, static_cast<int>(got) * kMaxEnemies));
+  EXPECT_EQ(s.character.energy, after_blade) << "the generated attack was free";
+}
+
+TEST(WikiAudit, BurningPactChoosesFromThePreDrawHand) {
+  // "Exhaust 1 card. Draw 2 cards." — the exhaust resolves FIRST, so a card the
+  // same play drew must not be offerable. The choice used to queue after the
+  // draw, letting the agent exhaust what it had just drawn.
+  // Two candidates must be in hand up front: a lone legal option is auto-applied
+  // without pausing (StS: "if there is only one card ... it will automatically
+  // be placed"), which would hide the option set entirely.
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::BurningPact});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Strike});
+  // Distinct from each other and from the hand, so a leaked drawn card is
+  // unambiguous rather than deduped into an existing option.
+  s.draw_pile.push_back(Card{CardId::Cleave});
+  s.draw_pile.push_back(Card{CardId::Bash});
+
+  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::BurningPact) * kMaxEnemies));
+
+  ASSERT_TRUE(s.pending_choice.active());
+  EXPECT_EQ(s.pending_choice.num_options, 2)
+      << "only the pre-draw hand (Defend, Strike) is on offer";
+  for (int i = 0; i < s.pending_choice.num_options; ++i) {
+    const CardId id = s.pending_choice.options[i].card_id;
+    EXPECT_NE(id, CardId::Bash) << "a just-drawn card leaked into the choice";
+    EXPECT_NE(id, CardId::Cleave) << "a just-drawn card leaked into the choice";
+  }
+}
+
+TEST(WikiAudit, BurningPactStillDrawsAfterTheExhaustResolves) {
+  // Reordering must not cost the card its draw.
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::BurningPact});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Strike});  // 2nd candidate -> real pause
+  for (int i = 0; i < 4; ++i) s.draw_pile.push_back(Card{CardId::Bash});
+
+  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::BurningPact) * kMaxEnemies));
+  ASSERT_TRUE(s.pending_choice.active());
+  // Answer with whichever slot offers the Defend.
+  int defend_slot = -1;
+  for (int i = 0; i < s.pending_choice.num_options; ++i) {
+    if (s.pending_choice.options[i].card_id == CardId::Defend) defend_slot = i;
+  }
+  ASSERT_GE(defend_slot, 0);
+  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + defend_slot));
+
+  EXPECT_FALSE(s.pending_choice.active());
+  int bashes = 0;
+  for (const Card& c : s.current_hand) bashes += (c.card_id == CardId::Bash);
+  EXPECT_EQ(bashes, 2) << "the draw still happens, after the exhaust";
+  bool defend_exhausted = false;
+  for (const Card& c : s.exhaust_pile) {
+    if (c.card_id == CardId::Defend) defend_exhausted = true;
+  }
+  EXPECT_TRUE(defend_exhausted);
+}
+
+TEST(WikiAudit, HavocExhaustingAnUnplayableCardFiresFeelNoPain) {
+  // Havoc's unplayable branch called move_to_exhaust directly instead of
+  // queueing an ExhaustCard action, so it silently skipped every
+  // "whenever a card is Exhausted" trigger.
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 5;
+  ASSERT_TRUE(play(s, CardId::FeelNoPain));  // 3 block per exhaust
+  ASSERT_EQ(s.character.current_block, 0);
+
+  s.draw_pile.push_back(Card{CardId::Dazed});  // unplayable
+  ASSERT_TRUE(play(s, CardId::Havoc));
+
+  EXPECT_EQ(s.character.current_block, 3)
+      << "\"Whenever a card is Exhausted, gain 3 Block\" is unconditional on "
+         "cause";
+  bool dazed_exhausted = false;
+  for (const Card& c : s.exhaust_pile) {
+    if (c.card_id == CardId::Dazed) dazed_exhausted = true;
+  }
+  EXPECT_TRUE(dazed_exhausted) << "and it still reaches the exhaust pile";
+}
+
+TEST(WikiAudit, HavocExhaustingAnUnplayableCardFiresDarkEmbrace) {
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 5;
+  ASSERT_TRUE(play(s, CardId::DarkEmbrace));  // draw 1 per exhaust
+  s.draw_pile.push_back(Card{CardId::Strike});  // the card Dark Embrace draws
+  s.draw_pile.push_back(Card{CardId::Dazed});   // top: unplayable, exhausts
+
+  const std::size_t hand_before = s.current_hand.size();
+  ASSERT_TRUE(play(s, CardId::Havoc));
+
+  EXPECT_EQ(s.current_hand.size(), hand_before + 1)
+      << "the exhaust triggered Dark Embrace's draw";
+}
+
+TEST(WikiAudit, SearingBlowPlusDealsItsUpgradedDamage) {
+  // CardId::SearingBlowPlus is a real database row and action slot, but the
+  // damage formula reads only Card::upgrades — so a default-constructed
+  // instance dealt 12, the UNupgraded number, from a card named "+".
+  CombatState s = make_minimal_state(0);
+  EXPECT_EQ(instance_card_damage(s, Card{CardId::SearingBlowPlus}), 16)
+      << "n=1 on the wiki progression 12/16/21/27/34/42";
+  EXPECT_EQ(instance_card_damage(s, Card{CardId::SearingBlow}), 12);
+}
+
+TEST(WikiAudit, SearingBlowInstanceUpgradesStillDriveTheProgression) {
+  // The instance path must be unaffected by the id-baseline fix.
+  CombatState s = make_minimal_state(0);
+  const int want[] = {12, 16, 21, 27, 34, 42};
+  for (int n = 0; n < 6; ++n) {
+    Card c{CardId::SearingBlow};
+    c.upgrades = n;
+    EXPECT_EQ(instance_card_damage(s, c), want[n]) << "at " << n << " upgrades";
+  }
+}

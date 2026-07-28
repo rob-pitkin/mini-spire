@@ -1029,22 +1029,29 @@ TEST(TurnLoop, CultistIncantationThenRampingDarkStrike) {
   s.enemies.push_back(make_cultist(rng));
   const int hp0 = s.character.hp;
 
-  // Turn 1: Incantation. No damage; gains Ritual 3. (Strength stays 0 this turn
-  // — Ritual was set after the start-of-turn trigger.)
+  // Turn 1: Incantation. No damage; gains Ritual 3, and the END-of-turn Ritual
+  // trigger immediately converts it to 3 Strength (ROB-85). The Strength being
+  // in place NOW is the whole point: `intent_attack_dmg` is computed live, so
+  // the player's turn-2 observation must already read Dark Strike as 9. Firing
+  // at turn start instead left the intent showing a stale 6.
   ASSERT_TRUE(apply_action(s, end_turn_action()));
   EXPECT_EQ(s.character.hp, hp0);  // Incantation does no damage
   EXPECT_EQ(s.enemies[0].powers[Power::Ritual], 3);
-  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 0);
+  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 3)
+      << "Ritual resolves at the end of the turn it was gained, so the intent "
+         "the player sees during turn 2 is already correct";
 
-  // Turn 2: start-of-turn +3 Strength, then Dark Strike for 6 + 3 = 9.
+  // Turn 2: Dark Strike for 6 + 3 = 9, then end-of-turn Ritual -> Strength 6.
+  // The DAMAGE sequence is identical to the old start-of-turn placement; only
+  // the moment the Strength becomes visible moved one step earlier.
   ASSERT_TRUE(apply_action(s, end_turn_action()));
   EXPECT_EQ(s.character.hp, hp0 - 9);
-  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 3);
+  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 6);
 
-  // Turn 3: +3 more (Strength 6), Dark Strike for 6 + 6 = 12.
+  // Turn 3: Dark Strike for 6 + 6 = 12, then end-of-turn Ritual -> Strength 9.
   ASSERT_TRUE(apply_action(s, end_turn_action()));
   EXPECT_EQ(s.character.hp, hp0 - 9 - 12);
-  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 6);
+  EXPECT_EQ(s.enemies[0].powers[Power::Strength], 9);
 }
 
 TEST(TurnLoop, LouseCurlUpFiresOnPlayerStrike) {
@@ -1976,6 +1983,94 @@ TEST(TurnLoop, PowerCardVanishesIntoNoPile) {
   EXPECT_TRUE(s.discard_pile.empty());
   EXPECT_TRUE(s.exhaust_pile.empty());
   EXPECT_TRUE(s.current_hand.empty());
+}
+
+// --- Flex: temporary Strength (ROB-85) -------------------------------------
+// StS models "gain N Strength, lose it at end of turn" as a Strength gain
+// paired with an equal Strength Down. Without the pairing Flex was a free,
+// permanent Inflame+ — the single worst card-data defect the wiki audit found.
+
+TEST(TurnLoop, FlexGrantsStrengthAndAPendingStrengthDown) {
+  CombatState s = make_power_test_state();
+  s.current_hand.push_back(Card{CardId::Flex});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Flex, 0)));
+
+  EXPECT_EQ(s.character.powers[Power::Strength], 2);
+  EXPECT_EQ(get_status(s.character.powers, Power::StrengthDown), 2)
+      << "the pending loss is visible in the obs, so the agent can tell the "
+         "Strength is temporary";
+}
+
+TEST(TurnLoop, FlexStrengthExpiresAtEndOfTurn) {
+  CombatState s = make_power_test_state();
+  s.current_hand.push_back(Card{CardId::Flex});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Flex, 0)));
+  ASSERT_EQ(s.character.powers[Power::Strength], 2);
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 0)
+      << "\"At the end of this turn, lose 2 Strength\"";
+  EXPECT_EQ(get_status(s.character.powers, Power::StrengthDown), 0)
+      << "the marker clears itself";
+}
+
+TEST(TurnLoop, FlexPlusLosesFourStrength) {
+  CombatState s = make_power_test_state();
+  s.current_hand.push_back(Card{CardId::FlexPlus});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::FlexPlus, 0)));
+  ASSERT_EQ(s.character.powers[Power::Strength], 4);
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 0);
+}
+
+TEST(TurnLoop, FlexBuffsAttacksPlayedTheSameTurn) {
+  // The point of the card: the Strength is real while the turn lasts.
+  CombatState s = make_power_test_state();
+  const int hp = s.enemies[0].hp;
+  s.current_hand.push_back(Card{CardId::Flex});
+  s.current_hand.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Flex, 0)));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+
+  EXPECT_EQ(s.enemies[0].hp, hp - 8) << "Strike 6 + Flex's 2 Strength";
+}
+
+TEST(TurnLoop, FlexStacksWithPermanentStrengthAndOnlyRemovesItsOwn) {
+  // Inflame's Strength is permanent; Flex's is not. Ending the turn must strip
+  // exactly Flex's contribution and leave Inflame's behind.
+  CombatState s = make_power_test_state();
+  s.character.energy = 5;
+  s.current_hand.push_back(Card{CardId::Inflame});  // +2 permanent
+  s.current_hand.push_back(Card{CardId::Flex});     // +2 temporary
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Inflame, 0)));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Flex, 0)));
+  ASSERT_EQ(s.character.powers[Power::Strength], 4);
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 2)
+      << "Inflame's 2 survives; only Flex's 2 is given back";
+}
+
+TEST(TurnLoop, TwoFlexesInOneTurnBothExpire) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 5;
+  s.current_hand.push_back(Card{CardId::Flex});
+  s.current_hand.push_back(Card{CardId::Flex});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Flex, 0)));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Flex, 0)));
+  ASSERT_EQ(s.character.powers[Power::Strength], 4);
+  ASSERT_EQ(get_status(s.character.powers, Power::StrengthDown), 4)
+      << "Strength Down accumulates like any other power";
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 0);
 }
 
 TEST(TurnLoop, DemonFormGrantsStrengthAtTurnStart) {

@@ -312,7 +312,8 @@ PYBIND11_MODULE(_core, m) {
       // Query-layer powers (Stage 4b).
       .value("Corruption", Power::Corruption)
       .value("Barricade", Power::Barricade)
-      .value("DoubleTap", Power::DoubleTap);
+      .value("DoubleTap", Power::DoubleTap)
+      .value("StrengthDown", Power::StrengthDown);
 
   py::enum_<Target>(m, "Target")
       .value("Character", Target::Character)

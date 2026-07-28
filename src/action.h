@@ -53,7 +53,9 @@ struct ResolutionContext {
 enum class Hook {
   TurnStartPlayer,    // Demon Form, Brutality, Berserk, Flame Barrier expiry
   TurnEndPlayer,      // Combust, player Metallicize, Rage expiry
-  TurnStartEnemy,     // enemy Ritual / Metallicize
+  TurnStartEnemy,     // enemy Metallicize (see ordering-notes §24)
+  TurnEndEnemy,       // enemy Ritual — StS grants it at the END of the bearer's
+                      // turn, so the intent the player sees already reflects it
   CardPlayed,         // enemy OnPlayerSkill; Rage (Attack played)
   CardExhausted,      // Feel No Pain, Dark Embrace
   BlockGainedPlayer,  // Juggernaut

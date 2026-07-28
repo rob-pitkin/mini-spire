@@ -57,13 +57,15 @@ blocks in one turn).
 
 ### 4. One enemy turn = one translate + drain
 
-Per-enemy interleaving is preserved exactly: start-of-turn power hooks
-(Ritual, then Metallicize) and the primed move's per-effect actions drain
-fully before the terminal check, debuff tick, and `select_next_move` — so
-enemy B still acts strictly after enemy A's move resolves and A's next intent
-is sampled at the same point in the RNG stream as pre-queue. Damage computes
-at execution, so the queued Ritual Strength is visible to the same turn's
-attack (as before).
+Per-enemy interleaving is preserved exactly: the start-of-turn power hook
+(Metallicize) and the primed move's per-effect actions drain fully, then the
+end-of-turn power hook (Ritual) drains, all before the terminal check, debuff
+tick, and `select_next_move` — so enemy B still acts strictly after enemy A's
+move resolves and A's next intent is sampled at the same point in the RNG
+stream as pre-queue. Damage computes at execution.
+
+(Ritual moved from the start-of-turn hook to the end-of-turn hook in ROB-85;
+see note 25. Metallicize stays at turn start — see note 24.)
 
 ### 5. Protect's ally roll happens at translation time
 
@@ -217,6 +219,55 @@ discard pile." Applied to Exhume as well, via a shared `add_card_to_hand`.
 Consistent with the Offering rule (§note 7 of Stage 4a's death precedence): if
 the fight ends mid-resolution, the pause and its suspended queue are dropped
 rather than left awaiting an answer on a finished fight.
+
+### 24. Enemy Metallicize fires at turn START, not turn end (ROB-85)
+
+StS's printed rule is end-of-turn ("At the end of your turn, gain N Block" —
+https://slaythespire.wiki.gg/wiki/Metallicize). The engine grants enemy
+Metallicize from the `TurnStartEnemy` hook instead. This is a **deliberate
+divergence**, and it is the placement that reproduces StS's observable for the
+only v1 enemy with the power.
+
+Lagavulin has Metallicize 8 while asleep and drops it on wake, so its two wake
+paths pin the timing (Rob's ruling from play experience):
+
+- **Self-wake** (3 turns, no damage): it still has the 8 block on the wake turn.
+  Start-of-turn grants the block, *then* the Sleep3 move's `OnWake` response
+  strips the power — so the block survives. End-of-turn placement would strip
+  the power first and grant nothing, which is wrong.
+- **Damage-wake**: no block. The power is removed during the *player's* turn, so
+  the next enemy phase reads 0 stacks and grants nothing. Correct either way.
+
+Pinned by `TurnLoop.LagavulinSelfWakeKeepsBlockTurn3ThenNone` and
+`TurnLoop.LagavulinDamageWakeStunsAndDropsBlock`.
+
+Caveat for later: the divergence becomes observable if a future enemy holds
+Metallicize *while attacking*, because start-of-turn block would absorb Flame
+Barrier retaliation that should land on bare HP. No v1 enemy does this. Revisit
+alongside any such enemy — and note that a straight move to `TurnEndEnemy` is
+not sufficient on its own; the wake-vs-grant ordering above has to be preserved.
+
+### 25. Enemy Ritual fires at turn END — an OBSERVATION fix (ROB-85)
+
+Wiki: Ritual grants Strength "at the end of its turn". The engine previously
+fired it from `TurnStartEnemy`, justified on the grounds that the resulting
+damage sequence is identical — which is true, and is why it went unnoticed:
+Incantation resolves during the Cultist's turn 1, so either placement has the
+Strength in hand before turn 2's Dark Strike. The sequence is 9/12/15 either
+way, and the HP assertions in
+`TurnLoop.CultistIncantationThenRampingDarkStrike` were unchanged by the move.
+
+What the damage-equivalence argument missed is the **observation**.
+`intent_attack_dmg` is computed live from the enemy's *current* Strength every
+time an obs is built (`combat_env.cc`). With the gain deferred to the start of
+the enemy's own turn, the player spent their entire turn looking at an intent
+computed from stale Strength — the agent saw Dark Strike as 6 and then took 9,
+and the gap widened every turn (9 vs 12, 12 vs 15).
+
+For an RL environment that is a worse defect than a parity nit: the agent is
+being trained against a systematically understated threat model, so blocking
+decisions are made on numbers that never materialize. Firing at turn end puts
+the Strength in place before the observation is read.
 
 ## RNG stream
 

@@ -83,8 +83,8 @@ int base_card_damage(const CombatState& state, CardId card) {
       // Depends on the card INSTANCE's upgrade count, so it cannot be answered
       // from the type alone — instance_card_damage handles it. Reaching here
       // means a caller used the type-level query on a per-instance card;
-      // return the 0-upgrade damage rather than silently reporting 0.
-      return 12;
+      // return the id's own baseline rather than silently reporting 0.
+      return card == CardId::SearingBlowPlus ? 16 : 12;
   }
   return data.damage;
 }
@@ -94,7 +94,15 @@ int instance_card_damage(const CombatState& state, const Card& card) {
   if (data.damage_rule == DamageRule::SearingBlow) {
     // n(n+7)/2 + 12 at n upgrades — matches the wiki's published progression
     // (12, 16, 21, 27, 34, 42, ...). Unbounded by design.
-    const int n = card.upgrades;
+    //
+    // The upgrade count normally lives entirely on the instance (Searing Blow
+    // is deliberately absent from CARD_UPGRADES; upgrade_card_in_place bumps
+    // the counter instead of swapping id). But CardId::SearingBlowPlus still
+    // exists as a database row and an action slot, and a default-constructed
+    // Card{SearingBlowPlus} has upgrades == 0 — which would have dealt 12, the
+    // UNupgraded damage, from a card named "+" (ROB-85). Nothing constructs one
+    // today; this makes the id behave correctly if anything ever does.
+    const int n = card.upgrades + (card.card_id == CardId::SearingBlowPlus);
     return n * (n + 7) / 2 + 12;
   }
   // Rampage's accumulated bonus rides on the instance; every other rule is

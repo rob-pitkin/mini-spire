@@ -94,6 +94,23 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     } else {
       spend_energy(state, cost);
     }
+    // Infernal Blade's discount is CONSUMED by the play (ROB-85). It used to be
+    // set and never decremented, so "It costs 0 this turn" applied to the whole
+    // CARD TYPE: rolling a Strike — 5 of them in the starter deck — made every
+    // Strike in hand, and every Strike drawn later that turn, free.
+    //
+    // A counter is the honest fit for this action space. Actions are indexed by
+    // CardId, not by hand slot, so the agent cannot say "play THAT Strike";
+    // decrementing per play makes exactly one card of the type free, which is
+    // the observable StS behaviour given cards of a type are interchangeable
+    // here. (Residual: if the generated copy carries different instance state
+    // than one already in hand — a fresh Rampage vs an accumulated one — the
+    // engine cannot express which copy got the discount.)
+    auto free_it = state.character.free_this_turn.find(card_id);
+    if (free_it != state.character.free_this_turn.end() &&
+        free_it->second > 0) {
+      if (--free_it->second <= 0) state.character.free_this_turn.erase(free_it);
+    }
   } else if (ctx_play.forced_x >= 0) {
     x = ctx_play.forced_x;
   }
@@ -398,6 +415,37 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     q.push_back(a);
   }
   q.push_back(Action{ActionKind::CheckDeath});
+
+  // Effects resolve in CARD-TEXT order, which decides whether the choice comes
+  // before or after this card's draw (ROB-85).
+  //
+  // Warcry reads "Draw 1 card. Put a card from your hand on top of your draw
+  // pile" — draw first, so the drawn card is a legal option. Burning Pact reads
+  // the other way: "Exhaust 1 card. Draw 2 cards." Queueing its choice after
+  // the draw let the agent exhaust a card that same play had just drawn it.
+  //
+  // Keyed on the choice KIND rather than a new CardData flag: an
+  // ExhaustCardInHand choice always reads before the draw in StS card text, and
+  // the field would have to be appended past ~20 positional initializers to be
+  // set safely. The only other card using this kind is True Grit+, which draws
+  // nothing, so the ordering is a no-op there.
+  const bool choice_before_draw =
+      data.requests_choice == ChoiceKind::ExhaustCardInHand;
+
+  auto queue_choice = [&]() {
+    if (data.requests_choice == ChoiceKind::None) return;
+    Action a;
+    a.kind = ActionKind::RequestChoice;
+    a.amount = static_cast<int>(data.requests_choice);
+    a.card = card_id;
+    q.push_back(a);
+    // The deferred pile move lands after the choice — the card was in flight
+    // for the whole of its own resolution.
+    if (has_pile_move) q.push_back(pile_move);
+  };
+
+  if (choice_before_draw) queue_choice();
+
   if (data.draw > 0) {
     Action a;
     a.kind = ActionKind::DrawCards;
@@ -438,20 +486,11 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     a.copies = x;  // reuse the first play's X
     q.push_back(a);
   }
-  // The card's choice (Stage 4c) queues LAST, after draw: Warcry draws first
-  // and you then pick from the resulting hand. The card itself has already
-  // left the hand (it is in flight), so it can never be its own option —
-  // which is what stops Exhume retrieving itself.
-  if (data.requests_choice != ChoiceKind::None) {
-    Action a;
-    a.kind = ActionKind::RequestChoice;
-    a.amount = static_cast<int>(data.requests_choice);
-    a.card = card_id;
-    q.push_back(a);
-    // The deferred pile move lands after the choice — the card was in flight
-    // for the whole of its own resolution.
-    if (has_pile_move) q.push_back(pile_move);
-  }
+  // The card's choice (Stage 4c) normally queues LAST, after draw: Warcry draws
+  // first and you then pick from the resulting hand. The card itself has
+  // already left the hand (it is in flight), so it can never be its own option
+  // — which is what stops Exhume retrieving itself.
+  if (!choice_before_draw) queue_choice();
 
   // 4. Drain to completion — every mutation is a flat, sequential step; no
   // live reference or open loop spans a mutation. May pause here on a choice.
@@ -653,14 +692,26 @@ void handle_end_turn(CombatState& state) {
     // the move instead. Also skip if the actor died some other way (hp <= 0).
     if (move.escapes || move.splits || state.enemies[slot].hp <= 0) continue;
 
-    // 2d. Tick this enemy's debuffs (powers never tick).
+    // 2d. End-of-turn power hooks (Ritual). Fires before the next intent is
+    // sampled, so the Strength is in place when the player's observation reads
+    // intent damage (ROB-85). An enemy that escaped, split, or died skipped
+    // this via the `continue` above — it took no end of turn.
+    {
+      ActionQueue end_q;
+      ResolutionContext end_ctx;
+      fire_enemy_power_hooks(state, static_cast<int>(slot), Hook::TurnEndEnemy,
+                             end_q);
+      drain(state, end_q, end_ctx);
+    }
+
+    // 2e. Tick this enemy's debuffs (powers never tick).
     tick_debuffs(state.enemies[slot].debuffs);
 
-    // 2e. Advance this enemy's Markov chain to set its next intent.
+    // 2f. Advance this enemy's Markov chain to set its next intent.
     select_next_move(state.enemies[slot], state.rng);
   }
 
-  // 2f. All enemies gone? An escape (ROB-74) can clear the last living enemy,
+  // 2g. All enemies gone? An escape (ROB-74) can clear the last living enemy,
   // which ends the fight as a Win even though nothing was killed this turn.
   check_enemy_terminal(state);
   if (state.outcome != Outcome::InProgress) return;

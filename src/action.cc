@@ -153,7 +153,23 @@ void apply_debuff(CombatState& state, const DebuffApplication& app,
 void apply_power(CombatState& state, const PowerApplication& app,
                  int enemy_target) {
   auto* m = power_map(state, app.target, enemy_target);
-  if (m) (*m)[app.effect] += app.amount;
+  if (!m) return;
+  // Artifact also negates NEGATIVE power applications, not just Debuff ones:
+  // in StS a negative buff *is* a debuff, so Disarm's "Enemy loses 2 Strength"
+  // is eaten by a Sentry's Artifact charge (Rob's ruling from play experience;
+  // the wiki states Artifact "negates any debuff" and confirms Strength Down is
+  // negatable, but does not name the direct-negative case).
+  //
+  // Gated on amount < 0 deliberately: a POSITIVE application must never consume
+  // a charge, or an enemy's own Ritual/Enrage Strength would burn its Artifact.
+  if (app.amount < 0) {
+    auto art = m->find(Power::Artifact);
+    if (art != m->end() && art->second > 0) {
+      if (--art->second <= 0) m->erase(art);
+      return;  // application negated
+    }
+  }
+  (*m)[app.effect] += app.amount;
 }
 
 // ---------------------------------------------------------------------------
@@ -287,6 +303,7 @@ void fire_enemy_hooks(CombatState& state, int slot, Hook hook, ActionQueue& q) {
     case Hook::TurnStartPlayer:
     case Hook::TurnEndPlayer:
     case Hook::TurnStartEnemy:
+    case Hook::TurnEndEnemy:
     case Hook::CardExhausted:
     case Hook::BlockGainedPlayer:
     case Hook::HpLostPlayer:
@@ -317,23 +334,42 @@ void fire_enemy_hooks(CombatState& state, int slot, Hook hook, ActionQueue& q) {
 
 void fire_enemy_power_hooks(CombatState& state, int slot, Hook hook,
                             ActionQueue& q) {
+  if (hook == Hook::TurnEndEnemy) {
+    // Ritual: gain Strength = Ritual stacks (Cultist). It does NOT tick down.
+    // Fires at the END of the bearer's turn, per the wiki ("At the end of its
+    // turn, gains X Strength").
+    //
+    // This placement is load-bearing for the OBSERVATION, not for the damage
+    // (ROB-85). Either placement yields the same Dark Strike sequence
+    // 9/12/15..., because Incantation resolves during turn 1 and the gain lands
+    // before turn 2's attack either way. But `intent_attack_dmg` is computed
+    // live from the enemy's CURRENT Strength, so firing at turn start left the
+    // player's whole turn showing a stale, understated intent — the agent saw
+    // 6 and then took 9. End-of-turn makes the intent correct when it is read.
+    const int ritual = get_status(state.enemies[slot].powers, Power::Ritual);
+    if (ritual > 0) {
+      Action a = make_action(ActionKind::ApplyPower);
+      a.target = slot;
+      a.power = Power::Strength;
+      a.amount = ritual;
+      q.push_back(a);
+    }
+    return;
+  }
+
   if (hook != Hook::TurnStartEnemy) return;  // Stage 4 extends this registry
 
-  // Ritual: gain Strength = Ritual stacks (Cultist). It does NOT tick down.
-  // Because Ritual is applied mid-turn when Incantation resolves (after this
-  // trigger point), it first fires the turn *after* it's gained — matching StS
-  // (ROB-73).
-  const int ritual = get_status(state.enemies[slot].powers, Power::Ritual);
-  if (ritual > 0) {
-    Action a = make_action(ActionKind::ApplyPower);
-    a.target = slot;
-    a.power = Power::Strength;
-    a.amount = ritual;
-    q.push_back(a);
-  }
   // Metallicize: gain block = stacks at the start of the turn (ROB-65,
   // Lagavulin asleep). Queued AFTER the phase-start block reset, so an asleep
   // enemy shows exactly its Metallicize amount each turn (no accumulation).
+  //
+  // StS's *printed* rule is end-of-turn ("At the end of your turn, gain N
+  // Block"), and start-of-turn placement is a deliberate divergence — see
+  // docs/design/ordering-notes.md §24. It reproduces StS's observable for both
+  // of Lagavulin's wake paths, which end-of-turn placement does not: on a
+  // self-wake the grant lands BEFORE OnWake strips the power (so turn 3 keeps
+  // its 8 block), while a damage-wake strips the power during the player's turn
+  // (so the next phase reads 0 and grants nothing).
   const int metallicize =
       get_status(state.enemies[slot].powers, Power::Metallicize);
   if (metallicize > 0) {
@@ -392,6 +428,7 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
   const int brutality = get_status(powers, Power::Brutality);
   const int berserk = get_status(powers, Power::Berserk);
   const int metallicize = get_status(powers, Power::Metallicize);
+  const int strength_down = get_status(powers, Power::StrengthDown);
 
   switch (hook) {
     case Hook::TurnStartPlayer:
@@ -431,6 +468,14 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
       // Double Tap's charges are "this turn" too — unused ones are lost.
       if (get_status(state.character.powers, Power::DoubleTap) > 0) {
         push_remove_player_power(q, Power::DoubleTap);
+      }
+      // Flex's Strength Down: give back exactly what was gained, then clear the
+      // marker. Queued LAST so anything this turn that read Strength (Combust
+      // is fixed damage, but a future end-of-turn attack would not be) has
+      // already resolved at the buffed value.
+      if (strength_down > 0) {
+        push_player_strength(q, -strength_down);
+        push_remove_player_power(q, Power::StrengthDown);
       }
       break;
     case Hook::CardPlayed:
@@ -480,6 +525,7 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
       }
       break;
     case Hook::TurnStartEnemy:
+    case Hook::TurnEndEnemy:
     case Hook::EnemyDamaged:
     case Hook::OnAnyDamage:
     case Hook::EnemyHpThreshold:
@@ -792,8 +838,18 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         const Card top = state.draw_pile.back();
         state.draw_pile.pop_back();
         // An unplayable card (Dazed, Wound) still exhausts but resolves nothing.
+        // Routed through the ExhaustCard ACTION rather than a bare
+        // move_to_exhaust: that executor is the only place Feel No Pain, Dark
+        // Embrace and Sentinel's energy_when_exhausted fire, and "whenever a
+        // card is Exhausted" is unconditional on cause (ROB-85). Every other
+        // exhaust path in the engine already goes through it; this was the lone
+        // exception, so Havoc-into-Dazed silently skipped the hooks.
         if (CARD_DATABASE.at(top.card_id).unplayable) {
-          move_to_exhaust(state, top);
+          Action ex = make_action(ActionKind::ExhaustCard);
+          ex.card = top.card_id;
+          ex.card_bonus_damage = top.bonus_damage;
+          ex.card_upgrades = top.upgrades;
+          q.push_back(ex);
           break;
         }
         pc.force_exhaust = true;  // "and Exhaust it", whatever it would do

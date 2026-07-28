@@ -54,6 +54,12 @@ enum class Power {
   Corruption,    // Skills cost 0 and exhaust when played
   Barricade,     // block is not removed at the start of your turn
   DoubleTap,     // this turn, the next `stacks` Attacks are played twice
+  // --- Turn-scoped bookkeeping power. ---
+  StrengthDown,  // turn end: lose `stacks` Strength, then remove self. StS
+                 // models temporary Strength (Flex) as a Strength gain paired
+                 // with an equal Strength Down, rather than as a Debuff — the
+                 // loss is a fixed amount at end of turn, NOT a 1/turn tick,
+                 // so it cannot be expressed with the Debuff vocabulary.
   None,          // sentinel: "no power" (default for unused fields)
 };
 
@@ -64,7 +70,7 @@ enum class Power {
 // enforce the counts match. (The None sentinels are excluded.)
 inline constexpr int kNumDebuffs = 4;
 inline constexpr int kNumEnemyPowers = 6;
-inline constexpr int kNumPlayerPowers = 21;
+inline constexpr int kNumPlayerPowers = 22;
 
 // FUTURE (multi-enemy): Target { Character, Enemy } collapses any "the enemy"
 // to a single entity, which is unambiguous in v1 with one enemy. Multi-enemy
