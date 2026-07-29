@@ -268,6 +268,13 @@ void validate_transitions(const Enemy& e) {
 Enemy make_acid_slime_s(std::mt19937& rng) {
   // Acid Slime (S): Tackle (3 dmg) / Lick (1 Weak). AI: turn 1 is a 50/50 roll,
   // then strict alternation (never repeat a move).
+  //
+  // The AI is recorded here because it CANNOT be re-derived from the wiki: the
+  // Acid Slime (S) page carries no prose pattern, only an {{Intents}} template
+  // that renders as an image, so a text fetch returns nothing (ROB-85). Rule
+  // confirmed by Rob: "50% chance of using either Lick or Tackle. If Ascension
+  // 17+, always starts with Lick. It then alternates between the two moves."
+  // The Ascension-17 opener is out of scope — this project models Ascension 0.
   Enemy e;
   e.kind = EnemyKind::AcidSlimeS;
   std::uniform_int_distribution<int> hp_roll(8, 12);
@@ -445,6 +452,8 @@ Enemy make_fungi_beast(std::mt19937& rng) {
   };
 
   // On-death: Spore Cloud applies 2 Vulnerable to the player (ROB-63 -> ROB-65).
+  // The count is confirmed (ROB-85) — the wiki renders it as an icon badge, so
+  // it is not recoverable from the page text.
   e.triggered_effects.push_back({.trigger = Trigger::OnDeath,
                                  .action = TriggeredAction::ApplyPlayerDebuff,
                                  .amount = 2,
@@ -831,6 +840,13 @@ Enemy make_shield_gremlin(std::mt19937& rng) {
 
   // On becoming the last living enemy, rewrite the queued Protect intent to
   // ProtectAlone (protect self this turn, then Shield Bash) — ROB-77 -> ROB-65.
+  //
+  // The ONE grace turn is deliberate and confirmed (ROB-85). The wiki's two
+  // statements pull opposite ways — "if it is the only enemy left, it will
+  // switch to using Shield Bash every turn" reads as an immediate flip, while
+  // "Only chooses self if alone" implies a self-Protect must be reachable. It
+  // is: the already-telegraphed Protect still resolves, on itself, the turn
+  // after its last ally dies. Shield Bash starts the turn after that.
   e.triggered_effects.push_back({.trigger = Trigger::BecameLastEnemy,
                                  .action = TriggeredAction::RewriteIntent,
                                  .move = MoveName::ProtectAlone});
