@@ -95,14 +95,13 @@ int instance_card_damage(const CombatState& state, const Card& card) {
     // n(n+7)/2 + 12 at n upgrades — matches the wiki's published progression
     // (12, 16, 21, 27, 34, 42, ...). Unbounded by design.
     //
-    // The upgrade count normally lives entirely on the instance (Searing Blow
-    // is deliberately absent from CARD_UPGRADES; upgrade_card_in_place bumps
-    // the counter instead of swapping id). But CardId::SearingBlowPlus still
-    // exists as a database row and an action slot, and a default-constructed
-    // Card{SearingBlowPlus} has upgrades == 0 — which would have dealt 12, the
-    // UNupgraded damage, from a card named "+" (ROB-85). Nothing constructs one
-    // today; this makes the id behave correctly if anything ever does.
-    const int n = card.upgrades + (card.card_id == CardId::SearingBlowPlus);
+    // The upgrade count is carried by the card's IDENTITY up to the cap
+    // (ROB-87): each rung is its own CardId, so Card::upgrades is overflow-only
+    // and non-zero solely above rung 5. This also retires the ROB-85
+    // SearingBlowPlus patch — that id is simply rung 1 now, and a
+    // default-constructed Card{SearingBlowPlus} can no longer read as
+    // unupgraded.
+    const int n = searing_blow_rung(card.card_id) + card.upgrades;
     return n * (n + 7) / 2 + 12;
   }
   // Rampage's accumulated bonus rides on the instance; every other rule is

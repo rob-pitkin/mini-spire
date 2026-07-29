@@ -16,80 +16,29 @@ namespace minispire {
 
 namespace {
 
-// CardId ordering for the obs pile-count layout. Must list every CardId and
-// match kNumCardTypes (static_assert below).
-constexpr std::array<CardId, kNumCardTypes> kObsCardOrder = {
-    CardId::Strike,     CardId::Defend,     CardId::Bash,
-    CardId::StrikePlus, CardId::DefendPlus, CardId::BashPlus,
-    CardId::Slimed,     CardId::Dazed,
-    // Ironclad Tier A (ROB-80).
-    CardId::Cleave, CardId::CleavePlus, CardId::Clothesline,
-    CardId::ClotheslinePlus, CardId::Flex, CardId::FlexPlus,
-    CardId::IronWave, CardId::IronWavePlus, CardId::Thunderclap,
-    CardId::ThunderclapPlus, CardId::TwinStrike, CardId::TwinStrikePlus,
-    CardId::Carnage, CardId::CarnagePlus, CardId::Disarm,
-    CardId::DisarmPlus, CardId::GhostlyArmor, CardId::GhostlyArmorPlus,
-    CardId::Intimidate, CardId::IntimidatePlus, CardId::Pummel,
-    CardId::PummelPlus, CardId::Shockwave, CardId::ShockwavePlus,
-    CardId::Uppercut, CardId::UppercutPlus, CardId::Whirlwind,
-    CardId::WhirlwindPlus, CardId::Bludgeon, CardId::BludgeonPlus,
-    // Ironclad Tier B (ROB-80).
-    CardId::PommelStrike, CardId::PommelStrikePlus, CardId::ShrugItOff,
-    CardId::ShrugItOffPlus, CardId::Bloodletting, CardId::BloodlettingPlus,
-    CardId::Hemokinesis, CardId::HemokinesisPlus, CardId::SeeingRed,
-    CardId::SeeingRedPlus, CardId::Offering, CardId::OfferingPlus,
-    // Ironclad Tier C (Stage 4a) — player powers.
-    CardId::Inflame, CardId::InflamePlus, CardId::Impervious,
-    CardId::ImperviousPlus, CardId::DemonForm, CardId::DemonFormPlus,
-    CardId::Combust, CardId::CombustPlus, CardId::FeelNoPain,
-    CardId::FeelNoPainPlus, CardId::DarkEmbrace, CardId::DarkEmbracePlus,
-    CardId::Evolve, CardId::EvolvePlus, CardId::FireBreathing,
-    CardId::FireBreathingPlus, CardId::Rupture, CardId::RupturePlus,
-    CardId::Juggernaut, CardId::JuggernautPlus, CardId::Rage,
-    CardId::RagePlus, CardId::FlameBarrier, CardId::FlameBarrierPlus,
-    CardId::Brutality, CardId::BrutalityPlus, CardId::Berserk,
-    CardId::BerserkPlus, CardId::Metallicize, CardId::MetallicizePlus,
-    // Ironclad Tier D (Stage 4b) — the query/modifier layer.
-    CardId::BodySlam, CardId::BodySlamPlus, CardId::Clash, CardId::ClashPlus,
-    CardId::HeavyBlade, CardId::HeavyBladePlus, CardId::PerfectedStrike,
-    CardId::PerfectedStrikePlus, CardId::BattleTrance,
-    CardId::BattleTrancePlus, CardId::BloodForBlood, CardId::BloodForBloodPlus,
-    CardId::Dropkick, CardId::DropkickPlus, CardId::Entrench,
-    CardId::EntrenchPlus, CardId::SeverSoul, CardId::SeverSoulPlus,
-    CardId::Barricade, CardId::BarricadePlus, CardId::Corruption,
-    CardId::CorruptionPlus,
-    // Ironclad Tier E (Stage 4c) — the choice cards.
-    CardId::Armaments, CardId::ArmamentsPlus, CardId::Warcry,
-    CardId::WarcryPlus, CardId::Headbutt, CardId::HeadbuttPlus,
-    CardId::Exhume, CardId::ExhumePlus, CardId::DualWield,
-    CardId::DualWieldPlus,
-    // Per-instance cards: the pile counts here are per TYPE; a copy's
-    // individual damage is carried in the choice block's payload instead.
-    CardId::Rampage, CardId::RampagePlus, CardId::SearingBlow,
-    CardId::SearingBlowPlus,
-    // Player-generated status cards.
-    CardId::Wound, CardId::Burn,
-    // Cards that generate other cards.
-    CardId::WildStrike, CardId::WildStrikePlus, CardId::PowerThrough,
-    CardId::PowerThroughPlus, CardId::Immolate, CardId::ImmolatePlus,
-    CardId::RecklessCharge, CardId::RecklessChargePlus, CardId::Anger,
-    CardId::AngerPlus,
-    // Simple new mechanisms.
-    CardId::SwordBoomerang, CardId::SwordBoomerangPlus, CardId::LimitBreak,
-    CardId::LimitBreakPlus, CardId::SpotWeakness, CardId::SpotWeaknessPlus,
-    // Exhaust-driven cards.
-    CardId::TrueGrit, CardId::TrueGritPlus, CardId::BurningPact,
-    CardId::BurningPactPlus, CardId::SecondWind, CardId::SecondWindPlus,
-    CardId::FiendFire, CardId::FiendFirePlus, CardId::Sentinel,
-    CardId::SentinelPlus,
-    // Life-total cards.
-    CardId::Feed, CardId::FeedPlus, CardId::Reaper, CardId::ReaperPlus,
-    // Meta-cards.
-    CardId::DoubleTap, CardId::DoubleTapPlus, CardId::Havoc, CardId::HavocPlus,
-    CardId::InfernalBlade, CardId::InfernalBladePlus,
-};
+// CardId ordering for the obs pile-count layout.
+//
+// DERIVED, not hand-listed (ROB-87). CardId values are dense 0..kNumCardTypes-1
+// and CARD_DATABASE holds exactly one row per value, so the obs order simply IS
+// the enum order — which is precisely what the previous 154-entry hand-written
+// table spelled out. Verified identical before it was deleted.
+//
+// Deriving it removes a real failure mode, not just typing. The old table's
+// only guard was a SIZE assert, so a duplicated entry paired with a missing one
+// compiled clean, silently making one card invisible in the observation while
+// double-counting another — and every card added made that likelier. The
+// density/completeness invariant it depended on is now pinned by a test
+// (CombatEnv.CardIdsAreDenseAndComplete) rather than by careful typing.
+constexpr std::array<CardId, kNumCardTypes> make_obs_card_order() {
+  std::array<CardId, kNumCardTypes> order{};
+  for (int i = 0; i < kNumCardTypes; ++i) {
+    order[static_cast<std::size_t>(i)] = static_cast<CardId>(i);
+  }
+  return order;
+}
+constexpr std::array<CardId, kNumCardTypes> kObsCardOrder = make_obs_card_order();
 static_assert(kObsCardOrder.size() == kNumCardTypes,
-              "kObsCardOrder must list every card type");
+              "kObsCardOrder must cover every card type");
 
 // Per-entity status block = [debuffs then powers] (ROB-78). Each order array
 // must list every real value of its enum (excluding the None sentinel) and match

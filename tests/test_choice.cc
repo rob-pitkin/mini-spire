@@ -815,31 +815,50 @@ TEST(PerInstance, RampageGrowsTheCopyThatWasPlayed) {
   ASSERT_TRUE(play(s, CardId::Rampage));
   EXPECT_EQ(s.enemies[0].hp, hp0 - 8);
 
-  // The copy went to the discard carrying its growth.
+  // The copy went to the discard carrying its growth — as a RUNG ID now
+  // (ROB-87), not a hidden counter, so it is visible in the observation and
+  // playable as its own action.
   ASSERT_EQ(s.discard_pile.size(), 1u);
-  EXPECT_EQ(s.discard_pile[0].card_id, CardId::Rampage);
-  EXPECT_EQ(s.discard_pile[0].bonus_damage, 5);
+  EXPECT_EQ(s.discard_pile[0].card_id, CardId::Rampage5);
+  EXPECT_EQ(s.discard_pile[0].bonus_damage, 0)
+      << "below the cap the counter is unused";
 
   // Play that same copy again: 8 + 5.
   s.current_hand.push_back(s.discard_pile[0]);
   s.discard_pile.clear();
   s.character.energy = 3;
   const int hp1 = s.enemies[0].hp;
-  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Rampage) * kMaxEnemies));
+  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Rampage5) * kMaxEnemies));
   EXPECT_EQ(s.enemies[0].hp, hp1 - 13);
-  EXPECT_EQ(s.discard_pile[0].bonus_damage, 10);  // grew again
+  EXPECT_EQ(s.discard_pile[0].card_id, CardId::Rampage10);  // grew again
 }
 
 TEST(PerInstance, RampagePlusGrowsByEight) {
   CombatState s = make_minimal_state(0);
   ASSERT_TRUE(play(s, CardId::RampagePlus));
   ASSERT_EQ(s.discard_pile.size(), 1u);
-  EXPECT_EQ(s.discard_pile[0].bonus_damage, 8);
+  EXPECT_EQ(s.discard_pile[0].card_id, CardId::RampagePlus8);
+}
+
+TEST(PerInstance, RampageSaturatesAtTheTopRung) {
+  // Past the cap the id stops moving but the engine keeps counting, so damage
+  // stays exact where only the ENCODING saturates.
+  CombatState s = make_minimal_state(0);
+  s.character.energy = 5;
+  s.current_hand.push_back(Card{CardId::Rampage30});  // top of the base ladder
+  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Rampage30) * kMaxEnemies));
+
+  ASSERT_EQ(s.discard_pile.size(), 1u);
+  EXPECT_EQ(s.discard_pile[0].card_id, CardId::Rampage30) << "id saturates";
+  EXPECT_EQ(s.discard_pile[0].bonus_damage, 5) << "overflow keeps accumulating";
+  EXPECT_EQ(instance_card_damage(s, s.discard_pile[0]), 43)
+      << "38 (rung) + 5 (overflow) — damage is still exact above the cap";
 }
 
 TEST(PerInstance, TwoRampagesScaleSeparately) {
-  // "Each copy scales separately" (wiki) — the whole reason instance state
-  // exists. Playing one copy must not buff the other.
+  // "Each copy scales separately" (wiki). Under ROB-87 the copies diverge in
+  // IDENTITY, which is what makes the difference visible to the agent — the
+  // aliasing this design was adopted to remove.
   CombatState s = make_minimal_state(0);
   s.character.energy = 3;
   s.current_hand.push_back(Card{CardId::Rampage});
@@ -849,9 +868,9 @@ TEST(PerInstance, TwoRampagesScaleSeparately) {
 
   // One copy grew; the one still in hand did not.
   ASSERT_EQ(s.discard_pile.size(), 1u);
-  EXPECT_EQ(s.discard_pile[0].bonus_damage, 5);
+  EXPECT_EQ(s.discard_pile[0].card_id, CardId::Rampage5);
   ASSERT_EQ(s.current_hand.size(), 1u);
-  EXPECT_EQ(s.current_hand[0].bonus_damage, 0);
+  EXPECT_EQ(s.current_hand[0].card_id, CardId::Rampage);
 }
 
 TEST(PerInstance, SearingBlowDamageFollowsTheWikiProgression) {
@@ -882,32 +901,55 @@ TEST(PerInstance, SearingBlowDealsItsInstanceDamage) {
   EXPECT_EQ(s.discard_pile[0].upgrades, 3);
 }
 
-TEST(PerInstance, ArmamentsUpgradesSearingBlowInPlace) {
-  // Searing Blow has no "++" id, so Armaments must bump its counter.
+TEST(PerInstance, ArmamentsClimbsTheSearingBlowLadder) {
+  // Armaments moves the card one rung UP its ladder (ROB-87) — an ordinary id
+  // swap now, not a counter bump on an unchanged id.
   CombatState s = make_minimal_state(0);
-  Card blow{CardId::SearingBlow};
-  blow.upgrades = 2;
-  s.current_hand.push_back(blow);
+  s.current_hand.push_back(Card{CardId::SearingBlow2});
   s.current_hand.push_back(Card{CardId::Defend});
 
   ASSERT_TRUE(play(s, CardId::Armaments));
   ASSERT_TRUE(s.pending_choice.active());
-  // Pick the Searing Blow.
   int slot = -1;
   for (int i = 0; i < s.pending_choice.num_options; ++i) {
-    if (s.pending_choice.options[i].card_id == CardId::SearingBlow) slot = i;
+    if (s.pending_choice.options[i].card_id == CardId::SearingBlow2) slot = i;
   }
   ASSERT_GE(slot, 0);
   ASSERT_TRUE(apply_action(s, kFirstOptionSlot + slot));
 
   bool found = false;
   for (const Card& c : s.current_hand) {
-    if (c.card_id == CardId::SearingBlow) {
-      EXPECT_EQ(c.upgrades, 3);  // 2 -> 3, id unchanged
+    if (c.card_id == CardId::SearingBlow3) {
+      EXPECT_EQ(c.upgrades, 0) << "below the cap the counter stays unused";
       found = true;
     }
   }
-  EXPECT_TRUE(found);
+  EXPECT_TRUE(found) << "Searing Blow+2 should have become Searing Blow+3";
+}
+
+TEST(PerInstance, ArmamentsStillUpgradesAtTheSearingBlowCap) {
+  // The parity clause end to end: Armaments must keep OFFERING a capped Searing
+  // Blow ("can be upgraded any number of times"), and the upgrade must still
+  // raise its damage even though the id can no longer move.
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::SearingBlow5});
+  s.current_hand.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(play(s, CardId::Armaments));
+  ASSERT_TRUE(s.pending_choice.active());
+  int slot = -1;
+  for (int i = 0; i < s.pending_choice.num_options; ++i) {
+    if (s.pending_choice.options[i].card_id == CardId::SearingBlow5) slot = i;
+  }
+  ASSERT_GE(slot, 0) << "a capped Searing Blow must still be offered";
+  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + slot));
+
+  for (const Card& c : s.current_hand) {
+    if (c.card_id == CardId::SearingBlow5) {
+      EXPECT_EQ(c.upgrades, 1);
+      EXPECT_EQ(instance_card_damage(s, c), 51) << "rung 6 on the progression";
+    }
+  }
 }
 
 TEST(PerInstance, ChoiceOffersDifferingCopiesSeparately) {

@@ -196,12 +196,57 @@ enum class CardId {
   HavocPlus,
   InfernalBlade,
   InfernalBladePlus,
+  // --- ROB-87 rung ladders. Per-instance growth IS card identity: each rung is
+  // a distinct type reached by an ID swap, exactly like every other upgrade.
+  // Appended rather than inserted so existing action indices
+  // (card_id * kMaxEnemies + target) keep their meaning.
+  //
+  // Searing Blow @2..@5 — rung 0 is SearingBlow, rung 1 is SearingBlowPlus.
+  SearingBlow2,   // 21 damage
+  SearingBlow3,   // 27 damage
+  SearingBlow4,   // 34 damage
+  SearingBlow5,   // 42 damage
+  // Rampage +5..+30 (the bonus is in the name; +0 is Rampage).
+  Rampage5,
+  Rampage10,
+  Rampage15,
+  Rampage20,
+  Rampage25,
+  Rampage30,
+  // Rampage+ reachable bonuses {5a + 8b}: grown `a` times at +5, upgraded by
+  // Armaments, then grown `b` times at +8. NOT every integer — +22, +27 and
+  // +35 are unreachable and deliberately absent. Generated, not transcribed.
+  RampagePlus5,
+  RampagePlus8,
+  RampagePlus10,
+  RampagePlus13,
+  RampagePlus15,
+  RampagePlus16,
+  RampagePlus18,
+  RampagePlus20,
+  RampagePlus21,
+  RampagePlus23,
+  RampagePlus24,
+  RampagePlus25,
+  RampagePlus26,
+  RampagePlus28,
+  RampagePlus29,
+  RampagePlus30,
+  RampagePlus31,
+  RampagePlus32,
+  RampagePlus33,
+  RampagePlus34,
+  RampagePlus36,
+  RampagePlus37,
+  RampagePlus38,
+  RampagePlus39,
+  RampagePlus40,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
 // action-space size (card x target). Update CARD_DATABASE + kObsCardOrder in
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
-inline constexpr int kNumCardTypes = 154;
+inline constexpr int kNumCardTypes = 189;
 
 // A card's inherent StS type. This is a real property, NOT inferable from
 // damage/block: an Attack can gain block (Body Slam) and a Skill can deal
@@ -489,30 +534,114 @@ inline const std::unordered_map<CardId, CardId> CARD_UPGRADES = {
     {CardId::DoubleTap, CardId::DoubleTapPlus},
     {CardId::Havoc, CardId::HavocPlus},
     {CardId::InfernalBlade, CardId::InfernalBladePlus},
-    // NOTE: Searing Blow is deliberately absent — it upgrades by incrementing
-    // the INSTANCE's counter, not by swapping CardId (see upgrade_card_in_place
-    // and is_instance_upgradable). There is no "Searing Blow++" id to map to.
+    // --- ROB-87 rung ladders. Searing Blow is no longer a special case: its
+    // upgrades are ordinary CardId swaps up its own ladder, so the old
+    // instance-counter branch is gone. Rung 5 has no edge and saturates.
+    {CardId::SearingBlow, CardId::SearingBlowPlus},
+    {CardId::SearingBlowPlus, CardId::SearingBlow2},
+    {CardId::SearingBlow2, CardId::SearingBlow3},
+    {CardId::SearingBlow3, CardId::SearingBlow4},
+    {CardId::SearingBlow4, CardId::SearingBlow5},
+    // A grown Rampage upgrades to the Rampage+ rung of the SAME accumulated
+    // bonus — every base rung's bonus is reachable on the upgraded ladder
+    // (asserted by RungLaddersMatchTheReachableSet).
+    {CardId::Rampage5, CardId::RampagePlus5},
+    {CardId::Rampage10, CardId::RampagePlus10},
+    {CardId::Rampage15, CardId::RampagePlus15},
+    {CardId::Rampage20, CardId::RampagePlus20},
+    {CardId::Rampage25, CardId::RampagePlus25},
+    {CardId::Rampage30, CardId::RampagePlus30},
 };
 
-// Searing Blow can be upgraded without limit, so its upgrades live on the card
-// instance rather than in CARD_UPGRADES. Anything that upgrades a card must
-// consult this first.
-inline bool is_instance_upgradable(CardId id) {
-  return id == CardId::SearingBlow || id == CardId::SearingBlowPlus;
+// Which rung of the Searing Blow ladder an id sits on, i.e. how many times it
+// has been upgraded (ROB-87). Rung 0 is the printed card; rung 1 is the id
+// historically called SearingBlowPlus. Non-Searing-Blow ids are rung 0.
+inline int searing_blow_rung(CardId id) {
+  switch (id) {
+    case CardId::SearingBlowPlus: return 1;
+    case CardId::SearingBlow2:    return 2;
+    case CardId::SearingBlow3:    return 3;
+    case CardId::SearingBlow4:    return 4;
+    case CardId::SearingBlow5:    return 5;
+    default:                      return 0;
+  }
 }
 
-// Upgrade a card IN PLACE, handling both models: normally the id is swapped
-// for its "+" form; for Searing Blow the instance's upgrade counter grows.
-// Returns false if the card cannot be upgraded at all.
-inline bool upgrade_card_in_place(Card& card) {
-  if (is_instance_upgradable(card.card_id)) {
-    ++card.upgrades;
-    return true;
-  }
-  auto it = CARD_UPGRADES.find(card.card_id);
-  if (it == CARD_UPGRADES.end()) return false;
+// What a card BECOMES after being played, for cards that grow (ROB-87). Growth
+// is an ID swap, the same mechanism as an upgrade — Rampage's "+5 this combat"
+// moves it one rung up its ladder rather than mutating a hidden counter.
+//
+// Absent = at the cap, where the engine falls back to Card::bonus_damage and
+// keeps counting internally, so damage stays exact above the cap even though
+// the observation and action encoding saturate.
+inline const std::unordered_map<CardId, CardId> CARD_GROWTH = {
+    {CardId::Rampage, CardId::Rampage5},
+    {CardId::Rampage5, CardId::Rampage10},
+    {CardId::Rampage10, CardId::Rampage15},
+    {CardId::Rampage15, CardId::Rampage20},
+    {CardId::Rampage20, CardId::Rampage25},
+    {CardId::Rampage25, CardId::Rampage30},
+    // The upgraded ladder steps by 8, so it threads between the base rungs;
+    // a mixed history (grown, then upgraded, then grown) lands on values like
+    // +13 or +26 that no pure sequence reaches.
+    {CardId::RampagePlus, CardId::RampagePlus8},
+    {CardId::RampagePlus5, CardId::RampagePlus13},
+    {CardId::RampagePlus8, CardId::RampagePlus16},
+    {CardId::RampagePlus10, CardId::RampagePlus18},
+    {CardId::RampagePlus13, CardId::RampagePlus21},
+    {CardId::RampagePlus15, CardId::RampagePlus23},
+    {CardId::RampagePlus16, CardId::RampagePlus24},
+    {CardId::RampagePlus18, CardId::RampagePlus26},
+    {CardId::RampagePlus20, CardId::RampagePlus28},
+    {CardId::RampagePlus21, CardId::RampagePlus29},
+    {CardId::RampagePlus23, CardId::RampagePlus31},
+    {CardId::RampagePlus24, CardId::RampagePlus32},
+    {CardId::RampagePlus25, CardId::RampagePlus33},
+    {CardId::RampagePlus26, CardId::RampagePlus34},
+    {CardId::RampagePlus28, CardId::RampagePlus36},
+    {CardId::RampagePlus29, CardId::RampagePlus37},
+    {CardId::RampagePlus30, CardId::RampagePlus38},
+    {CardId::RampagePlus31, CardId::RampagePlus39},
+    {CardId::RampagePlus32, CardId::RampagePlus40},
+    // +33 and above would exceed the cap; those rungs saturate.
+};
+
+// Grow a card IN PLACE after a play. Returns true if it moved a rung; false at
+// the cap, where the caller adds to Card::bonus_damage instead.
+inline bool grow_card_in_place(Card& card) {
+  auto it = CARD_GROWTH.find(card.card_id);
+  if (it == CARD_GROWTH.end()) return false;
   card.card_id = it->second;
   return true;
+}
+
+// Cards sitting at the TOP of a rung ladder (ROB-87). Below the cap every rung
+// is a real CARD_UPGRADES edge; at the cap there is no higher id, so further
+// upgrades accumulate on the instance instead.
+//
+// This is the saturation clause, and it is load-bearing for PARITY: Searing
+// Blow's text is "can be upgraded any number of times", so the top rung must
+// stay upgradable. Were this to return false, is_upgradable would too and
+// Armaments would silently stop offering the card — a rule break with no
+// compile error and no failing test until one is written for exactly this.
+inline bool is_instance_upgradable(CardId id) {
+  return id == CardId::SearingBlow5;
+}
+
+// Upgrade a card IN PLACE. Normally the id swaps for the next rung (or the "+"
+// form, which is the same mechanism); past the top rung the instance counter
+// grows instead. Returns false if the card cannot be upgraded at all.
+inline bool upgrade_card_in_place(Card& card) {
+  auto it = CARD_UPGRADES.find(card.card_id);
+  if (it != CARD_UPGRADES.end()) {
+    card.card_id = it->second;
+    return true;
+  }
+  if (is_instance_upgradable(card.card_id)) {
+    ++card.upgrades;  // above the cap: keep counting internally
+    return true;
+  }
+  return false;
 }
 
 // Can this card be upgraded? False for already-upgraded cards and for Status
@@ -791,6 +920,50 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     // Infernal Blade: add a random Attack to hand; it costs 0 this turn.
     {CardId::InfernalBlade, {"Infernal Blade", 1, 0, 1, 0, CardTarget::None, {}, {}, CardType::Skill, /*exhaust=*/true, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::None, 0, 0, 0, 0, false, false, /*generates_random_attack=*/true}},
     {CardId::InfernalBladePlus, {"Infernal Blade+", 0, 0, 1, 0, CardTarget::None, {}, {}, CardType::Skill, /*exhaust=*/true, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, 0, 0, CardId::Strike, 0, GeneratedPile::Discard, false, false, 0, 0, 0, ExhaustHandRule::None, 0, 0, 0, 0, false, false, /*generates_random_attack=*/true}},
+    // --- ROB-87 rung ladders. GENERATED by scratch/gen_rungs.py from the
+    // reachable-value spec in docs/design/observation-space.md §9, not typed by
+    // hand: the Rampage+ ladder is 26 irregular values with deliberate gaps at
+    // +22/+27/+35, which is not eyeballable in a positional initializer.
+    // RungLaddersMatchTheReachableSet recomputes the set independently.
+    //
+    // Searing Blow keeps DamageRule::SearingBlow; the rung comes from the ID.
+    {CardId::SearingBlow2, {"Searing Blow+2", 2, 0, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::SearingBlow}},
+    {CardId::SearingBlow3, {"Searing Blow+3", 2, 0, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::SearingBlow}},
+    {CardId::SearingBlow4, {"Searing Blow+4", 2, 0, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::SearingBlow}},
+    {CardId::SearingBlow5, {"Searing Blow+5", 2, 0, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::SearingBlow}},
+    // Rampage rungs carry their accumulated damage in CardData::damage (8 + N),
+    // so bonus_damage on the instance is overflow-only above the cap.
+    {CardId::Rampage5, {"Rampage 13", 1, 13, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/5}},
+    {CardId::Rampage10, {"Rampage 18", 1, 18, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/5}},
+    {CardId::Rampage15, {"Rampage 23", 1, 23, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/5}},
+    {CardId::Rampage20, {"Rampage 28", 1, 28, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/5}},
+    {CardId::Rampage25, {"Rampage 33", 1, 33, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/5}},
+    {CardId::Rampage30, {"Rampage 38", 1, 38, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/5}},
+    {CardId::RampagePlus5, {"Rampage+ 13", 1, 13, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus8, {"Rampage+ 16", 1, 16, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus10, {"Rampage+ 18", 1, 18, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus13, {"Rampage+ 21", 1, 21, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus15, {"Rampage+ 23", 1, 23, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus16, {"Rampage+ 24", 1, 24, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus18, {"Rampage+ 26", 1, 26, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus20, {"Rampage+ 28", 1, 28, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus21, {"Rampage+ 29", 1, 29, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus23, {"Rampage+ 31", 1, 31, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus24, {"Rampage+ 32", 1, 32, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus25, {"Rampage+ 33", 1, 33, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus26, {"Rampage+ 34", 1, 34, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus28, {"Rampage+ 36", 1, 36, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus29, {"Rampage+ 37", 1, 37, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus30, {"Rampage+ 38", 1, 38, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus31, {"Rampage+ 39", 1, 39, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus32, {"Rampage+ 40", 1, 40, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus33, {"Rampage+ 41", 1, 41, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus34, {"Rampage+ 42", 1, 42, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus36, {"Rampage+ 44", 1, 44, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus37, {"Rampage+ 45", 1, 45, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus38, {"Rampage+ 46", 1, 46, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus39, {"Rampage+ 47", 1, 47, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+    {CardId::RampagePlus40, {"Rampage+ 48", 1, 48, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
 };
 
 // Whether a card needs the player to PICK a specific enemy slot (ROB-80). Only

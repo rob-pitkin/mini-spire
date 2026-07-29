@@ -230,7 +230,14 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
   // Rampage: this copy permanently gains damage for the rest of the combat.
   // Applied after the damage read, before the pile move, so the growth rides
   // back into the pile on this instance.
-  played.bonus_damage += data.bonus_damage_per_play;
+  //
+  // Growth is an ID SWAP up the rung ladder (ROB-87), not a hidden counter —
+  // that is what makes a grown copy visible in the observation and selectable
+  // as its own action. Only past the top rung does it fall back to the
+  // instance counter, so damage stays exact where the encoding saturates.
+  if (data.bonus_damage_per_play > 0 && !grow_card_in_place(played)) {
+    played.bonus_damage += data.bonus_damage_per_play;
+  }
   if (card_damage > 0) {
     // One DealDamage per hit per target; a multi-hit AoE (Whirlwind) sweeps
     // all targets each swing. Damage math runs at execution (Strength per hit).
@@ -399,9 +406,13 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     pile_move.kind = (data.exhaust || corrupted_skill || ctx_play.force_exhaust)
                          ? ActionKind::ExhaustCard
                          : ActionKind::DiscardCard;
-    pile_move.card = card_id;
-    // Carry the instance so Rampage's growth (and Searing Blow's upgrades)
-    // return to the pile with this copy.
+    // played.card_id, NOT the card_id argument: since ROB-87 a card's id can
+    // CHANGE during its own resolution (Rampage grows a rung), so the copy that
+    // returns to the pile must be the one that leaves the queue, not the one
+    // that entered it. Using the argument silently discarded the growth.
+    pile_move.card = played.card_id;
+    // Carry the instance too — above a ladder's cap the overflow counters are
+    // what keep the damage exact.
     pile_move.card_bonus_damage = played.bonus_damage;
     pile_move.card_upgrades = played.upgrades;
     has_pile_move = true;

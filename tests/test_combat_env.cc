@@ -25,6 +25,22 @@ using minispire::kEndTurnAction;
 // Reset / basic shape
 // ============================================================================
 
+TEST(CombatEnv, CardIdsAreDenseAndComplete) {
+  // The obs pile-count order is DERIVED from the enum (ROB-87) rather than
+  // hand-listed, which is only sound while CardId values are dense 0..N-1 and
+  // CARD_DATABASE has exactly one row per value. This test is what makes that
+  // safe: it replaces a 154-entry table whose only guard was a SIZE assert, so
+  // a duplicate paired with a missing entry compiled clean and silently made
+  // one card invisible in the observation while double-counting another.
+  ASSERT_EQ(CARD_DATABASE.size(), static_cast<std::size_t>(kNumCardTypes));
+  for (int i = 0; i < kNumCardTypes; ++i) {
+    const CardId id = static_cast<CardId>(i);
+    EXPECT_EQ(CARD_DATABASE.count(id), 1u)
+        << "CardId value " << i << " has no CARD_DATABASE row — the enum is "
+        << "not dense, so the derived obs order would index a missing card";
+  }
+}
+
 TEST(CombatEnv, ResetIsReproducibleForSameSeed) {
   // reset() samples an encounter from the pool (ROB-66); the same seed must
   // produce an identical fight (deterministic).

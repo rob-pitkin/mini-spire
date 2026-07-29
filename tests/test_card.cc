@@ -80,8 +80,11 @@ TEST(Card, BashPlusDamageAndVulnerable) {
 
 namespace {
 bool name_is_upgraded(const CardData& d) {
-  const std::string n = d.name;
-  return !n.empty() && n.back() == '+';
+  // Any '+' in the name, not just a trailing one (ROB-87). The rung ladders
+  // append the card's total damage ("Rampage+ 16"), so a suffix-only test would
+  // read every upgraded Rampage rung as a base card missing an upgrade. Base
+  // cards never contain '+'; upgraded ones always do.
+  return std::string(d.name).find('+') != std::string::npos;
 }
 }  // namespace
 
@@ -96,28 +99,44 @@ TEST(CardUpgrades, EveryBaseCardIsUpgradable) {
 
 TEST(CardUpgrades, UpgradedAndStatusCardsAreNotUpgradable) {
   // StS: you cannot upgrade an already-upgraded card, nor a Status card.
-  // Searing Blow is the documented exception — it upgrades without limit via
-  // its instance counter, so even Searing Blow+ stays upgradable.
+  // Searing Blow is the documented exception ("can be upgraded any number of
+  // times"), and since ROB-87 that exception is a LADDER of ids rather than an
+  // instance counter — so every one of its rungs stays upgradable by design.
   for (const auto& [id, d] : CARD_DATABASE) {
-    if (is_instance_upgradable(id)) continue;
+    if (searing_blow_rung(id) > 0) continue;  // a rung, not a dead end
     if (name_is_upgraded(d) || d.type == CardType::Status) {
       EXPECT_FALSE(is_upgradable(id)) << "should not be upgradable: " << d.name;
     }
   }
 }
 
-TEST(CardUpgrades, SearingBlowUpgradesWithoutLimitOnTheInstance) {
-  // The one card whose upgrades live on the copy rather than in CARD_UPGRADES.
-  EXPECT_TRUE(is_instance_upgradable(CardId::SearingBlow));
-  EXPECT_TRUE(is_instance_upgradable(CardId::SearingBlowPlus));
-  EXPECT_TRUE(is_upgradable(CardId::SearingBlowPlus));  // unlike other "+"
-  EXPECT_EQ(CARD_UPGRADES.count(CardId::SearingBlow), 0u);
-
+TEST(CardUpgrades, SearingBlowClimbsItsLadderThenSaturates) {
+  // ROB-87 replaced the instance counter with real ids: each upgrade is an
+  // ordinary CARD_UPGRADES swap, exactly like every other card.
   Card c{CardId::SearingBlow};
-  for (int i = 1; i <= 5; ++i) {
+  const CardId want[] = {CardId::SearingBlowPlus, CardId::SearingBlow2,
+                         CardId::SearingBlow3, CardId::SearingBlow4,
+                         CardId::SearingBlow5};
+  for (int i = 0; i < 5; ++i) {
     ASSERT_TRUE(upgrade_card_in_place(c));
-    EXPECT_EQ(c.card_id, CardId::SearingBlow);  // id never changes
-    EXPECT_EQ(c.upgrades, i);                   // the counter does
+    EXPECT_EQ(c.card_id, want[i]) << "rung " << (i + 1);
+    EXPECT_EQ(c.upgrades, 0) << "below the cap the counter stays unused";
+  }
+}
+
+TEST(CardUpgrades, SearingBlowStaysUpgradableAtTheCap) {
+  // The parity clause. "Can be upgraded any number of times" must hold past the
+  // top rung, so the cap keeps accepting upgrades and counts them on the
+  // instance. If this regressed, Armaments would silently stop offering the
+  // card and nothing else in the suite would notice.
+  EXPECT_TRUE(is_upgradable(CardId::SearingBlow5));
+  EXPECT_TRUE(is_instance_upgradable(CardId::SearingBlow5));
+
+  Card c{CardId::SearingBlow5};
+  for (int i = 1; i <= 3; ++i) {
+    ASSERT_TRUE(upgrade_card_in_place(c)) << "refused upgrade past the cap";
+    EXPECT_EQ(c.card_id, CardId::SearingBlow5) << "id saturates";
+    EXPECT_EQ(c.upgrades, i) << "the overflow counter carries it";
   }
 }
 
@@ -133,7 +152,15 @@ TEST(CardUpgrades, UpgradeInPlaceSwapsIdForNormalCards) {
 TEST(CardUpgrades, EveryMappingGoesToItsOwnPlusForm) {
   // Verifies X -> "X+" BY NAME, which is what catches a transcription swap
   // (e.g. Clash accidentally mapped to Clothesline+).
+  //
+  // The ROB-87 rung ladders are exempt: their edges climb within a ladder
+  // (Searing Blow+2 -> Searing Blow+3) or cross to the upgraded ladder at the
+  // same accumulated bonus (Rampage 13 -> Rampage+ 13), neither of which is a
+  // name-suffix relation. RungLaddersMatchTheReachableSet checks those instead,
+  // structurally rather than textually.
   for (const auto& [base, upgraded] : CARD_UPGRADES) {
+    if (searing_blow_rung(base) > 0 || base == CardId::SearingBlow) continue;
+    if (CARD_DATABASE.at(base).bonus_damage_per_play > 0) continue;  // Rampage
     const std::string base_name = CARD_DATABASE.at(base).name;
     const std::string upg_name = CARD_DATABASE.at(upgraded).name;
     EXPECT_EQ(upg_name, base_name + "+")
@@ -161,6 +188,73 @@ TEST(CardUpgrades, UpgradedCardIsTotalAndIdentityWhenNotUpgradable) {
   }
 }
 
+TEST(CardUpgrades, RungLaddersMatchTheReachableSet) {
+  // The database's rung rows were GENERATED; this recomputes the reachable set
+  // from the rules and demands an exact match. It is the differential trick the
+  // mask oracle uses — an independent derivation, not a restatement of the
+  // table — and it is what makes 35 generated rows trustworthy without anyone
+  // eyeballing them.
+  //
+  // Rampage+ is the reason it exists: {5a + 8b} is irregular, and +22, +27 and
+  // +35 are NOT reachable. A hand-written list is as likely to wrongly INCLUDE
+  // a gap as to mistype a value, and both fail silently in a positional row.
+  const int kBaseCap = 30, kPlusCap = 40;
+  std::set<int> want_plus;
+  for (int a = 0; a * 5 <= kBaseCap; ++a) {
+    for (int b = 0; 5 * a + 8 * b <= kPlusCap; ++b) want_plus.insert(5 * a + 8 * b);
+  }
+
+  // Collect what the database actually ships, by damage (rows carry 8 + bonus).
+  std::set<int> got_base, got_plus;
+  for (const auto& [id, d] : CARD_DATABASE) {
+    if (d.bonus_damage_per_play == 5) got_base.insert(d.damage - 8);
+    if (d.bonus_damage_per_play == 8) got_plus.insert(d.damage - 8);
+  }
+
+  std::set<int> want_base;
+  for (int b = 0; b <= kBaseCap; b += 5) want_base.insert(b);
+
+  EXPECT_EQ(got_base, want_base) << "Rampage ladder does not match {5a}";
+  EXPECT_EQ(got_plus, want_plus) << "Rampage+ ladder does not match {5a + 8b}";
+  for (int gap : {22, 27, 35}) {
+    EXPECT_EQ(got_plus.count(gap), 0u)
+        << "+" << gap << " is unreachable and must not have a rung";
+  }
+
+  // Every base rung must be able to upgrade INTO the plus ladder at the same
+  // accumulated bonus, or a grown Rampage would have nowhere to go.
+  for (int b : want_base) EXPECT_EQ(want_plus.count(b), 1u) << "no +" << b;
+
+  // Searing Blow: rungs 0..5 on the published progression.
+  const int want_sb[] = {12, 16, 21, 27, 34, 42};
+  for (int n = 0; n <= 5; ++n) {
+    Card c{static_cast<CardId>(0)};
+    c.card_id = n == 0   ? CardId::SearingBlow
+                : n == 1 ? CardId::SearingBlowPlus
+                : n == 2 ? CardId::SearingBlow2
+                : n == 3 ? CardId::SearingBlow3
+                : n == 4 ? CardId::SearingBlow4
+                         : CardId::SearingBlow5;
+    EXPECT_EQ(searing_blow_rung(c.card_id), n);
+    EXPECT_EQ(n * (n + 7) / 2 + 12, want_sb[n]);
+  }
+}
+
+TEST(CardUpgrades, GrowthLadderIsAcyclicAndTerminates) {
+  // Every growth chain must reach a cap. A mistyped edge could loop
+  // (+16 -> +16) and hang a fight; walking each chain proves it cannot.
+  for (const auto& [start, _] : CARD_GROWTH) {
+    Card c{start};
+    std::set<CardId> seen{start};
+    int steps = 0;
+    while (grow_card_in_place(c)) {
+      ASSERT_TRUE(seen.insert(c.card_id).second)
+          << "growth cycle through " << CARD_DATABASE.at(c.card_id).name;
+      ASSERT_LT(++steps, 64) << "growth chain does not terminate";
+    }
+  }
+}
+
 TEST(CardUpgrades, KnownPairsAreCorrect) {
   // A few spot checks across tiers, so the invariants above can't all pass
   // vacuously on an empty table.
@@ -169,7 +263,9 @@ TEST(CardUpgrades, KnownPairsAreCorrect) {
   EXPECT_EQ(upgraded_card(CardId::Whirlwind), CardId::WhirlwindPlus);
   EXPECT_EQ(upgraded_card(CardId::DemonForm), CardId::DemonFormPlus);
   EXPECT_EQ(upgraded_card(CardId::Corruption), CardId::CorruptionPlus);
-  EXPECT_EQ(CARD_UPGRADES.size(), 74u);
+  // 74 base pairs + 11 ROB-87 ladder edges (5 Searing Blow rungs, 6 grown
+  // Rampage rungs crossing to their Rampage+ counterparts).
+  EXPECT_EQ(CARD_UPGRADES.size(), 85u);
   // Status cards: not upgradable (StS).
   EXPECT_FALSE(is_upgradable(CardId::Slimed));
   EXPECT_FALSE(is_upgradable(CardId::Dazed));
