@@ -103,22 +103,24 @@ Checked in the code, not assumed — several overturned earlier assumptions:
 
 ## 5. The accepted design: the Option Slot Channel
 
-> **As built (Stage 4c complete).** The worked numbers below use the 102-card
-> pool this doc was written against. Tier E's ten choice cards then took the
-> pool to **112**, and every constant scaled with it exactly as designed —
-> nothing was re-encoded:
+> **As built.** The worked numbers throughout this document are the 102-card
+> pool it was written against. They are kept as written — they are the reasoning
+> that produced the decision, and rewriting them would destroy the record while
+> guaranteeing a fresh drift.
 >
-> | | at design time (102 cards) | as built (112 cards) |
-> |---|---|---|
-> | actions | 614 | **674** |
-> | obs floats | 834 | **904** |
-> | end turn | 510 | **560** |
-> | first option slot | 511 | **561** |
-> | decline | 613 | **673** |
+> **Do not restate the current numbers here.** Read them from the code:
+> `kTotalActions`, `kEndTurnAction`, `kFirstOptionSlot`, `kDeclineAction`
+> (`src/turn_loop.h`) and `CombatEnv::kObsSize` (`src/combat_env.h`), all
+> exposed to Python. A previous version of this note pinned an "as built"
+> column at 112 cards; it was stale within weeks.
 >
-> The slot count is `kNumCardTypes`, so it grew with the pool and overflow
-> stayed structurally impossible. That the numbers moved without any interface
-> rework is the property the design was chosen for.
+> What is worth recording is that the pool has now moved **four times** — 102 at
+> design time, 112 with Tier E's choice cards, 154 with the full Ironclad pool,
+> 189 once per-instance state became card identity (ROB-87) — and **not one of
+> those required an interface change.** Every constant is derived from
+> `kNumCardTypes`; nothing was re-encoded, and no truncation rule was ever
+> needed. That is the property the design was chosen for, and it has now been
+> tested by a 1.85× growth in the card pool rather than argued for on paper.
 
 One generic mechanism for **every** decision point that is not "play a card" or
 "end turn". Derived from NLE's `menu_option_1..n` + contents-in-observation,
@@ -126,27 +128,39 @@ sized so that truncation is impossible.
 
 ### 5.1 Action space
 
+Symbolically — the indices below are derived, never written down. (The worked
+numbers in brackets are the 102-card pool this was designed against; see the
+note in §5.)
+
 ```
-[0    .. 509]  play card:  card_idx * kMaxEnemies + enemy_idx   (UNCHANGED)
-[510]          end turn                                          (UNCHANGED)
-[511  .. 612]  option_slot_0 .. option_slot_101                  (NEW)
-[613]          option_skip / decline                             (NEW)
-                                                    → 614 actions
+[0 .. kEndTurnAction-1]   play card: card_idx * kMaxEnemies + enemy_idx  [0..509]
+[kEndTurnAction]          end turn                                       [510]
+[kFirstOptionSlot ..      option_slot_0 .. option_slot_{kNumOptionSlots-1}
+ kDeclineAction-1]                                                       [511..612]
+[kDeclineAction]          option_skip / decline                          [613]
+                                              → kTotalActions            [614]
 ```
+
+**Never re-derive these.** Computing end turn as `kTotalActions - 1` was a real
+bug: it is the *decline* action, because the option channel follows the combat
+block. It broke the TUI and 13 Python tests at once.
 
 The combat path (0–510) is **byte-identical to today**. PPO trains on exactly
 the indices it trains on now; the slot channel is fully masked off during
 normal combat, and the combat indices are fully masked off during a pause.
 
-**Slot count = `kNumCardTypes` (102), and that is a load-bearing choice.**
+**Slot count = `kNumCardTypes`, and that is a load-bearing choice.**
 A pile cannot contain more *distinct card types* than there are card types, so
 **overflow is structurally impossible** — no runtime guard, no truncation rule,
 no parity risk. This matters because v1.0.0 ships a configurable deck: a user
-may legitimately build a 102-distinct-card deck, and Exhume choosing from the
-exhaust pile would then need all 102 slots. A 20- or 32-slot block would have
-required a documented truncation rule, which *is* a parity violation (the human
-can pick any card; the agent could not). Action width is nearly free (§3), so
-buying provable safety costs almost nothing.
+may legitimately build a deck holding every distinct card, and Exhume choosing
+from the exhaust pile would then need a slot for each. A 20- or 32-slot block
+would have required a documented truncation rule, which *is* a parity violation
+(the human can pick any card; the agent could not). Action width is nearly free
+(§3), so buying provable safety costs almost nothing.
+
+Stated as a count this would already be stale twice over — hence the invariant
+rather than the number.
 
 `kNumOptionSlots` is defined as `kNumCardTypes` so the two cannot drift.
 
@@ -155,20 +169,38 @@ buying provable safety costs almost nothing.
 Appended (existing feature indices never move):
 
 ```
-header (5 floats)
+header (kChoiceHeaderSize = 5 floats)
   [0] choice_pending          0 / 1          ← R4, mandatory
-  [1] choice_kind / N         which decision  (ChoiceKind enum)
-  [2] source_pile / 5         hand/draw/discard/exhaust/external
-  [3] source_card / 102       the card that caused the pause
+  [1] choice_kind             which decision  (ChoiceKind enum)
+  [2] source_pile             hand/draw/discard/exhaust/external
+  [3] source_card             the card that caused the pause (CardId)
   [4] choice_is_optional      0 / 1          ← is option_skip legal
 
-slots (102 × 3 floats)
+slots (kNumOptionSlots × kChoiceSlotStride = 3 floats)
   [0] occupied                0 / 1
-  [1] payload_id / 255        CardId now; node/item/event id in v2
-  [2] cost / 200              gold or energy; 0 when N/A
+  [1] payload_id              CardId now; node/item/event id in v2
+  [2] payload_value           instance damage now; gold cost in v2
 
-obs: 523 → 523 + 5 + 306 = 834
+obs: 523 → 523 + 5 + 306 = 834   [102-card pool; read kObsSize for current]
 ```
+
+> **As-built divergence — values are written RAW, not normalized.** This block
+> originally specified `source_card / 102`, `payload_id / 255`, `cost / 200`.
+> The implementation (`combat_env.cc`) writes the unscaled integer in every
+> case. The spec is corrected above to match what actually ships.
+>
+> Whether that is *right* is an open question, deliberately left open rather
+> than silently normalized here. Feeding a CardId as a scalar gives the network
+> a false ordinal relationship between unrelated cards — id 5 is not "between"
+> 4 and 6 — which is the exact modelling error `observation-space.md` §5.2
+> rejects sts2-rl-agent for. Nothing else in our obs does this: piles are count
+> vectors, statuses are per-effect slots. The choice channel is the one place
+> a categorical is encoded as a magnitude.
+>
+> Not changed as part of ROB-89, which is a documentation pass. It wants its
+> own decision (one-hot per slot is `kNumCardTypes` floats × slots — far too
+> wide; an embedding is a policy-side change, which §1 of the observation doc
+> says is not the environment's problem). Filed rather than fixed.
 
 **Payload fields are reserved now and always written** (zero for card choices),
 so v2.0.0's map / shop / event work is **pure data** — new `ChoiceKind` values

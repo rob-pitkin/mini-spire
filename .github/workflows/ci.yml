@@ -10,7 +10,9 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # v5 runs on Node 24. v4 targets the deprecated Node 20 and is currently
+      # force-shimmed by the runner; that shim will go away.
+      - uses: actions/checkout@v5
 
       - name: Install system build dependencies
         run: |
@@ -31,7 +33,8 @@ jobs:
       # ---- Python build + tests --------------------------------------------
 
       - name: Install uv + Python 3.12
-        uses: astral-sh/setup-uv@v6
+        # v7 is the first major on Node 24; v6 is node20 (deprecated).
+        uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
           enable-cache: true
