@@ -187,20 +187,45 @@ obs: 523 → 523 + 5 + 306 = 834   [102-card pool; read kObsSize for current]
 > **As-built divergence — values are written RAW, not normalized.** This block
 > originally specified `source_card / 102`, `payload_id / 255`, `cost / 200`.
 > The implementation (`combat_env.cc`) writes the unscaled integer in every
-> case. The spec is corrected above to match what actually ships.
+> case. The spec above is corrected to match what ships.
 >
-> Whether that is *right* is an open question, deliberately left open rather
-> than silently normalized here. Feeding a CardId as a scalar gives the network
-> a false ordinal relationship between unrelated cards — id 5 is not "between"
-> 4 and 6 — which is the exact modelling error `observation-space.md` §5.2
-> rejects sts2-rl-agent for. Nothing else in our obs does this: piles are count
-> vectors, statuses are per-effect slots. The choice channel is the one place
-> a categorical is encoded as a magnitude.
+> **RULED (ROB-89): keep it raw. This is a known, accepted wart.**
 >
-> Not changed as part of ROB-89, which is a documentation pass. It wants its
-> own decision (one-hot per slot is `kNumCardTypes` floats × slots — far too
-> wide; an embedding is a policy-side change, which §1 of the observation doc
-> says is not the environment's problem). Filed rather than fixed.
+> `payload_id` is a categorical encoded as a magnitude, which hands the network
+> a false ordinal — card 5 is not "between" 4 and 6. It is the one place in the
+> observation that does this; piles are count vectors and statuses are
+> per-effect slots. It is the same modelling error `observation-space.md` §5.2
+> rejects sts2-rl-agent for, so it was examined properly rather than waved
+> through.
+>
+> The narrow fixes do not survive contact:
+>
+> - **Normalizing** (the original spec) rescales without removing the ordinal.
+>   Cosmetic.
+> - **One-hot per slot** costs `kNumCardTypes` floats × `kNumOptionSlots` —
+>   roughly 35,700. Unaffordable.
+> - **Embeddings** are a policy-side change, and §1 of the observation doc puts
+>   policy architecture outside the environment's remit.
+>
+> The fix that *would* work is to **index option slots by `CardId` rather than
+> by rank**. Width is unchanged (`kNumOptionSlots` already equals
+> `kNumCardTypes`), `payload_id` becomes unnecessary because the index is the
+> identity, action semantics become permanently stable, and the ordinal problem
+> disappears instead of being mitigated.
+>
+> **It was rejected because it is built against v2, not with it.** Map paths,
+> shop items, events and rest options have no `CardId`. Rank-indexing is
+> precisely what lets one mechanism serve all of them with no obs shape change —
+> the property §5.2 calls the direct answer to "no rework at a later milestone".
+> Card-id indexing would make card choices index one way and v2 choices another,
+> and buy a v1 improvement by spending generality that has not been used yet.
+>
+> The wart is bounded: one float per slot, in a channel that is fully masked off
+> during ordinary combat and live only during a pause.
+>
+> **Revisit if** v2's decision types turn out not to need the shared channel
+> after all, or if training shows the choice channel is where a policy is
+> actually losing.
 
 **Payload fields are reserved now and always written** (zero for card choices),
 so v2.0.0's map / shop / event work is **pure data** — new `ChoiceKind` values
