@@ -172,15 +172,17 @@ One fight only. No map, no shop, no relics, no meta-progression.
 This is intentional. The combat engine alone poses a non-trivial RL problem:
 energy management, card sequencing, blocking vs attacking, deck stochasticity.
 
-**Fixed for v1:**
-- One enemy (e.g. Cultist or Jaw Worm) with a fixed or simple intent pattern
-- Starter Ironclad deck (~10 cards: Strikes, Defends, Bash)
-- Win condition: enemy HP <= 0
-- Loss condition: player HP <= 0
-- Reward: win/lose signal + shaped HP reward (optional)
+**v1 is one fight, configurable:** the full Ironclad card pool, the Act 1 enemy
+roster with their real AI tables, multi-enemy encounters, a configurable deck
+and encounter. Win when every enemy is dead, lose at 0 HP. Reward is win/loss
+plus optional HP shaping.
 
-Complexity knobs for later: larger card pool, randomized enemy patterns,
-multi-enemy rooms, then map traversal.
+(This section used to describe a single enemy and a ten-card starter deck. Both
+were true once. Counts and rosters live in the code — `CARD_DATABASE`,
+`EnemyKind`, `src/encounter.cc` — not here.)
+
+**Not v1 — these are v2.0.0:** map traversal, shops, events, rest sites, card
+rewards, relics, potions, sequential fights.
 
 ## Architecture
 
@@ -191,25 +193,35 @@ Python RL layer          (StableBaselines3 / custom loop)
       |
 pybind11 boundary        (thin: reset, step, get_obs, action_mask)
       |
-C++ game engine          (CombatState, Card, Enemy, TurnLoop, Renderer)
+C++ game engine          (CombatState, Card, Enemy, TurnLoop, ActionQueue)
 ```
 
-### C++ engine (src/, include/)
+### C++ engine (src/ — headers and .cc together, no include/ split)
 
-Key types:
+Read the headers for the type shapes; they change and this file will not track
+them. `src/combat_state.h`, `src/card.h`, `src/enemy.h`, `src/turn_loop.h`,
+`src/action.h`, `src/query.h`.
 
-- `CombatState` — player HP, block, energy, draw/hand/discard/exhaust piles,
-  enemy HP, enemy intent, turn number, RNG seed
-- `Card` — id, name, cost, effect (enum or function), upgraded flag
-- `Enemy` — HP, intent pattern (cyclic list of Move structs), current move index
-- `TurnLoop` — applies actions, advances enemy, checks terminals
-- `Renderer` — terminal ASCII display for human debugging (optional, not used by agent)
+What is worth knowing that a header does not tell you:
 
-**Critical from day one:** `CombatState::clone()` — deep copy of full state.
-Required for MCTS later. Build it before you need it.
-
-**RNG:** seeded, deterministic. Every shuffle and random enemy move uses the seeded
-RNG stored in CombatState so any state is fully reproducible.
+- **The engine runs on an action queue**, not direct mutation. Effects are
+  pushed as `Action` values and drained; the invariant is that the queue is
+  empty at every agent decision point, and no resolution stays open while state
+  changes. Design: `docs/design/effects-architecture.md`. Deliberate ordering
+  divergences from StS are logged in `docs/design/ordering-notes.md` — read it
+  before "fixing" an ordering, several are intentional and tested.
+- **`Card` is an instance, `CardData` is the type.** A card in a pile carries
+  only what distinguishes that copy; everything else is looked up by id.
+- **Enemy AI is a Markov table**, not a cycle: transitions keyed on
+  `(last move, consecutive count)`, with "cannot use X twice in a row"
+  constraints encoded as enriched pseudo-move-states. `src/enemy.h`.
+- **`CombatState::clone()`** is a plain copy and must stay that way — MCTS needs
+  it, and it is why the queue and pending-choice records are POD with fixed
+  arrays rather than heap types.
+- **RNG is seeded and deterministic.** Every shuffle and random enemy move draws
+  from the RNG in `CombatState`, so a seed reproduces a fight exactly. Changing
+  *how many* draws happen changes every downstream fight — treat the RNG stream
+  as an interface.
 
 ### pybind11 boundary (bindings/)
 
@@ -228,30 +240,41 @@ Zero-copy observation: back the obs array with C++ memory, expose via
 - Training script using `MaskablePPO` from `sb3-contrib` (handles action masking)
 - Benchmark script: steps/sec at batch sizes 1, 8, 32, 256
 
-## Observation space (v1 design)
+## Observation and action spaces
 
-Flat float32 vector, roughly:
+**Do not restate the layout in this file.** It used to hold a table, and that
+table was wrong for the entire life of the project — it described a per-slot
+one-hot hand the implementation never had, alongside a "~50–80 floats" total
+that ended up off by more than an order of magnitude. Nobody noticed, because a
+stale doc never fails a build. Point at the source instead.
 
-| Slice | Contents |
-|-------|----------|
-| Player | HP, block, energy (3) |
-| Hand | one-hot per card slot × max_hand_size (e.g. 10 × num_card_types) |
-| Draw pile | count per card type (num_card_types) |
-| Discard pile | count per card type (num_card_types) |
-| Enemy | HP, block, intent_attack_dmg, intent_block_amt, intent_is_buff (5) |
+**The spec** — what the spaces contain and *why* — is
+`docs/design/observation-space.md`. Its §1 is the governing rule for anything
+added to the observation:
 
-Total v1: ~50–80 floats. Small on purpose — fast to train, easy to inspect.
+> The observation should match what a human player can see.
 
-## Action space (v1)
+That criterion does real work: it makes "the obs is too big" a non-argument (if
+a human can see it, the size is the price of parity), and it makes "the agent
+cannot see X, which a human can" a **defect** in the same category as an engine
+parity bug. Related: `docs/design/decision-points.md` for the option-slot
+channel.
 
-Discrete: one action per unique card type in hand + end turn.
+**The authority** is the code, and it is exposed so nothing needs to hardcode it:
 
-For a 10-card starter deck with ~5 unique cards:
-- Actions 0–4: play card of type N (masked if not in hand or insufficient energy)
-- Action 5: end turn
+- Obs layout: `CombatEnv::kObsSize`, `kPlayerObsSize`, `kEnemyObsStride`,
+  `kPileObsSize`, `kChoiceObsSize` in `src/combat_env.h`, surfaced to Python as
+  `CombatEnv.OBS_SIZE`, `NUM_CARD_TYPES`, `NUM_DEBUFFS`, …
+- Action layout: `kEndTurnAction`, `kFirstOptionSlot`, `kDeclineAction`,
+  `kTotalActions` in `src/turn_loop.h`.
 
-Action masking is non-negotiable — unmasked invalid actions cause degenerate
-training where the agent learns to spam end-turn.
+**Read those constants; never re-derive them.** Computing end-turn as
+`size - 1` was a real bug — the option-slot channel now sits after the combat
+block, so the last index is the *decline* action. It broke the TUI and 13
+Python tests at once.
+
+**Action masking is non-negotiable.** Unmasked invalid actions produce
+degenerate training where the agent learns to spam end-turn.
 
 ## Reward structure
 
@@ -376,11 +399,23 @@ new figures, match this style so they sit natively in the dark blog theme.
 
 | Decision | Choice | Reason |
 |----------|--------|--------|
-| Scope | Single combat only | Avoid Miles's complexity spiral; ship something clean |
-| Renderer | Terminal ASCII | No GUI overhead, forces good engine/view separation |
+Standing decisions, and where the reasoning lives when it is longer than a row.
+
+| Decision | Choice | Reason |
+|----------|--------|--------|
+| Scope | Single combat for v1 | Avoid Miles's complexity spiral; ship something clean |
+| Human play | Python TUI (`minispire-play`) | The C++ `minispire-cli` was retired once the TUI reached parity |
 | RL framework | sb3-contrib MaskablePPO | Action masking built-in, fast iteration |
 | Action masking | Yes, from day one | Highest-leverage training stability trick in game RL |
 | State clone | Yes, from day one | Required for MCTS; painful retrofit |
 | Reward | Sparse win/loss + optional HP shaping | Avoid playstyle bias |
 | Python bridge | pybind11 zero-copy | Consistent with cpp-pettingzoo experience |
 | Source layout | Flat `src/` (headers + .cc together) | Simpler than src/include split; small project doesn't need it |
+| Effect resolution | Action queue, not direct mutation | `docs/design/effects-architecture.md` |
+| Heterogeneous decisions | Option-slot channel, fixed obs shape | `docs/design/decision-points.md` |
+| Per-instance card state | Part of card IDENTITY (rung ladders) | `docs/design/observation-space.md` §5 |
+| What belongs in the obs | Whatever a human player can see | `docs/design/observation-space.md` §1 |
+
+**When a decision needs more than a row, write a design doc and link it here.**
+Do not inline the reasoning — this file is read at the start of every session,
+and everything in it competes for attention with the working rules above.
