@@ -99,6 +99,7 @@ constexpr std::array<Debuff, kNumDebuffs> kObsDebuffOrder = {
     Debuff::Weak,
     Debuff::Frail,
     Debuff::Entangle,
+    Debuff::NoDraw,
 };
 static_assert(kObsDebuffOrder.size() == kNumDebuffs,
               "kObsDebuffOrder must list every debuff");
@@ -258,19 +259,26 @@ void CombatEnv::compute_obs() {
 
   const Character& c = state_.character;
 
-  // --- Player (slots 0..4) ---
+  // --- Player (slots 0..6) ---
   o[0] = static_cast<float>(c.hp);
   o[1] = static_cast<float>(c.max_hp);  // player keeps max_hp; enemies do not
   o[2] = static_cast<float>(c.current_block);
   o[3] = static_cast<float>(c.energy);
   o[4] = static_cast<float>(c.energy_per_turn);
+  // Query-layer counters the player can read off the cards (ROB-40 B1): Blood
+  // for Blood displays a cost reduced by hp_loss_events, and Combust's tooltip
+  // displays the HP its casts will cost.
+  o[5] = static_cast<float>(c.hp_loss_events);
+  o[6] = static_cast<float>(c.combust_casts);
 
-  // --- Player status = [debuffs then powers], slots 5 .. 5+kNumStatusEffects ---
+  // --- Player status = [debuffs then powers] ---
+  constexpr int kStatusBase = CombatEnv::kPlayerBaseSize;
   for (std::size_t i = 0; i < kObsDebuffOrder.size(); ++i) {
-    o[5 + i] = status_stacks(c.debuffs, kObsDebuffOrder[i]);
+    o[kStatusBase + i] = status_stacks(c.debuffs, kObsDebuffOrder[i]);
   }
   for (std::size_t i = 0; i < kObsPlayerPowerOrder.size(); ++i) {
-    o[5 + kNumDebuffs + i] = status_stacks(c.powers, kObsPlayerPowerOrder[i]);
+    o[kStatusBase + kNumDebuffs + i] =
+        status_stacks(c.powers, kObsPlayerPowerOrder[i]);
   }
 
   // --- Enemies: kMaxEnemies blocks of kEnemyObsStride floats each ---
@@ -330,6 +338,14 @@ void CombatEnv::compute_obs() {
     o[kPileBase + 1 * kStride + i] = static_cast<float>(pile_count(state_.draw_pile, id));
     o[kPileBase + 2 * kStride + i] = static_cast<float>(pile_count(state_.discard_pile, id));
     o[kPileBase + 3 * kStride + i] = static_cast<float>(pile_count(state_.exhaust_pile, id));
+    // Plane 5 is not a pile: it is the count of copies of this type that cost 0
+    // for the rest of the turn (ROB-40 B3). Read from the map directly rather
+    // than counted from a container.
+    const auto free_it = state_.character.free_this_turn.find(id);
+    o[kPileBase + 4 * kStride + i] =
+        free_it == state_.character.free_this_turn.end()
+            ? 0.0f
+            : static_cast<float>(free_it->second);
   }
 
   // --- Turn number ---

@@ -498,7 +498,7 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
 
   // Battle Trance: no FURTHER draws this turn. Set after the drain so the
   // card's own draw (queued above) still resolves. Cleared at turn start.
-  if (data.no_draw_after) state.character.no_draw_this_turn = true;
+  if (data.no_draw_after) state.character.debuffs[Debuff::NoDraw] = 1;
 
   // Life-total effects, applied after the drain because both depend on what
   // the card's damage actually did.
@@ -723,8 +723,9 @@ void handle_end_turn(CombatState& state) {
   // Barricade keeps block across the turn boundary (query, Stage 4b).
   if (block_resets_at_turn_start(state)) state.character.current_block = 0;
   state.character.energy = state.character.energy_per_turn;
-  state.character.no_draw_this_turn = false;  // Battle Trance is turn-scoped
-  state.character.free_this_turn.clear();     // Infernal Blade's discount
+  // Battle Trance's NoDraw needs no clear here — it is a Debuff now (ROB-40 B2)
+  // and the end-of-turn tick already expired it.
+  state.character.free_this_turn.clear();  // Infernal Blade's discount
   state.turn_number += 1;
   state.character_turn = true;
   {

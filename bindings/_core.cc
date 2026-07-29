@@ -287,7 +287,8 @@ PYBIND11_MODULE(_core, m) {
       .value("Vulnerable", Debuff::Vulnerable)
       .value("Weak", Debuff::Weak)
       .value("Frail", Debuff::Frail)
-      .value("Entangle", Debuff::Entangle);
+      .value("Entangle", Debuff::Entangle)
+      .value("NoDraw", Debuff::NoDraw);
   py::enum_<Power>(m, "Power")
       .value("Strength", Power::Strength)
       .value("Dexterity", Power::Dexterity)

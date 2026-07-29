@@ -38,18 +38,32 @@ struct Character {
   // Power::Combust stacks = accumulated damage (5/7 per cast — one stack count
   // can't hold both once upgrades mix). Bumped by the ApplyPower executor.
   int combust_casts = 0;
-  // --- Query-layer counters (Stage 4b). Hidden from the obs on purpose: they
-  // are read through query.cc, not shown as power icons in StS. ---
+  // --- Query-layer counters (Stage 4b). Read through query.cc rather than
+  // applied as powers.
+  //
+  // These were originally excluded from the observation "because they are not
+  // shown as power icons in StS". ROB-40's parity audit overturned that: the
+  // premise confused REPRESENTATION with VISIBILITY. The player does see both —
+  // Blood for Blood's card displays its reduced cost, and Combust's tooltip
+  // displays the HP it will cost — just not as an icon. Both are now written to
+  // the observation (ROB-40 B1). ---
+  //
   // Blood for Blood: cost drops 1 per HP-loss EVENT this combat, from ANY
   // source including enemy attacks (unlike Rupture, which is self-inflicted
   // only). Combat-scoped — never reset per turn.
   int hp_loss_events = 0;
-  // Battle Trance: no further draws this turn. Cleared at turn start.
-  bool no_draw_this_turn = false;
+  // Battle Trance's "no further draws this turn" is Debuff::NoDraw, not a field
+  // here (ROB-40 B2) — StS renders it as a debuff icon.
+  //
   // Cards that cost 0 for the rest of THIS turn (Infernal Blade's generated
-  // attack). Keyed by card type: a generated card is fresh, so there is no
-  // instance to distinguish, and a duplicate of the same type would be
-  // indistinguishable to the player anyway. Cleared at turn start.
+  // attack), keyed by card type and consumed one play at a time (ROB-85).
+  //
+  // This comment used to claim "a duplicate of the same type would be
+  // indistinguishable to the player anyway". That is false and was the
+  // assumption ROB-40 was opened to fix: the discounted copy displays cost 0
+  // while its siblings display their printed cost, so a human tells them apart
+  // at a glance. The counter is a faithful model of "exactly one copy is free"
+  // but cannot say WHICH — see docs/design/observation-space.md §4.1.
   std::unordered_map<CardId, int> free_this_turn;
 };
 

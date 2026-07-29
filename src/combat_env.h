@@ -55,10 +55,12 @@ struct ChoiceView {
 class CombatEnv {
  public:
   // Observation layout (ROB-40 + ROB-59 multi-enemy). Flat float32 vector:
-  //   player        [0:5]   hp, max_hp, block, energy, energy_per_turn
-  //   player status [5 : 5 + kPlayerStatusSize]   debuffs then ALL powers
+  //   player        [0:7]   hp, max_hp, block, energy, energy_per_turn,
+  //                         hp_loss_events, combust_casts
+  //   player status [7 : 7 + kPlayerStatusSize]   debuffs then ALL powers
   //   enemies       [.. : .. + kMaxEnemies*kEnemyObsStride]  kMaxEnemies blocks
-  //   piles         [.. : .. + 4*kNumCardTypes]  hand/draw/discard/exhaust
+  //   piles         [.. : .. + 5*kNumCardTypes]  hand/draw/discard/exhaust,
+  //                         then free-this-turn
   //   turn          [last]
   // Each enemy block (kEnemyObsStride floats): is_alive, hp, block,
   // status(kEnemyStatusSize), intent(4: is_attacking, atk_dmg, is_blocking,
@@ -71,12 +73,21 @@ class CombatEnv {
   // Juggernaut, ...) — in an enemy block those would be always-zero floats.
   static constexpr int kPlayerStatusSize = kNumDebuffs + kNumPlayerPowers;
   static constexpr int kEnemyStatusSize = kNumDebuffs + kNumEnemyPowers;
-  static constexpr int kPlayerObsSize = 5 + kPlayerStatusSize;
+  // hp, max_hp, block, energy, energy_per_turn, then the two query-layer
+  // counters a human can read off the cards (ROB-40 B1): hp_loss_events
+  // (Blood for Blood's displayed cost) and combust_casts (Combust's tooltip).
+  static constexpr int kPlayerBaseSize = 7;
+  static constexpr int kPlayerObsSize = kPlayerBaseSize + kPlayerStatusSize;
   static constexpr int kEnemyIntentSize = 4;
   static constexpr int kEnemyObsStride =
       3 + kEnemyStatusSize + kEnemyIntentSize;  // is_alive,hp,block + status + intent
-  // 4 piles (hand/draw/discard/exhaust), each a per-card-type count vector.
-  static constexpr int kPileObsSize = 4 * kNumCardTypes;
+  // 5 planes, each a per-card-type count vector: the four piles
+  // (hand/draw/discard/exhaust) plus the free-this-turn discount plane
+  // (ROB-40 B3) — "how many copies of type T cost 0 for the rest of this turn".
+  // Almost always all-zero; without it the agent is told a card costs 1, pays 0,
+  // and has no way to see why.
+  static constexpr int kNumPilePlanes = 5;
+  static constexpr int kPileObsSize = kNumPilePlanes * kNumCardTypes;
 
   // Choice block (Stage 4c; docs/design/decision-points.md §5.2). A 5-float
   // header plus one 3-float descriptor per option slot. Appended last so every

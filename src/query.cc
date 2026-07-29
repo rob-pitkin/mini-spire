@@ -63,7 +63,7 @@ bool block_resets_at_turn_start(const CombatState& state) {
 
 bool can_draw(const CombatState& state) {
   // Battle Trance: no additional draws for the rest of this turn.
-  return !state.character.no_draw_this_turn;
+  return get_status(state.character.debuffs, Debuff::NoDraw) == 0;
 }
 
 int base_card_damage(const CombatState& state, CardId card) {

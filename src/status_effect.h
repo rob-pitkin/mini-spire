@@ -15,6 +15,12 @@ enum class Debuff {
   Weak,        // deals 25% less attack damage; ticks down
   Frail,       // block gained from cards reduced 25% (floored); ticks down
   Entangle,    // player: cannot play attack cards this turn; non-stacking, 1 turn
+  NoDraw,      // player: no further draws this turn (Battle Trance). StS renders
+               // it as a debuff icon, so it lives here rather than as a hidden
+               // bool (ROB-40 B2). Set to 1 when played; the end-of-turn tick
+               // clears it, which is exactly "this turn" — the tick runs AFTER
+               // the end-of-turn drain, so it still blocks a Dark Embrace draw
+               // from an ethereal exhaust.
   None,        // sentinel: "no debuff" (default for unused fields)
 };
 
@@ -68,7 +74,10 @@ enum class Power {
 // enemy-relevant prefix (Stage 4a). Keep kObsDebuffOrder /
 // kObsPlayerPowerOrder / kObsEnemyPowerOrder in lockstep — static_asserts
 // enforce the counts match. (The None sentinels are excluded.)
-inline constexpr int kNumDebuffs = 4;
+// Entangle and NoDraw are player-only; they occupy always-zero floats in the
+// enemy blocks. Kept in one shared order (rather than split per entity like the
+// powers) because two of five is not worth a second table.
+inline constexpr int kNumDebuffs = 5;
 inline constexpr int kNumEnemyPowers = 6;
 inline constexpr int kNumPlayerPowers = 22;
 

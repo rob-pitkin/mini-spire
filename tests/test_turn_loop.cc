@@ -2418,7 +2418,9 @@ TEST(TurnLoop, BattleTranceDrawsThenBlocksFurtherDraws) {
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::BattleTrance, 0)));
   const std::size_t after_trance = s.current_hand.size();
-  EXPECT_TRUE(s.character.no_draw_this_turn);
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::NoDraw), 1)
+      << "StS renders this as a debuff icon, so it lives in the debuff block "
+         "and is visible in the obs (ROB-40 B2)";
 
   // Battle Trance's OWN draw resolved (3 cards + the Pommel Strike still held).
   EXPECT_EQ(after_trance, 4u);
@@ -2430,13 +2432,39 @@ TEST(TurnLoop, BattleTranceDrawsThenBlocksFurtherDraws) {
 
 TEST(TurnLoop, BattleTranceNoDrawClearsNextTurn) {
   CombatState s = make_power_test_state();
-  s.character.no_draw_this_turn = true;
+  s.character.debuffs[Debuff::NoDraw] = 1;
   for (int i = 0; i < 12; ++i) s.draw_pile.push_back(Card{CardId::Strike});
 
   ASSERT_TRUE(apply_action(s, end_turn_action()));
 
-  EXPECT_FALSE(s.character.no_draw_this_turn);
+  // Expires via the ordinary end-of-turn debuff tick rather than an explicit
+  // turn-start clear (ROB-40 B2).
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::NoDraw), 0);
   EXPECT_EQ(s.current_hand.size(), static_cast<std::size_t>(STARTING_HAND_SIZE));
+}
+
+TEST(TurnLoop, BattleTranceNoDrawStillBlocksEndOfTurnExhaustDraws) {
+  // The tick that expires NoDraw runs AFTER the end-of-turn drain, so a Dark
+  // Embrace draw triggered by an ethereal card exhausting at end of turn is
+  // still suppressed — "this turn" includes the turn's own cleanup.
+  CombatState s = make_power_test_state();
+  s.character.energy = 5;
+  s.current_hand.push_back(Card{CardId::DarkEmbrace});  // draw 1 per exhaust
+  ASSERT_TRUE(apply_action(s, card_action(CardId::DarkEmbrace, 0)));
+  s.character.debuffs[Debuff::NoDraw] = 1;
+  s.current_hand.push_back(Card{CardId::GhostlyArmor});  // ethereal -> exhausts
+  s.draw_pile.clear();
+  for (int i = 0; i < 12; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  // Measured on the DRAW PILE, not the hand: a card drawn during end-of-turn
+  // cleanup would be discarded with the rest of the hand, so the next turn's
+  // hand is STARTING_HAND_SIZE either way and asserting on it proves nothing.
+  // Only the opening draw should have consumed the pile — had NoDraw expired
+  // before the ethereal exhaust fired Dark Embrace, one more would be gone.
+  EXPECT_EQ(s.draw_pile.size(),
+            static_cast<std::size_t>(12 - STARTING_HAND_SIZE));
 }
 
 TEST(TurnLoop, BloodForBloodCostsLessPerHpLossEvent) {
