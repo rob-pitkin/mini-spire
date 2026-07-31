@@ -69,3 +69,13 @@ if(MINISPIRE_BUILD_TESTS AND NOT SKBUILD)
   include(GoogleTest)
   gtest_discover_tests(minispire_tests)
 endif()
+
+# Benchmarks (ROB-81). Not a test target: it is timing, so it must never gate
+# CI on a shared runner's scheduling noise. Build explicitly with
+#   cmake --build build --target minispire_bench
+# and always from a Release build — Debug and ASan numbers differ by an order
+# of magnitude and are not publishable.
+if(NOT SKBUILD)
+  add_executable(minispire_bench EXCLUDE_FROM_ALL benchmarks/bench_engine.cc)
+  target_link_libraries(minispire_bench PRIVATE minispire)
+endif()

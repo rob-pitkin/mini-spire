@@ -1,0 +1,40 @@
+{
+  "engine": {
+    "engine_steps_per_sec": 451935.0,
+    "valid_actions_us": 0.016,
+    "apply_action_us": 1.484,
+    "action_select_us": 0.367,
+    "reset_us": 5.24,
+    "mean_episode_len": 18.2,
+    "steps": 80000.0,
+    "spread_pct": 2.0
+  },
+  "env": {
+    "1": {
+      "steps_per_sec": 165095.46520726904,
+      "select_share": 0.37215785301810617,
+      "episodes": 4448
+    },
+    "8": {
+      "steps_per_sec": 165324.7665043791,
+      "select_share": 0.374055800923804,
+      "episodes": 4427
+    },
+    "32": {
+      "steps_per_sec": 166267.912277539,
+      "select_share": 0.3764282091849902,
+      "episodes": 4397
+    },
+    "256": {
+      "steps_per_sec": 165017.8206435525,
+      "select_share": 0.3771204934378514,
+      "episodes": 4289
+    }
+  },
+  "reset_us": 12.167030945420265,
+  "episode_length": 18.566,
+  "obs_size": 1642,
+  "num_actions": 1136,
+  "machine": "arm64",
+  "system": "Darwin"
+}

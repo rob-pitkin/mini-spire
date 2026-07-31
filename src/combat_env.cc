@@ -110,15 +110,6 @@ float status_stacks(const std::unordered_map<Effect, int>& effects, Effect e) {
   return it == effects.end() ? 0.0f : static_cast<float>(it->second);
 }
 
-// Count cards of a given id in a pile.
-int pile_count(const std::vector<Card>& pile, CardId id) {
-  int n = 0;
-  for (const Card& c : pile) {
-    if (c.card_id == id) ++n;
-  }
-  return n;
-}
-
 }  // namespace
 
 CombatEnv::CombatEnv(float hp_reward_coeff, EncounterPool pool,
@@ -281,20 +272,32 @@ void CombatEnv::compute_obs() {
   // adding a card type can't drift the per-pile offsets. ---
   constexpr int kPileBase = kEnemyBase + kMaxEnemies * kEnemyObsStride;
   constexpr int kStride = kNumCardTypes;
-  for (std::size_t i = 0; i < kObsCardOrder.size(); ++i) {
-    CardId id = kObsCardOrder[i];
-    o[kPileBase + 0 * kStride + i] = static_cast<float>(pile_count(state_.current_hand, id));
-    o[kPileBase + 1 * kStride + i] = static_cast<float>(pile_count(state_.draw_pile, id));
-    o[kPileBase + 2 * kStride + i] = static_cast<float>(pile_count(state_.discard_pile, id));
-    o[kPileBase + 3 * kStride + i] = static_cast<float>(pile_count(state_.exhaust_pile, id));
-    // Plane 5 is not a pile: it is the count of copies of this type that cost 0
-    // for the rest of the turn (ROB-40 B3). Read from the map directly rather
-    // than counted from a container.
-    const auto free_it = state_.character.free_this_turn.find(id);
-    o[kPileBase + 4 * kStride + i] =
-        free_it == state_.character.free_this_turn.end()
-            ? 0.0f
-            : static_cast<float>(free_it->second);
+  // One pass per pile, indexing straight into the plane (ROB-81).
+  //
+  // This was a pile_count() call per card type per pile — 4 x kNumCardTypes
+  // scans of the whole pile every step, so O(card types x deck size) when the
+  // work is really O(deck size). It also got slower as the pool grew: the same
+  // ten-card deck cost ~1,540 comparisons at 154 card types and ~1,890 at 189,
+  // which is the opposite of what adding cards should do to a count.
+  //
+  // The direct index is sound because CardId values are dense 0..N-1 and the
+  // obs order is the enum order — the same invariant kObsCardOrder is derived
+  // from, pinned by CombatEnv.CardIdsAreDenseAndComplete. The buffer was zeroed
+  // above, so these accumulate from 0.
+  auto count_pile = [&o](const std::vector<Card>& pile, int plane) {
+    const int base = kPileBase + plane * kStride;
+    for (const Card& c : pile) o[base + static_cast<int>(c.card_id)] += 1.0f;
+  };
+  count_pile(state_.current_hand, 0);
+  count_pile(state_.draw_pile, 1);
+  count_pile(state_.discard_pile, 2);
+  count_pile(state_.exhaust_pile, 3);
+  // Plane 5 is not a pile: it holds how many copies of each type cost 0 for the
+  // rest of this turn (ROB-40 B3). Walk the map, which is empty on almost every
+  // step — probing it once per card type was 189 hash lookups to discover
+  // nothing.
+  for (const auto& [id, n] : state_.character.free_this_turn) {
+    o[kPileBase + 4 * kStride + static_cast<int>(id)] = static_cast<float>(n);
   }
 
   // --- Turn number ---

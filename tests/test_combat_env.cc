@@ -41,6 +41,51 @@ TEST(CombatEnv, CardIdsAreDenseAndComplete) {
   }
 }
 
+TEST(CombatEnv, ObsPileCountsMatchTheActualPiles) {
+  // ROB-81 replaced a pile_count() call per card type per pile with one pass
+  // per pile, indexing straight into the plane by CardId. That is a ~189x
+  // reduction in comparisons and a silent mis-index away from a wrong
+  // observation — and nothing in the suite read these floats, so the whole
+  // rewrite was uncovered. Counted independently here, the slow and obvious
+  // way, for the same reason the mask oracle exists.
+  const int pile_base =
+      CombatEnv::kPlayerObsSize + kMaxEnemies * CombatEnv::kEnemyObsStride;
+  const int stride = kNumCardTypes;
+
+  CombatEnv env(0.0f, EncounterPool::Weak);
+  std::mt19937 rng(4);
+  for (uint32_t seed = 0; seed < 25; ++seed) {
+    env.reset(seed);
+    for (int step = 0; step < 40; ++step) {
+      const std::array<float, CombatEnv::kObsSize>& o = env.obs();
+      const CombatState& s = env.state();
+      const std::vector<Card>* piles[4] = {&s.current_hand, &s.draw_pile,
+                                           &s.discard_pile, &s.exhaust_pile};
+      for (int plane = 0; plane < 4; ++plane) {
+        for (int id = 0; id < stride; ++id) {
+          int want = 0;
+          for (const Card& c : *piles[plane]) {
+            if (static_cast<int>(c.card_id) == id) ++want;
+          }
+          ASSERT_EQ(o[pile_base + plane * stride + id],
+                    static_cast<float>(want))
+              << "seed " << seed << " step " << step << " plane " << plane
+              << " card " << id;
+        }
+      }
+
+      const std::vector<uint8_t>& mask = env.action_mask();
+      std::vector<int> legal;
+      for (std::size_t a = 0; a < mask.size(); ++a) {
+        if (mask[a]) legal.push_back(static_cast<int>(a));
+      }
+      if (legal.empty()) break;
+      env.step(legal[rng() % legal.size()]);
+      if (env.outcome() != Outcome::InProgress) break;
+    }
+  }
+}
+
 TEST(CombatEnv, ResetIsReproducibleForSameSeed) {
   // reset() samples an encounter from the pool (ROB-66); the same seed must
   // produce an identical fight (deterministic).
