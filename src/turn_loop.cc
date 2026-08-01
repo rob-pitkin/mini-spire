@@ -50,6 +50,31 @@ void draw_opening_hand(CombatState& state) {
   }
 }
 
+// Fire on-death hooks for anything that died during a drain (ROB-90).
+//
+// `CheckDeath` used to be queued from exactly ONE place — inside card
+// resolution — so an enemy killed by anything else never fired EnemyDeath or
+// BecameLastEnemy. Fungi Beast's Spore Cloud silently did not go off when the
+// kill came from Combust or Flame Barrier, which the wiki says it should
+// ("will still activate ... ex. from Thorns damage"). No test caught it because
+// win/loss detection scans HP directly and was unaffected.
+//
+// Runs AFTER the drain rather than as a queued action, and that ordering is the
+// whole trick: Flame Barrier's retaliation is pushed DURING the drain, when the
+// enemy's attack fires PlayerAttacked. A CheckDeath queued up front would
+// execute before the kill it exists to notice.
+//
+// `handle_play_card` keeps its own in-queue CheckDeath instead — its position
+// relative to the card's draw is deliberate and pinned (ordering-notes §2).
+//
+// INVARIANT: every drain that can damage an enemy must reach one of the two.
+void process_deaths(CombatState& state, ResolutionContext& ctx) {
+  if (ctx.died_count == 0) return;
+  ActionQueue q;
+  q.push_back(Action{ActionKind::CheckDeath});
+  drain(state, q, ctx);
+}
+
 void check_enemy_terminal(CombatState& state) {
   for (const auto& e : state.enemies) {
     if (e.hp > 0) return;
@@ -639,6 +664,9 @@ void handle_end_turn(CombatState& state) {
     q.push_back(Action{ActionKind::DiscardHand});
     fire_player_power_hooks(state, Hook::TurnEndPlayer, q);
     drain(state, q, ctx);
+    // Combust's damage lands inside that drain, so its kills need their
+    // on-death hooks fired before we decide the fight is over (ROB-90).
+    process_deaths(state, ctx);
     // Combust can kill the player, and can clear the room.
     check_character_terminal(state);
     if (state.outcome != Outcome::InProgress) return;
@@ -691,6 +719,10 @@ void handle_end_turn(CombatState& state) {
                            q);
     translate_enemy_move(state, move, static_cast<int>(slot), q);
     drain(state, q, ctx);
+    // Flame Barrier can kill the attacker mid-drain, and a Juggernaut or
+    // Combust tick can kill anything (ROB-90). Fire the on-death hooks before
+    // the terminal check, so a Spore Cloud from the last enemy still lands.
+    process_deaths(state, ctx);
 
     // 2c. Terminal check — an enemy attack may have killed the player.
     check_character_terminal(state);

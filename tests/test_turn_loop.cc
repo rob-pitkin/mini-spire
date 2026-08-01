@@ -1244,6 +1244,87 @@ TEST(TurnLoop, FungiBeastSporeCloudVulnerableOnDeath) {
   EXPECT_EQ(s.character.debuffs[Debuff::Vulnerable], 2);
 }
 
+// --- ROB-90: on-death hooks must fire no matter what dealt the killing blow --
+//
+// CheckDeath used to be queued from exactly one place, inside card resolution,
+// so a kill from anywhere else fired nothing. The test above passed throughout,
+// because it kills with a card. These cover the paths that did not.
+
+TEST(TurnLoop, SporeCloudFiresWhenCombustKills) {
+  // Combust damages every enemy during the end-of-player-turn drain — not
+  // during card resolution — so its kills never reached CheckDeath.
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy fungi = make_fungi_beast(rng);
+  fungi.hp = 5;  // Combust deals exactly 5
+  fungi.max_hp = 28;
+  s.enemies.push_back(std::move(fungi));
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::Combust});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Combust, 0)));
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_EQ(s.outcome, Outcome::Won);
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::Vulnerable), 2)
+      << "Spore Cloud must fire on a Combust kill — the wiki calls this out "
+         "explicitly for deaths during the enemy turn";
+}
+
+TEST(TurnLoop, SporeCloudFiresWhenFlameBarrierKills) {
+  // The subtle one. Flame Barrier's retaliation is pushed DURING the enemy
+  // phase drain, when the attack fires PlayerAttacked — so a CheckDeath queued
+  // before that drain would run before the kill it exists to notice. This is
+  // the wiki's own example: "will still activate ... ex. from Thorns damage".
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy fungi = make_fungi_beast(rng);
+  fungi.hp = 4;  // Flame Barrier retaliates for exactly 4
+  fungi.max_hp = 28;
+  fungi.last_move = MoveName::Bite;  // must ATTACK for retaliation to fire
+  s.enemies.push_back(std::move(fungi));
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::FlameBarrier});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::FlameBarrier, 0)));
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_EQ(s.outcome, Outcome::Won);
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::Vulnerable), 2)
+      << "Spore Cloud must fire when retaliation lands the killing blow";
+}
+
+TEST(TurnLoop, BecameLastEnemyFiresWhenRetaliationKills) {
+  // CheckDeath fires two hooks; the one above covers EnemyDeath. This covers
+  // BecameLastEnemy, which drives Shield Gremlin's Protect -> ProtectAlone
+  // switch and would silently not happen on a non-card kill.
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy fungi = make_fungi_beast(rng);
+  fungi.hp = 4;
+  fungi.max_hp = 28;
+  fungi.last_move = MoveName::Bite;
+  s.enemies.push_back(std::move(fungi));
+  s.enemies.push_back(make_shield_gremlin(rng));
+  s.character.energy = 3;
+  s.character.hp = 80;
+  s.current_hand.push_back(Card{CardId::FlameBarrier});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::FlameBarrier, 0)));
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  ASSERT_EQ(s.outcome, Outcome::InProgress) << "the gremlin is still alive";
+  EXPECT_LE(s.enemies[0].hp, 0) << "the Fungi Beast died to retaliation";
+  // ProtectAlone advances to ShieldBash; plain Protect loops back to Protect.
+  // So the next intent is the discriminator for whether the rewrite happened.
+  EXPECT_EQ(*s.enemies[1].last_move, MoveName::ShieldBash)
+      << "BecameLastEnemy did not fire, so the gremlin never switched to "
+         "ProtectAlone and is still looping on Protect";
+}
+
 // ============================================================================
 // Blue Slaver (ROB-63)
 // ============================================================================
