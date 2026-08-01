@@ -883,6 +883,15 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       }
       break;
     }
+    case ActionKind::Heal:
+      // Reaper. Routed through an executor so "the player healed" has a single
+      // write path and somewhere for a future listener to hang (ROB-91).
+      heal_player(state, a.amount);
+      break;
+    case ActionKind::GainMaxHp:
+      // Feed.
+      gain_max_hp(state, a.amount);
+      break;
     case ActionKind::AddCardToPile: {
       // A generated card is always fresh (no inherited instance state), except
       // Anger's self-copy, which carries the played copy's state.

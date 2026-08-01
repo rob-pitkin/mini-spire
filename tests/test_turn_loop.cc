@@ -2511,6 +2511,30 @@ TEST(TurnLoop, BattleTranceDrawsThenBlocksFurtherDraws) {
   EXPECT_EQ(s.current_hand.size(), after_trance - 1);  // played, drew nothing
 }
 
+TEST(TurnLoop, BattleTranceNoDrawGoesThroughTheArtifactGate) {
+  // ROB-91. NoDraw used to be written straight into the debuffs map, which
+  // skipped apply_debuff and therefore skipped Artifact negation. Nothing
+  // grants the PLAYER Artifact in v1, so the bypass was unobservable in normal
+  // play — this test grants it directly, which is the only way to prove the
+  // application now takes the uniform path rather than the short one.
+  //
+  // If this ever fails because a design decision says self-inflicted debuffs
+  // should ignore Artifact, that is a legitimate ruling — but it belongs in
+  // apply_debuff, not in a bypass at the call site.
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.character.powers[Power::Artifact] = 1;
+  for (int i = 0; i < 12; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::BattleTrance});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::BattleTrance, 0)));
+
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::NoDraw), 0)
+      << "Artifact should have negated it";
+  EXPECT_EQ(get_status(s.character.powers, Power::Artifact), 0)
+      << "and been consumed doing so";
+}
+
 TEST(TurnLoop, BattleTranceNoDrawClearsNextTurn) {
   CombatState s = make_power_test_state();
   s.character.debuffs[Debuff::NoDraw] = 1;

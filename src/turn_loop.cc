@@ -532,20 +532,44 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
   // live reference or open loop spans a mutation. May pause here on a choice.
   drain(state, q, ctx);
 
-  // Battle Trance: no FURTHER draws this turn. Set after the drain so the
-  // card's own draw (queued above) still resolves. Cleared at turn start.
-  if (data.no_draw_after) state.character.debuffs[Debuff::NoDraw] = 1;
-
-  // Life-total effects, applied after the drain because both depend on what
-  // the card's damage actually did.
-  // Reaper: heal the UNBLOCKED total across its AoE targets.
-  if (data.heals_unblocked_damage && ctx.unblocked_damage_dealt > 0) {
-    heal_player(state, ctx.unblocked_damage_dealt);
-  }
-  // Feed: "If Fatal" — max HP only if this card's damage killed something.
-  // None of the Act 1 roster are minions, the only case StS excludes.
-  if (data.max_hp_on_kill > 0 && ctx.died_count > 0) {
-    gain_max_hp(state, data.max_hp_on_kill);
+  // Late effects — they run after the drain because each depends on what the
+  // card's resolution actually did, which is not known until it finishes.
+  //
+  // They are QUEUED rather than applied directly (ROB-91). All three used to
+  // write state straight from here, which bypassed the single write path:
+  // NoDraw skipped `apply_debuff`'s Artifact gate, and Reaper/Feed had no
+  // executor to route through at all. Same shape as ROB-90's death gap — an
+  // effect that arrives late takes the short path because nothing is holding
+  // the queue open for it. Draining a second time costs one pass and keeps the
+  // rule intact.
+  {
+    ActionQueue late;
+    // Battle Trance: no FURTHER draws this turn. Queued after this drain so the
+    // card's own draw already resolved. Cleared by the end-of-turn tick.
+    if (data.no_draw_after) {
+      Action a;
+      a.kind = ActionKind::ApplyDebuff;
+      a.target = kPlayerSlot;
+      a.debuff = Debuff::NoDraw;
+      a.amount = 1;
+      late.push_back(a);
+    }
+    // Reaper: heal the UNBLOCKED total across its AoE targets.
+    if (data.heals_unblocked_damage && ctx.unblocked_damage_dealt > 0) {
+      Action a;
+      a.kind = ActionKind::Heal;
+      a.amount = ctx.unblocked_damage_dealt;
+      late.push_back(a);
+    }
+    // Feed: "If Fatal" — max HP only if this card's damage killed something.
+    // None of the Act 1 roster are minions, the only case StS excludes.
+    if (data.max_hp_on_kill > 0 && ctx.died_count > 0) {
+      Action a;
+      a.kind = ActionKind::GainMaxHp;
+      a.amount = data.max_hp_on_kill;
+      late.push_back(a);
+    }
+    if (!late.empty()) drain(state, late, ctx);
   }
 
   // 5. Terminal checks. DEATH takes precedence over victory: if the card's

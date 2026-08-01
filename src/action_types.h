@@ -62,6 +62,11 @@ enum class ActionKind {
   ExhaustCard,    // put `card` in the exhaust pile (played or generated)
   DiscardCard,    // put `card` in the discard pile
   MultiplyStrength,  // Limit Break: player Strength *= amount
+  Heal,        // player regains `amount` HP (Reaper)
+  GainMaxHp,   // player's max HP rises by `amount`, and current HP with it
+               // (Feed). Both of these existed only as direct calls to the
+               // Stage-1 mutators until ROB-91 — an undocumented hole in the
+               // single-write-path rule, which is how a fourth one appears.
   // Structure
   PlayCard,       // resolve a card from inside a resolution (Double Tap's free
                   // replay, Havoc playing off the draw pile). `amount` selects
