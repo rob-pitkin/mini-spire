@@ -21,10 +21,17 @@ classifiers = [
 dependencies = [
   "numpy>=2.0",
   "gymnasium>=1.3",
-  "rich>=13.0",
 ]
 
 [project.optional-dependencies]
+# Terminal UI: human play (minispire-play), the policy viewer, and
+# MinispireEnv.render(). Optional because the RL path never calls any of it —
+# someone installing Mini-Spire to train an agent should not be installing a
+# rendering stack too. minispire.render.require_tui() turns a missing extra
+# into an instruction rather than a ModuleNotFoundError.
+tui = [
+  "rich>=13.0",
+]
 train = [
   "stable-baselines3>=2.9",
   "sb3-contrib>=2.9",
@@ -42,6 +49,7 @@ ci = [
   "pytest>=8.0",
   "pydantic>=2.7",
   "pyyaml>=6.0",
+  "minispire[tui]",  # test_play.py covers the renderers
 ]
 # Analysis / plotting for blog artifacts (matplotlib). Separate from train so
 # headless training boxes don't pull it; dev includes it.
@@ -52,6 +60,7 @@ dev = [
   "pytest>=8.0",
   "minispire[train]",
   "minispire[analysis]",
+  "minispire[tui]",
 ]
 
 [project.scripts]

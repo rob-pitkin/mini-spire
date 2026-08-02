@@ -105,7 +105,14 @@ class MinispireEnv(gym.Env):
         if self._last_obs is None:
             raise RuntimeError("render() called before reset()")
         # Import here so the renderer (and rich) is only pulled in when
-        # actually rendering, keeping the training import path lean.
+        # actually rendering, keeping the training import path lean — rich lives
+        # in the optional `tui` extra, so a training-only install will not have
+        # it. require_tui() turns that into an explanation rather than a
+        # ModuleNotFoundError from three frames down.
+        from minispire.render import require_tui
+
+        require_tui()
+
         from rich.console import Console
 
         from minispire.render import screen

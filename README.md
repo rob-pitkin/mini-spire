@@ -75,6 +75,15 @@ uv run python -c "import minispire"
 The C++ extension builds automatically via scikit-build-core on install. After
 changing C++ sources, re-run `uv pip install -e .` to rebuild.
 
+A bare install gives you the engine and the Gymnasium environment and nothing
+else. The terminal UI lives behind the `tui` extra, so training a policy does
+not drag a rendering stack along with it; `[dev]` above already includes it.
+
+```bash
+uv pip install -e ".[tui]"        # human play, the policy viewer, env.render()
+uv pip install -e ".[train]"      # MaskablePPO, torch, W&B
+```
+
 Requires Python 3.12, a C++17 compiler, and CMake ≥ 3.16.
 
 ## Quickstart

@@ -15,9 +15,14 @@ import pathlib
 import sys
 
 import numpy as np
-from rich.console import Console
 
-from minispire import _core
+from minispire.render import require_tui
+
+require_tui()  # before the rich import below, so a missing extra explains itself
+
+from rich.console import Console  # noqa: E402
+
+from minispire import _core  # noqa: E402
 from minispire.env import MinispireEnv
 from minispire.render import screen
 
