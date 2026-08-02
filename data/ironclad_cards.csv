@@ -99,8 +99,8 @@ RecklessCharge,RecklessCharge,Attack,Uncommon,0,Enemy,7,1,0,0,0,n/a,FALSE,FALSE,
 RecklessChargePlus,RecklessCharge+,Attack,Uncommon,0,Enemy,10,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Shuffle a Dazed into your draw pile.,RecklessCharge
 Rupture,Rupture,Power,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever you lose HP on your turn, gain 1 strength.",n/a
 RupturePlus,Rupture+,Power,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Whenever you lose HP on your turn, gain 2 strength.",Rupture
-SearingBlow,Searing Blow,Attack,Uncommon,2,Enemy,1,12,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Can be upgraded any number of times. Greater than 1 upgrade is modeled as: n = upgrade number, damage = n(n+7)/2 + 12, damage increase = n + 3",n/a
-SearingBlowPlus,Searing Blow+,Attack,Uncommon,2,Enemy,1,16,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Can be upgraded any number of times. Greater than 1 upgrade is modeled as: n = upgrade number, damage = n(n+7)/2 + 12, damage increase = n + 3",SearingBlow
+SearingBlow,Searing Blow,Attack,Uncommon,2,Enemy,12,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Can be upgraded any number of times. Greater than 1 upgrade is modeled as: n = upgrade number, damage = n(n+7)/2 + 12, damage increase = n + 3",n/a
+SearingBlowPlus,Searing Blow+,Attack,Uncommon,2,Enemy,16,1,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,"Can be upgraded any number of times. Greater than 1 upgrade is modeled as: n = upgrade number, damage = n(n+7)/2 + 12, damage increase = n + 3",SearingBlow
 SecondWind,Second Wind,Skill,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Exhaust all non-Attack cards in your hand and gain 5 block for each card exhausted.,n/a
 SecondWindPlus,Second Wind+,Skill,Uncommon,1,None,0,0,0,0,0,n/a,FALSE,FALSE,FALSE,FALSE,Exhaust all non-Attack cards in your hand and gain 7 block for each card exhausted.,SecondWind
 SeeingRed,Seeing Red,Skill,Uncommon,1,None,0,0,0,0,2,n/a,TRUE,FALSE,FALSE,FALSE,n/a,n/a
