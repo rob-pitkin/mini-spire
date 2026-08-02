@@ -1,6 +1,8 @@
 #pragma once
 
 #include <array>
+#include <cctype>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -977,5 +979,129 @@ inline bool card_targets_enemy(const CardData& data) {
 // Display name for a card (ROB-79) — reads CardData::name, the single source of
 // truth. The TUI uses this so it never maintains its own name map.
 inline const char* card_name(CardId id) { return CARD_DATABASE.at(id).name; }
+
+// --- Card descriptions (ROB-97) -------------------------------------------
+//
+// The rules text a player reads on the card, verbatim from slaythespire.wiki.gg.
+// The TUI rendered name + cost only, which was survivable at 8 cards and is not
+// at 154 — you cannot check Sentinel's on-exhaust energy or Corruption's
+// skill-exhaust by playing if nothing on screen says they exist, and human play
+// is how deck parity actually gets validated.
+//
+// STORED, not composed from CardData. Composing looks tempting until you meet
+// the sentinels: `damage` is 0 for every card whose damage is computed
+// (Body Slam, Searing Blow), `cost` is kXCost for Whirlwind, and `hits` is -1
+// for X-hit cards. A generator would need a special case for each just to avoid
+// printing "Deal 0 damage" or "Deal 5 damage -1 times". A stored string simply
+// says what the card says.
+//
+// A SEPARATE map rather than a CardData field, because CardData has 42
+// positional fields and most rows lean on trailing defaults — a 43rd field
+// would mean respelling every default in all 189 rows, where one positional
+// slip is silent.
+//
+// The numbers in every one of these strings were cross-checked against
+// CARD_DATABASE (damage, block, status applications, draw, energy, hits,
+// exhaust, innate). The wiki text came out of a page summariser that got
+// several *costs* wrong, so it was verified rather than trusted.
+inline const std::unordered_map<CardId, const char*> CARD_DESCRIPTIONS = {
+#include "card_descriptions.inc"  // NOLINT — 154 rows, one per authored card
+};
+
+namespace detail {
+
+// Replace the first "Deal N damage" figure in `base` with `damage`.
+// Returns `base` unchanged if it has no such figure.
+inline std::string with_damage(const std::string& base, int damage) {
+  const std::string kNeedle = "Deal ";
+  const std::size_t start = base.find(kNeedle);
+  if (start == std::string::npos) return base;
+  const std::size_t first = start + kNeedle.size();
+  std::size_t last = first;
+  while (last < base.size() && std::isdigit(static_cast<unsigned char>(base[last]))) ++last;
+  if (last == first) return base;  // "Deal damage equal to your Block."
+  return base.substr(0, first) + std::to_string(damage) + base.substr(last);
+}
+
+// Build the full table: the authored rows, plus one generated row per rung.
+//
+// Rung IDs (Rampage's growth ladder, Searing Blow's upgrade ladder) are NOT
+// authored. Their text is the base card's with a single number swapped, so
+// hand-writing 35 near-identical strings would be 35 chances to mistype a
+// number CARD_DATABASE already holds. The base is found by walking CARD_GROWTH
+// backwards rather than from a hand-listed rung->base table — same reasoning
+// as ROB-87 deriving kObsCardOrder: a parallel list drifts silently.
+inline std::unordered_map<CardId, std::string> build_card_descriptions() {
+  std::unordered_map<CardId, std::string> out;
+  for (const auto& [id, text] : CARD_DESCRIPTIONS) out.emplace(id, text);
+
+  std::unordered_map<CardId, CardId> grew_from, upgraded_from;
+  for (const auto& [from, to] : CARD_GROWTH) grew_from.emplace(to, from);
+  for (const auto& [from, to] : CARD_UPGRADES) upgraded_from.emplace(to, from);
+
+  // Follow the growth ladder back to its head (the card nothing grows into).
+  const auto growth_head = [&grew_from](CardId id) {
+    for (int guard = 0; guard < 64; ++guard) {
+      const auto prev = grew_from.find(id);
+      if (prev == grew_from.end()) break;
+      id = prev->second;
+    }
+    return id;
+  };
+
+  for (const auto& [id, data] : CARD_DATABASE) {
+    if (out.count(id)) continue;
+
+    // Searing Blow's ladder is upgrades, not growth, so it is not in
+    // CARD_GROWTH. Damage follows query.cc's rule: n(n+7)/2 + 12.
+    if (const int n = searing_blow_rung(id); n >= 2) {
+      const auto base = out.find(CardId::SearingBlow);
+      if (base != out.end()) {
+        out.emplace(id, with_damage(base->second, n * (n + 7) / 2 + 12));
+      }
+      continue;
+    }
+
+    // Rampage. Walking the growth ladder back finds the head for a rung grown
+    // from an authored card — but a rung reached by UPGRADING a grown copy
+    // (Rampage+ 13 comes from upgrading Rampage 13, not from growing Rampage+)
+    // has no growth predecessor at all, and dead-ends on itself.
+    //
+    // For those, cross the upgrade edge first, find THAT card's head, and
+    // upgrade it. Landing on the wrong head is not cosmetic: the two ladders
+    // word their growth step differently ("by 5" vs "by 8"), so the base head
+    // would state a number this card does not use.
+    // Cross the upgrade edge FROM THE HEAD, not from `id` — Rampage+ 47 grew
+    // from Rampage+ 39 and back down to Rampage+ 13, and it is that head, not
+    // the rung we started at, which carries the upgrade edge to Rampage 13.
+    CardId head = growth_head(id);
+    if (!out.count(head)) {
+      if (const auto up = upgraded_from.find(head); up != upgraded_from.end()) {
+        const CardId pre = growth_head(up->second);
+        if (out.count(pre)) head = upgraded_card(pre);
+      }
+    }
+    if (const auto base = out.find(head); base != out.end()) {
+      out.emplace(id, with_damage(base->second, data.damage));
+    }
+  }
+  return out;
+}
+
+}  // namespace detail
+
+// Rules text for a card. Empty string if the id has none — callers render what
+// they get rather than branching, and CardDescriptionsCoverEveryCard makes the
+// empty case a test failure rather than a blank panel someone notices in play.
+//
+// Built once on first call: the rung rows are generated, so this cannot be a
+// constexpr table.
+inline const std::string& card_description(CardId id) {
+  static const std::unordered_map<CardId, std::string> table =
+      detail::build_card_descriptions();
+  static const std::string kNone;
+  const auto it = table.find(id);
+  return it == table.end() ? kNone : it->second;
+}
 
 }  // namespace minispire

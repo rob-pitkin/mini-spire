@@ -397,6 +397,12 @@ PYBIND11_MODULE(_core, m) {
   m.def(
       "card_name", [](CardId id) { return std::string(card_name(id)); },
       py::arg("card_id"), "Display name for a card.");
+  // Rules text (ROB-97). Engine-sourced for the same reason as the name: the
+  // TUI showed name + cost only, which cannot convey Sentinel's on-exhaust
+  // energy or a grown Rampage's damage. Rung cards report their own number.
+  m.def(
+      "card_description", [](CardId id) { return card_description(id); },
+      py::arg("card_id"), "Rules text for a card, as printed on it.");
   m.def(
       "enemy_name",
       [](EnemyKind kind) { return std::string(enemy_name(kind)); },
