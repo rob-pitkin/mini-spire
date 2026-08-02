@@ -63,8 +63,8 @@ class CombatEnv {
   //                         then free-this-turn
   //   turn          [last]
   // Each enemy block (kEnemyObsStride floats): is_alive, hp, block,
-  // status(kEnemyStatusSize), intent(4: is_attacking, atk_dmg, is_blocking,
-  // is_buffing). NOTE: enemies intentionally omit max_hp (redundant for the
+  // status(kEnemyStatusSize), intent(kEnemyIntentSize), kind(one-hot over
+  // kNumEnemyKinds). NOTE: enemies intentionally omit max_hp (redundant for the
   // policy — current hp gives lethality, intent gives threat; ROB-59). The
   // player keeps max_hp (fixed run-level anchor + HP-shaping reward).
   //
@@ -78,9 +78,24 @@ class CombatEnv {
   // (Blood for Blood's displayed cost) and combust_casts (Combust's tooltip).
   static constexpr int kPlayerBaseSize = 7;
   static constexpr int kPlayerObsSize = kPlayerBaseSize + kPlayerStatusSize;
-  static constexpr int kEnemyIntentSize = 4;
-  static constexpr int kEnemyObsStride =
-      3 + kEnemyStatusSize + kEnemyIntentSize;  // is_alive,hp,block + status + intent
+  // intent: is_attacking, atk_dmg, is_blocking, is_buffing, is_debuffing,
+  // is_escaping, is_splitting. ROB-96 added the last three and split buff from
+  // debuff. StS draws each of these as a distinct icon:
+  //
+  //  - escape / split carried no damage, block or status application, so they
+  //    encoded as all-zero — bit-identical to an enemy doing nothing, when
+  //    "it flees next turn" changes the correct play completely.
+  //  - one flag used to cover BOTH "the enemy strengthens itself" and "the
+  //    enemy weakens you". Red Louse's Grow and Green Louse's Spit Web are the
+  //    moves that distinguish those two enemies, and they set the same bit.
+  static constexpr int kEnemyIntentSize = 7;
+  // Which enemy this is, one-hot. Categorical, not an index: an index would
+  // tell the network Cultist sits "between" Jaw Worm and Red Louse, the same
+  // false ordering observation-space.md §5.2 rejects.
+  static constexpr int kEnemyKindSize = kNumEnemyKinds;
+  static constexpr int kEnemyObsStride = 3 + kEnemyStatusSize +
+                                         kEnemyIntentSize +
+                                         kEnemyKindSize;
   // 5 planes, each a per-card-type count vector: the four piles
   // (hand/draw/discard/exhaust) plus the free-this-turn discount plane
   // (ROB-40 B3) — "how many copies of type T cost 0 for the rest of this turn".

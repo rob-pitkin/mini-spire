@@ -14,6 +14,9 @@ from rich.text import Text
 _ATTACK_COLOR = "red"
 _BLOCK_COLOR = "cyan"
 _BUFF_COLOR = "magenta"
+_DEBUFF_COLOR = "purple"
+_ESCAPE_COLOR = "yellow"
+_SPLIT_COLOR = "green"
 
 
 def intent_text(
@@ -22,12 +25,20 @@ def intent_text(
     attack_damage: int,
     is_blocking: bool,
     is_buffing: bool,
+    is_debuffing: bool = False,
+    is_escaping: bool = False,
+    is_splitting: bool = False,
     ascii_only: bool = False,
 ) -> Text:
     """Build a colored rich.Text describing the enemy's intent.
 
     A compound move (e.g. attack + block) concatenates icons with spacing.
     Returns "(none)" if the enemy has no intent components.
+
+    Buffing and debuffing are distinct: STS shows a different icon for "the
+    enemy strengthens itself" than for "the enemy weakens you", and the engine
+    tracks them apart (ROB-96). Escape and Split had no icon at all until then,
+    so a fleeing Looter rendered as "(none)".
     """
     parts: list[Text] = []
 
@@ -48,6 +59,24 @@ def intent_text(
             parts.append(Text("(+)", style=_BUFF_COLOR))
         else:
             parts.append(Text("✦", style=_BUFF_COLOR))
+
+    if is_debuffing:
+        if ascii_only:
+            parts.append(Text("(-)", style=_DEBUFF_COLOR))
+        else:
+            parts.append(Text("⇩", style=_DEBUFF_COLOR))
+
+    if is_escaping:
+        if ascii_only:
+            parts.append(Text("[FLEE]", style=_ESCAPE_COLOR))
+        else:
+            parts.append(Text("🏃", style=_ESCAPE_COLOR))
+
+    if is_splitting:
+        if ascii_only:
+            parts.append(Text("[SPLIT]", style=_SPLIT_COLOR))
+        else:
+            parts.append(Text("⧉", style=_SPLIT_COLOR))
 
     if not parts:
         return Text("(none)", style="dim")

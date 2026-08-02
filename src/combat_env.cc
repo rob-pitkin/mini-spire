@@ -260,11 +260,43 @@ void CombatEnv::compute_obs() {
                                 m.damage, e.powers, e.debuffs, c.debuffs))
                           : 0.0f;
         o[base + kIntentOff + 2] = m.block > 0 ? 1.0f : 0.0f;
-        o[base + kIntentOff + 3] =
-            (!m.applies_debuffs.empty() || !m.applies_powers.empty()) ? 1.0f
-                                                                      : 0.0f;
+
+        // Buff and debuff are SEPARATE intents (ROB-96). One flag used to mean
+        // "applies something", conflating an enemy strengthening itself with an
+        // enemy weakening the player — StS draws those as different icons, and
+        // they are exactly the moves that tell a Red Louse (Grow, +3 Strength)
+        // apart from a Green Louse (Spit Web, 2 Weak).
+        bool buffs_self = false, debuffs_player = false;
+        for (const PowerApplication& p : m.applies_powers) {
+          // A power on the actor strengthens it; one on the player is a
+          // debuff in StS terms (Lagavulin's Siphon Soul is -1 Str / -1 Dex).
+          if (p.target == Target::Enemy) {
+            buffs_self = true;
+          } else {
+            debuffs_player = true;
+          }
+        }
+        for (const DebuffApplication& d : m.applies_debuffs) {
+          if (d.target == Target::Character) debuffs_player = true;
+        }
+        // A move that shuffles a status card in reads as a debuff intent, per
+        // the same ruling: the player is told the Slimed is coming.
+        if (!m.adds_to_discard.empty()) debuffs_player = true;
+
+        o[base + kIntentOff + 3] = buffs_self ? 1.0f : 0.0f;
+        o[base + kIntentOff + 4] = debuffs_player ? 1.0f : 0.0f;
+        o[base + kIntentOff + 5] = m.escapes ? 1.0f : 0.0f;
+        o[base + kIntentOff + 6] = m.splits ? 1.0f : 0.0f;
       }
     }
+
+    // Which enemy this is, one-hot. Identity determines the AI table, the HP
+    // range and the whole move set, and it reached the observation nowhere at
+    // all before ROB-96 — a Red Louse and a Green Louse at the same HP with the
+    // same telegraphed Bite were byte-identical.
+    constexpr int kKindOff = kIntentOff + CombatEnv::kEnemyIntentSize;
+    const int kind = static_cast<int>(e.kind);
+    if (kind >= 0 && kind < kNumEnemyKinds) o[base + kKindOff + kind] = 1.0f;
   }
 
   // --- Pile counts per CardId: hand/draw/discard/exhaust, each a

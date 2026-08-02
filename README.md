@@ -137,9 +137,15 @@ on screen is available. The vector's size is a consequence of that, not a target
 Its shape never changes between encounters. There are always five enemy slots,
 with absent or dead ones zeroed behind an `is_alive` flag, so a lone Cultist and
 a five-slime swarm produce the same vector and a policy carries over between
-them. Statuses are split into debuffs, which tick down each turn, and powers,
-which persist; enemy slots carry only the powers an enemy can have, while the
-character carries the full set. Card piles appear as counts per card type rather
+them. Each slot names its occupant with a one-hot over the enemy roster, since
+which creature you are facing is the single most predictive thing on screen — a
+Red Louse and a Green Louse can share an HP total and open with the same bite,
+and still want different answers. Alongside it sits the telegraphed intent: the
+incoming damage as a number, and flags for blocking, self-buffing, debuffing
+you, fleeing, and splitting, which is the same information the icon above an
+enemy's head conveys. Statuses are split into debuffs, which tick down each
+turn, and powers, which persist; enemy slots carry only the powers an enemy can
+have, while the character carries the full set. Card piles appear as counts per card type rather
 than ordered lists, which mirrors what a player actually knows — you can open
 your draw pile and see that it holds two Strikes and a Bash, but not which one
 you'll draw next.

@@ -365,6 +365,42 @@ Derivation of 1642: player `5 + (5+22) = 32`, plus B1's 2 scalars = 34;
 enemies `5 × (3 + (5+6) + 4) = 90`; piles `5 × 189 = 945`; turn `1`; choice
 `5 + 189 × 3 = 572`.
 
+### 9.5 Amendment (ROB-96): the enemy block
+
+The enemy block above is superseded. It failed §1 in two ways that the
+six-gap audit in §3 did not catch, because both are about what the block
+*omits* rather than how it encodes what it has:
+
+1. **Identity was absent entirely.** `Enemy::kind` reached the observation
+   nowhere. A human sees a Red Louse and a Green Louse as different creatures
+   on sight; the agent saw two HP values from overlapping ranges, both
+   telegraphing Bite. Their distinguishing moves — Grow (+3 Strength) versus
+   Spit Web (2 Weak) — are exactly what the next item conflated.
+2. **The intent block spent 4 floats on 3 facts.** Escape and Split carry no
+   damage, block or status application, so both encoded all-zero — identical
+   to an enemy doing nothing. And one flag covered both "the enemy strengthens
+   itself" and "the enemy weakens you", which STS draws as separate icons.
+
+Encoding: identity as a **one-hot over `kNumEnemyKinds`**, not an index. An
+index asserts that Cultist lies between Jaw Worm and Red Louse, which is the
+categorical-as-scalar error §5.2 rejects sts2-rl-agent for. The cost is
+23 floats per slot, and §1 makes size a non-argument: a human sees which enemy
+they are fighting, so the observation carries it.
+
+Intent widens 4 → 7: `is_attacking, atk_dmg, is_blocking, is_buffing,
+is_debuffing, is_escaping, is_splitting`. A status-card-adding move
+(Corrosive Spit → Slimed) sets `is_debuffing`, matching the debuff intent STS
+displays for it.
+
+| | before | after |
+|---|---:|---:|
+| enemy intent floats | 4 | **7** |
+| enemy identity floats | 0 | **23** |
+| `kEnemyObsStride` | 18 | **44** |
+| `OBS_SIZE` | 1642 | **1772** |
+
+Derivation of 1772: as above, but enemies `5 × (3 + (5+6) + 7 + 23) = 220`.
+
 **Saturation (A2):** at a cap the engine keeps incrementing `bonus_damage` /
 `upgrades` internally, so damage stays exactly right forever. Only the
 observation and action encoding saturate — states past the cap alias with each

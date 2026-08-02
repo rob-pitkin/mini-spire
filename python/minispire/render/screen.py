@@ -32,7 +32,8 @@ MAX_ENEMIES = _core.CombatEnv.MAX_ENEMIES
 CHAR_STATUS = slice(5, 5 + _NUM_STATUS)  # per-status stacks (V/W/S/D/Frail/Ritual)
 
 # Enemy blocks start after the player block; each is ENEMY_STRIDE floats:
-#   +0 is_alive, +1 hp, +2 block, then status(_NUM_STATUS), then intent(4).
+#   +0 is_alive, +1 hp, +2 block, then status(_NUM_STATUS), then
+#   intent(ENEMY_INTENT_SIZE), then a one-hot over the enemy kinds.
 ENEMY_BASE = _core.CombatEnv.PLAYER_OBS_SIZE
 ENEMY_STRIDE = _core.CombatEnv.ENEMY_OBS_STRIDE
 ENEMY_OFF_IS_ALIVE = 0
@@ -44,6 +45,9 @@ ENEMY_OFF_INTENT_IS_ATTACKING = _INTENT + 0
 ENEMY_OFF_INTENT_ATTACK_DAMAGE = _INTENT + 1
 ENEMY_OFF_INTENT_IS_BLOCKING = _INTENT + 2
 ENEMY_OFF_INTENT_IS_BUFFING = _INTENT + 3
+ENEMY_OFF_INTENT_IS_DEBUFFING = _INTENT + 4
+ENEMY_OFF_INTENT_IS_ESCAPING = _INTENT + 5
+ENEMY_OFF_INTENT_IS_SPLITTING = _INTENT + 6
 
 # Turn number is the last obs slot.
 TURN_NUMBER = _core.CombatEnv.OBS_SIZE - 1
@@ -259,6 +263,9 @@ def render_fight(
                 attack_damage=int(obs[base + ENEMY_OFF_INTENT_ATTACK_DAMAGE]),
                 is_blocking=bool(obs[base + ENEMY_OFF_INTENT_IS_BLOCKING]),
                 is_buffing=bool(obs[base + ENEMY_OFF_INTENT_IS_BUFFING]),
+                is_debuffing=bool(obs[base + ENEMY_OFF_INTENT_IS_DEBUFFING]),
+                is_escaping=bool(obs[base + ENEMY_OFF_INTENT_IS_ESCAPING]),
+                is_splitting=bool(obs[base + ENEMY_OFF_INTENT_IS_SPLITTING]),
                 ascii_only=ascii_only,
             )
         )

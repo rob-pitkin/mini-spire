@@ -109,15 +109,16 @@ def _obs_blocks():
     # Whatever is left after the known blocks is the choice channel; derived
     # rather than restated so it cannot drift out of sync.
     choice = C.OBS_SIZE - (C.PLAYER_OBS_SIZE + stride * n + piles + 1)
-    # The three character sub-blocks are collapsed into one. At 1642 floats they
-    # are 0.4%, 0.3% and 1.3% of the width, so their labels overlapped into an
+    # The three character sub-blocks are collapsed into one. At 1772 floats they
+    # are 0.4%, 0.3% and 1.2% of the width, so their labels overlapped into an
     # unreadable pile — and the style guide already groups adjacent same-colour
     # blocks. The breakdown moves to the caption, where it stays legible.
+    intent, kinds = C.ENEMY_INTENT_SIZE, C.NUM_ENEMY_KINDS
     blocks = [
         (f"Character\nstats({base}) debuffs({nd})\npowers({npw}) = {C.PLAYER_OBS_SIZE}",
          C.PLAYER_OBS_SIZE, "agent"),
-        (f"Enemy slot x{n}\nstats(3) debuffs({nd})\npowers({nep}) intent(4)\n"
-         f"= {stride} each", stride * n, "enemy"),
+        (f"Enemy slot x{n}\nstats(3) debuffs({nd})\npowers({nep}) intent({intent})\n"
+         f"kind({kinds}) = {stride} each", stride * n, "enemy"),
         (f"Pile counts x5\n(hand/draw/discard/exhaust\n+ free-this-turn) x {cards} cards\n"
          f"= {piles}", piles, "deck"),
         ("Turn", 1, "meta"),

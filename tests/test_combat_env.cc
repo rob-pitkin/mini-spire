@@ -41,6 +41,94 @@ TEST(CombatEnv, CardIdsAreDenseAndComplete) {
   }
 }
 
+// --- ROB-96: the enemy block must carry identity and every intent kind -------
+//
+// These check for ALIASING: two situations a human tells apart at a glance that
+// the observation encoded identically. Each one asserts the vectors differ,
+// which is the property that matters — a memoryless policy cannot learn a
+// distinction the observation does not make.
+
+namespace {
+// The enemy sub-block of the observation, for comparing two states.
+std::vector<float> enemy_block(const CombatEnv& env, int slot) {
+  const int base = CombatEnv::kPlayerObsSize + slot * CombatEnv::kEnemyObsStride;
+  const std::array<float, CombatEnv::kObsSize>& o = env.obs();
+  return std::vector<float>(o.begin() + base,
+                            o.begin() + base + CombatEnv::kEnemyObsStride);
+}
+
+// A one-enemy env holding `e`, observed without stepping.
+CombatState one_enemy(Enemy e) {
+  CombatState s = minispire::testing::make_minimal_state(0);
+  s.enemies.clear();
+  s.enemies.push_back(std::move(e));
+  return s;
+}
+}  // namespace
+
+TEST(CombatEnv, EnemyKindDistinguishesOtherwiseIdenticalEnemies) {
+  // Red Louse (HP 10-15) and Green Louse (HP 11-17) overlap, and both open with
+  // Bite. At the same HP with the same telegraphed move they were byte-identical
+  // — while Red follows up with Grow (+3 Strength) and Green with Spit Web
+  // (2 Weak). Different futures, one observation.
+  std::mt19937 rng(0);
+  Enemy red = make_red_louse(rng);
+  Enemy green = make_green_louse(rng);
+  red.hp = green.hp = 12;
+  red.max_hp = green.max_hp = 12;
+  red.last_move = MoveName::Bite;
+  green.last_move = MoveName::Bite;
+  red.moves[MoveName::Bite].damage = green.moves[MoveName::Bite].damage = 6;
+
+  CombatEnv a(one_enemy(std::move(red)));
+  CombatEnv b(one_enemy(std::move(green)));
+
+  EXPECT_NE(enemy_block(a, 0), enemy_block(b, 0))
+      << "a Red Louse and a Green Louse must not encode identically";
+}
+
+TEST(CombatEnv, EscapeAndSplitIntentsAreNotSilence) {
+  // Escape and Split carry no damage, no block and no status application, so
+  // before ROB-96 they encoded as all-zero intent — indistinguishable from a
+  // Gremlin Wizard charging. "It flees next turn" changes the correct play.
+  std::mt19937 rng(0);
+  Enemy looter = make_looter(rng);
+  Enemy wizard = make_gremlin_wizard(rng);
+  looter.hp = wizard.hp = 20;
+  looter.max_hp = wizard.max_hp = 20;
+  looter.last_move = MoveName::Escape;
+  wizard.last_move = MoveName::Charge1;  // does nothing this turn
+
+  CombatEnv a(one_enemy(std::move(looter)));
+  CombatEnv b(one_enemy(std::move(wizard)));
+
+  EXPECT_NE(enemy_block(a, 0), enemy_block(b, 0))
+      << "a fleeing Looter must not read the same as an enemy doing nothing";
+}
+
+TEST(CombatEnv, BuffAndDebuffAreSeparateIntents) {
+  // One flag used to mean "applies something", so an enemy strengthening ITSELF
+  // and an enemy weakening the PLAYER set the same bit. StS draws those as
+  // different icons, and for the Louses they are the distinguishing moves.
+  std::mt19937 rng(0);
+  Enemy grower = make_red_louse(rng);    // Grow: +3 Strength to itself
+  Enemy spitter = make_green_louse(rng);  // Spit Web: 2 Weak on the player
+  grower.hp = spitter.hp = 12;
+  grower.max_hp = spitter.max_hp = 12;
+  grower.last_move = MoveName::Grow;
+  spitter.last_move = MoveName::SpitWeb;
+
+  CombatEnv a(one_enemy(std::move(grower)));
+  CombatEnv b(one_enemy(std::move(spitter)));
+
+  const std::vector<float> ga = enemy_block(a, 0), gb = enemy_block(b, 0);
+  const int intent = 3 + CombatEnv::kEnemyStatusSize;
+  EXPECT_EQ(ga[intent + 3], 1.0f) << "Grow is a self-buff";
+  EXPECT_EQ(ga[intent + 4], 0.0f) << "Grow does nothing to the player";
+  EXPECT_EQ(gb[intent + 3], 0.0f) << "Spit Web does not strengthen the louse";
+  EXPECT_EQ(gb[intent + 4], 1.0f) << "Spit Web debuffs the player";
+}
+
 TEST(CombatEnv, ObsPileCountsMatchTheActualPiles) {
   // ROB-81 replaced a pile_count() call per card type per pile with one pass
   // per pile, indexing straight into the plane by CardId. That is a ~189x

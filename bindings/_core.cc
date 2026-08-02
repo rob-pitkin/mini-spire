@@ -453,6 +453,13 @@ PYBIND11_MODULE(_core, m) {
       .def_readonly_static("ENEMY_OBS_STRIDE", &CombatEnv::kEnemyObsStride)
       .def_readonly_static("PLAYER_STATUS_SIZE", &CombatEnv::kPlayerStatusSize)
       .def_readonly_static("ENEMY_STATUS_SIZE", &CombatEnv::kEnemyStatusSize)
+      // The enemy block's two trailing sub-blocks (ROB-96). Without these the
+      // intent floats can't be located from Python except by re-deriving the
+      // stride, which is exactly the hardcoding the other constants exist to
+      // prevent.
+      .def_readonly_static("ENEMY_INTENT_SIZE", &CombatEnv::kEnemyIntentSize)
+      .def_readonly_static("ENEMY_KIND_SIZE", &CombatEnv::kEnemyKindSize)
+      .def_readonly_static("NUM_ENEMY_KINDS", &kNumEnemyKinds)
       .def_readonly_static("NUM_DEBUFFS", &kNumDebuffs)
       .def_readonly_static("NUM_ENEMY_POWERS", &kNumEnemyPowers)
       .def_readonly_static("NUM_PLAYER_POWERS", &kNumPlayerPowers)

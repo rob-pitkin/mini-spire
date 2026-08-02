@@ -72,6 +72,39 @@ def test_intent_compound_attack_and_block():
     assert "[BLK]" in t.plain
 
 
+def test_intent_debuff_is_distinct_from_buff():
+    # STS shows different icons for "the enemy strengthens itself" and "the
+    # enemy weakens you". The obs tracked them as one flag until ROB-96, so a
+    # Green Louse's Spit Web rendered identically to a Red Louse's Grow.
+    buff = intent_text(
+        is_attacking=False, attack_damage=0, is_blocking=False,
+        is_buffing=True, ascii_only=True,
+    )
+    debuff = intent_text(
+        is_attacking=False, attack_damage=0, is_blocking=False,
+        is_buffing=False, is_debuffing=True, ascii_only=True,
+    )
+    assert "(+)" in buff.plain
+    assert "(-)" in debuff.plain
+    assert buff.plain != debuff.plain
+
+
+def test_intent_escape_and_split_are_not_none():
+    # Both carry no damage, block or status, so they fell through to "(none)".
+    flee = intent_text(
+        is_attacking=False, attack_damage=0, is_blocking=False,
+        is_buffing=False, is_escaping=True, ascii_only=True,
+    )
+    split = intent_text(
+        is_attacking=False, attack_damage=0, is_blocking=False,
+        is_buffing=False, is_splitting=True, ascii_only=True,
+    )
+    assert "[FLEE]" in flee.plain
+    assert "[SPLIT]" in split.plain
+    assert "(none)" not in flee.plain
+    assert "(none)" not in split.plain
+
+
 def test_intent_buff_only():
     t = intent_text(
         is_attacking=False, attack_damage=0, is_blocking=False,

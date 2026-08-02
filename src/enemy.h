@@ -39,6 +39,21 @@ enum class EnemyKind {
   Sentry,
 };
 
+// Number of enemy kinds. Drives the per-slot one-hot in the observation
+// (ROB-96) — which enemy you are looking at is the single most predictive fact
+// about what happens next, and it reached the obs nowhere before that.
+//
+// The one-hot indexes by the raw enum value, so this is only sound while the
+// values are dense 0..N-1. That holds by construction (no explicit values), and
+// the count is pinned to the enum below rather than maintained by hand — a
+// hand-counted constant is a guess with a number on it, and this project has
+// already shipped one wrong (MoveName was pre-measured at 49 against an actual
+// 54, because the regex matched one enumerator per line).
+inline constexpr int kNumEnemyKinds = 23;
+static_assert(static_cast<int>(EnemyKind::Sentry) == kNumEnemyKinds - 1,
+              "kNumEnemyKinds is out of step with the EnemyKind enum — adding a "
+              "kind means widening every enemy block in the observation");
+
 enum class MoveName {
   None,  // sentinel: "no move" (TriggeredEffect::move default when unused)
   Chomp,
