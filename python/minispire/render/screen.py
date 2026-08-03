@@ -494,15 +494,6 @@ def build_hand(env, *, focus: int | None = None) -> tuple[Panel, list]:
     return Panel(Group(*body), border_style="grey50"), action_map
 
 
-def render_hand(console: Console, env) -> list:
-    """Draw the hand and return the local-index -> CardId map. Used by the
-    print-and-prompt loop; widgets call build_hand() for the pair.
-    """
-    panel, action_map = build_hand(env, focus=None)
-    console.print(panel)
-    return action_map
-
-
 # Human-readable prompt per ChoiceKind. Keyed by enum name so a new kind shows
 # up as a missing-key error rather than silently rendering the wrong prompt.
 CHOICE_PROMPTS = {
@@ -548,13 +539,6 @@ def build_choice(env, *, focus: int | None = None) -> tuple[Panel, int]:
         body.append(Text(f"\n(s) skip", style="dim"))
 
     return Panel(Group(*body), border_style="yellow", title="CHOOSE"), len(view.options)
-
-
-def render_choice(console: Console, env) -> int:
-    """Draw the pending-choice screen and return the number of options."""
-    panel, count = build_choice(env)
-    console.print(panel)
-    return count
 
 
 #: Above this many cards a pile renders as a name list rather than card boxes.
@@ -633,29 +617,6 @@ def build_piles(env, *, focus: int | None = None) -> tuple[Panel, int]:
         exhaust_section,
     )
     return Panel(body, title="PILES", border_style="grey50"), boxed
-
-
-def render_piles(console: Console, env) -> None:
-    """Draw the pile view."""
-    panel, _count = build_piles(env)
-    console.print(panel)
-
-
-def render_prompt(console: Console, action_map: list[int], pile_view: bool) -> None:
-    """Render the input prompt line."""
-    if pile_view:
-        console.print("[bold](p)[/bold] hand view   [bold](q)[/bold] quit")
-    else:
-        end_turn_local = len(action_map)
-        if action_map:
-            play = f"(0..{len(action_map) - 1}) play   "
-        else:
-            play = "(no playable cards)   "
-        console.print(
-            f"Action: {play}"
-            f"[bold]({end_turn_local})[/bold] end turn   "
-            f"[bold](p)[/bold] pile view   [bold](q)[/bold] quit"
-        )
 
 
 def render_end_screen(

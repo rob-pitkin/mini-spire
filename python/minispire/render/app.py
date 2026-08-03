@@ -26,7 +26,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
-from minispire import _core
+from minispire import _core, playlog
 from minispire.env import MinispireEnv
 from minispire.render import screen
 from minispire.render.keys import (
@@ -57,6 +57,27 @@ def card_action(card_id, target_slot: int) -> int:
     return int(card_id) * _core.CombatEnv.MAX_ENEMIES + target_slot
 
 
+def resolve_card_action(card_id, living_slots: list[int]) -> int | None:
+    """The action for playing `card_id`, or None if the player must pick a target.
+
+    Pure, and separate from the app for the same reason keys.py is: it is a
+    decision, and a decision inside an event handler can only be tested by
+    driving a terminal. Three cases —
+
+      * untargeted card -> canonical slot 0
+      * one living enemy -> auto-target it, since there is nothing to choose
+      * two or more -> None, and the caller opens the targeting screen
+
+    Auto-targeting matters beyond convenience: prompting for a target when only
+    one exists is a keypress the player cannot get wrong but still has to make.
+    """
+    if not _core.card_targets_enemy(card_id):
+        return card_action(card_id, 0)
+    if len(living_slots) == 1:
+        return card_action(card_id, living_slots[0])
+    return None
+
+
 class MinispireApp(App):
     """One interactive fight."""
 
@@ -74,6 +95,7 @@ class MinispireApp(App):
         pool=None,
         deck=None,
         ascii_only: bool = False,
+        log: bool = True,
     ) -> None:
         super().__init__()
         kwargs = {}
@@ -95,6 +117,12 @@ class MinispireApp(App):
         self._targets: list[int] = []
         self._pile_count = 0
         self.exit_code = EXIT_QUIT
+        # Human games are the only expert trajectories this project has, so a
+        # fight played and not recorded is data thrown away. Off in tests,
+        # which would otherwise litter logs/ with a file per Pilot run.
+        self._want_log = log
+        self._log = None
+        self.log_path: str | None = None
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -105,7 +133,17 @@ class MinispireApp(App):
 
     def on_mount(self) -> None:
         self.obs, _ = self.env.reset(seed=self._seed)
+        if self._want_log:
+            self._log, self.log_path = playlog.open_log(self._seed)
+        playlog.log_state(self._log, self.env, self.obs)
         self._redraw()
+
+    def on_unmount(self) -> None:
+        # Close on the way out however the app ends — quit, win or loss. A log
+        # left open loses its tail to the buffer.
+        if self._log is not None:
+            self._log.close()
+            self._log = None
 
     # -- the option list ----------------------------------------------------
     #
@@ -208,12 +246,10 @@ class MinispireApp(App):
             return
 
         card_id = self._action_map[index]
-        if not _core.card_targets_enemy(card_id):
-            self._step(card_action(card_id, 0))
-            return
         living = screen.living_enemy_slots(self.obs)
-        if len(living) == 1:
-            self._step(card_action(card_id, living[0]))
+        action = resolve_card_action(card_id, living)
+        if action is not None:
+            self._step(action)
             return
         # Two or more living enemies: enter the targeting phase. keys.py sees
         # this as an ordinary "pick one of N" — only the app knows it is a
@@ -227,7 +263,10 @@ class MinispireApp(App):
     # -- stepping -----------------------------------------------------------
 
     def _step(self, action: int) -> None:
+        turn_before = self.env.turn_number
         self.obs, _reward, terminated, truncated, info = self.env.step(action)
+        playlog.log_action(self._log, turn_before, action, _reward, terminated)
+        playlog.log_state(self._log, self.env, self.obs)
         self.focus = 0
         if terminated or truncated:
             # info["won"] comes from the engine (ROB-58) rather than being
@@ -309,4 +348,6 @@ def run(
     """Run one fight. Returns the process exit code (0 win, 1 loss, 2 quit)."""
     app = MinispireApp(seed=seed, pool=pool, deck=deck, ascii_only=ascii_only)
     result = app.run()
+    if app.log_path:
+        print(f"trajectory log: {app.log_path}")
     return result if isinstance(result, int) else app.exit_code

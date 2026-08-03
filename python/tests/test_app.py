@@ -28,7 +28,7 @@ def test_card_action_is_the_cross_product_index():
 
 @pytest.mark.asyncio
 async def test_app_starts_in_play_mode_with_a_hand():
-    app = MinispireApp(seed=1)
+    app = MinispireApp(log=False, seed=1)
     async with app.run_test():
         assert app.mode is Mode.PLAY
         # option_count is hand + End Turn, so it always exceeds the hand size.
@@ -38,7 +38,7 @@ async def test_app_starts_in_play_mode_with_a_hand():
 
 @pytest.mark.asyncio
 async def test_q_quits_with_the_quit_exit_code():
-    app = MinispireApp(seed=1)
+    app = MinispireApp(log=False, seed=1)
     async with app.run_test() as pilot:
         await pilot.press("q")
     assert app.exit_code == EXIT_QUIT
@@ -46,7 +46,7 @@ async def test_q_quits_with_the_quit_exit_code():
 
 @pytest.mark.asyncio
 async def test_p_toggles_pile_view_and_back():
-    app = MinispireApp(seed=1)
+    app = MinispireApp(log=False, seed=1)
     async with app.run_test() as pilot:
         await pilot.press("p")
         assert app.mode is Mode.PILES
@@ -56,7 +56,7 @@ async def test_p_toggles_pile_view_and_back():
 
 @pytest.mark.asyncio
 async def test_digits_in_pile_view_do_not_step_the_env():
-    app = MinispireApp(seed=1)
+    app = MinispireApp(log=False, seed=1)
     async with app.run_test() as pilot:
         await pilot.press("p")
         turn_before = app.env.turn_number
@@ -68,7 +68,7 @@ async def test_digits_in_pile_view_do_not_step_the_env():
 
 @pytest.mark.asyncio
 async def test_focus_wraps_at_both_ends():
-    app = MinispireApp(seed=1)
+    app = MinispireApp(log=False, seed=1)
     async with app.run_test() as pilot:
         count = app.option_count()
         assert app.focus == 0
@@ -80,7 +80,7 @@ async def test_focus_wraps_at_both_ends():
 
 @pytest.mark.asyncio
 async def test_end_turn_advances_the_turn():
-    app = MinispireApp(seed=1)
+    app = MinispireApp(log=False, seed=1)
     async with app.run_test() as pilot:
         turn_before = app.env.turn_number
         # End Turn is the last option: index len(action_map).
@@ -90,7 +90,7 @@ async def test_end_turn_advances_the_turn():
 
 @pytest.mark.asyncio
 async def test_playing_a_card_changes_the_hand():
-    app = MinispireApp(seed=1)
+    app = MinispireApp(log=False, seed=1)
     async with app.run_test() as pilot:
         hand_before = list(app.env.state_piles().hand)
         await pilot.press("0")
@@ -106,7 +106,7 @@ async def test_targeting_is_two_phase_and_cancellable():
     # Find a seed whose opening hand has a targeted card and 2+ living enemies,
     # so the app must enter the targeting phase rather than auto-target.
     for seed in range(60):
-        app = MinispireApp(seed=seed, pool=_core.EncounterPool.Strong)
+        app = MinispireApp(log=False, seed=seed, pool=_core.EncounterPool.Strong)
         async with app.run_test() as pilot:
             if len(screen.living_enemy_slots(app.obs)) < 2:
                 continue
@@ -136,7 +136,7 @@ async def test_option_count_matches_what_was_rendered():
     # option_count, and the player chose from the rendered list. If those are
     # ever computed from different passes, a selection means a different card
     # than the one on screen.
-    app = MinispireApp(seed=4)
+    app = MinispireApp(log=False, seed=4)
     async with app.run_test():
         _panel, rendered_map = screen.build_hand(app.env)
         assert app._action_map == rendered_map

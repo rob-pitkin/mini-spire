@@ -152,7 +152,7 @@ import pytest
 
 from minispire import _core
 from minispire.env import MinispireEnv, make_single_enemy_env
-from minispire.play import _resolve_card_action
+from minispire.render.app import resolve_card_action
 from minispire.render import screen
 
 
@@ -175,7 +175,7 @@ def test_resolve_targeted_card_auto_targets_single_enemy():
     """A targeted card with one living enemy encodes card*N + 0, no prompt."""
     env, obs = make_single_enemy_env()
     n = _core.CombatEnv.MAX_ENEMIES
-    action = _resolve_card_action(None, env, obs, _core.CardId.Strike)
+    action = resolve_card_action(_core.CardId.Strike, screen.living_enemy_slots(obs))
     assert action == int(_core.CardId.Strike) * n + 0
     # And the engine agrees it's legal.
     assert env.action_masks()[action]
@@ -185,7 +185,7 @@ def test_resolve_untargeted_card_uses_offset_zero():
     env = MinispireEnv()
     obs, _ = env.reset(seed=0)
     n = _core.CombatEnv.MAX_ENEMIES
-    action = _resolve_card_action(None, env, obs, _core.CardId.Defend)
+    action = resolve_card_action(_core.CardId.Defend, screen.living_enemy_slots(obs))
     assert action == int(_core.CardId.Defend) * n + 0
     assert env.action_masks()[action]
 
@@ -194,7 +194,7 @@ def test_resolved_action_steps_without_error():
     """End-to-end: render_hand -> resolve -> step actually advances the env."""
     env, obs = make_single_enemy_env()
     # Play Strike via the same path the TUI uses.
-    action = _resolve_card_action(None, env, obs, _core.CardId.Strike)
+    action = resolve_card_action(_core.CardId.Strike, screen.living_enemy_slots(obs))
     obs2, _r, term, trunc, _info = env.step(action)
     assert obs2.shape == (MinispireEnv.OBS_SIZE,)
     assert not (term or trunc)  # one Strike doesn't end the fight

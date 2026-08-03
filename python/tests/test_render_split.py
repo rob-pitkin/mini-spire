@@ -40,25 +40,22 @@ def test_build_functions_return_renderables():
     assert isinstance(action_map, list)
 
 
-def test_render_wrappers_still_draw():
-    # The print-and-prompt loop is still the shipping entry point; the split
-    # must not have quietly broken it.
+def test_render_fight_still_draws():
+    # render_fight and render_end_screen survived the loop's retirement because
+    # the policy viewer (minispire.watch) and MinispireEnv.render() are not
+    # interactive and still print to a Console. The hand/choice/pile wrappers
+    # had no callers left and went with the loop.
     env, obs = _env()
     console = _sink()
     screen.render_fight(console, obs, env)
-    screen.render_piles(console, env)
     assert console.file.getvalue().strip() != ""
 
 
-def test_hand_map_is_the_same_through_both_paths():
-    # THE invariant. A keypress indexes into the action map; the player chose
-    # from the panel. If the two are ever derived by separate passes they can
-    # disagree, and a selection means a different card than the one on screen.
-    # build_hand returns them from one pass for exactly this reason.
-    env, _ = _env()
-    _, built = screen.build_hand(env)
-    printed = screen.render_hand(_sink(), env)
-    assert built == printed
+def test_the_retired_wrappers_are_gone():
+    # Dead rendering paths are worse than absent ones: they keep compiling,
+    # keep being maintained, and quietly drift from the code that ships.
+    for name in ("render_hand", "render_choice", "render_piles", "render_prompt"):
+        assert not hasattr(screen, name), f"{name} outlived the loop that used it"
 
 
 def test_hand_map_only_contains_playable_cards():

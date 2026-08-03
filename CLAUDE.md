@@ -333,12 +333,17 @@ uv venv --python 3.12          # one-time, creates .venv/
 uv pip install -e ".[dev]"     # installs minispire + dev/train extras
 uv run pytest python/tests     # run Python tests
 uv run python -c "import minispire"
-uv run minispire-play [seed]   # interactive human play (rich TUI)
+uv run minispire-play [seed]   # interactive human play (Textual TUI)
 ```
 
-Human play is the Python `minispire-play` TUI (rich-based). The old C++
-`minispire-cli` was retired once the TUI reached parity — there is no
-standalone CLI binary anymore.
+Human play is the Python `minispire-play` TUI, built on Textual. Two
+predecessors were retired the same way — each once its replacement reached
+parity, never left running alongside it: the C++ `minispire-cli`, then the
+rich print-and-prompt loop it had replaced (ROB-83).
+
+The TUI needs the optional `tui` extra; a bare install is engine + Gymnasium
+only, so training does not pull a rendering stack. `minispire.render.require_tui()`
+turns a missing extra into an instruction rather than an ImportError.
 
 Editable install caveat: with scikit-build-core, the C++ extension is built
 once and cached. After C++ changes, re-run `uv pip install -e .` to rebuild,
@@ -404,7 +409,7 @@ Standing decisions, and where the reasoning lives when it is longer than a row.
 | Decision | Choice | Reason |
 |----------|--------|--------|
 | Scope | Single combat for v1 | Avoid Miles's complexity spiral; ship something clean |
-| Human play | Python TUI (`minispire-play`) | The C++ `minispire-cli` was retired once the TUI reached parity |
+| Human play | Textual TUI (`minispire-play`) | Chosen for the v2 roadmap's screens, not for combat; predecessors retired at parity (ROB-83) |
 | RL framework | sb3-contrib MaskablePPO | Action masking built-in, fast iteration |
 | Action masking | Yes, from day one | Highest-leverage training stability trick in game RL |
 | State clone | Yes, from day one | Required for MCTS; painful retrofit |
