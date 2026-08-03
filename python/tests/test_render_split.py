@@ -32,7 +32,9 @@ def _sink() -> Console:
 def test_build_functions_return_renderables():
     env, obs = _env()
     assert isinstance(screen.build_fight(obs, env), Panel)
-    assert isinstance(screen.build_piles(env), Panel)
+    piles_panel, pile_count = screen.build_piles(env)
+    assert isinstance(piles_panel, Panel)
+    assert isinstance(pile_count, int)
     panel, action_map = screen.build_hand(env)
     assert isinstance(panel, Panel)
     assert isinstance(action_map, list)

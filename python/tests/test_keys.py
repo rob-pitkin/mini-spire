@@ -37,12 +37,21 @@ def test_global_keys_work_in_every_mode(mode, key, expected):
 # --- pile view is read-only ------------------------------------------------
 
 
-@pytest.mark.parametrize("key", ["0", "3", "enter", "left", "right"])
-def test_pile_view_ignores_action_keys(key):
+@pytest.mark.parametrize("key", ["0", "3", "enter"])
+def test_pile_view_ignores_ACTION_keys(key):
     # THE regression this module exists to prevent. In the old loop a digit
     # pressed while browsing piles was stopped by an early `continue`; losing
     # that guard means browsing your discard pile silently plays a card.
     assert key_to_intent(key, mode=Mode.PILES, option_count=5, focus=1) is None
+
+
+@pytest.mark.parametrize("key", ["left", "right", "up", "down"])
+def test_pile_view_still_allows_MOVEMENT(key):
+    # Browsing a pile means moving a highlight over cards to read them. The
+    # first version returned early for every key in PILES, which blocked the
+    # action keys correctly and made the pile view unbrowsable at the same
+    # time — the guard has to stop acting, not looking.
+    assert key_to_intent(key, mode=Mode.PILES, option_count=5, focus=1) is not None
 
 
 def test_pile_view_still_exits():

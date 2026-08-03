@@ -300,11 +300,11 @@ def main() -> None:
         help="Use plain ASCII intent icons instead of unicode.",
     )
     parser.add_argument(
-        "--textual",
+        "--legacy",
         action="store_true",
-        help="Use the Textual UI (ROB-83) instead of the print-and-prompt loop. "
-        "Temporary, while the two are compared side by side; the Textual one "
-        "becomes the default once it has been played enough to trust.",
+        help="Use the old print-and-prompt loop instead of the Textual UI. "
+        "Kept for one release as an escape hatch; the Textual UI is the "
+        "default and the loop will be retired.",
     )
     args = parser.parse_args()
 
@@ -317,11 +317,12 @@ def main() -> None:
     seed = _parse_seed(str(seed_raw) if seed_raw is not None else None)
     pool = _parse_pool(pool_raw)
     deck = _parse_deck(deck_raw)
-    if args.textual:
-        from minispire.render.app import run as run_textual
+    if args.legacy:
+        sys.exit(run(seed, args.ascii_only, pool=pool, deck=deck))
 
-        sys.exit(run_textual(seed, pool=pool, deck=deck, ascii_only=args.ascii_only))
-    sys.exit(run(seed, args.ascii_only, pool=pool, deck=deck))
+    from minispire.render.app import run as run_textual
+
+    sys.exit(run_textual(seed, pool=pool, deck=deck, ascii_only=args.ascii_only))
 
 
 if __name__ == "__main__":

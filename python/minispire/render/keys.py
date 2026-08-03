@@ -129,16 +129,11 @@ def key_to_intent(
     if key == "escape":
         return Cancel()
 
-    # Pile view is read-only. Without this, a digit pressed while browsing piles
-    # steps the environment — the old loop guarded it with an early `continue`,
-    # and that guard is exactly the kind that gets lost moving into a widget
-    # tree, because nothing fails loudly when it goes missing.
-    if mode is Mode.PILES:
-        return None
-
     if option_count <= 0:
         return None
 
+    # Movement is allowed everywhere, including the pile view: browsing a pile
+    # means moving a highlight over cards to read them.
     if key in _BACK:
         return MoveFocus(-1)
     if key in _FORWARD:
@@ -147,6 +142,15 @@ def key_to_intent(
         return MoveRow(-1)
     if key in _ROW_FORWARD:
         return MoveRow(1)
+
+    # ACTING is what the pile view forbids. A digit or Enter pressed while
+    # browsing your discard must not play a card — the old loop guarded this
+    # with an early `continue`, and that guard is exactly the kind that gets
+    # lost moving into a widget tree, because nothing fails loudly when it
+    # goes missing. Note this sits AFTER movement, not before: the first
+    # version returned early for every key and made the pile view unbrowsable.
+    if mode is Mode.PILES:
+        return None
 
     if key == "enter":
         # A stale focus (the hand shrank under it) must not select whatever

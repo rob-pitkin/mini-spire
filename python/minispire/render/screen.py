@@ -368,6 +368,68 @@ FOCUS_STYLE = "bold black on bright_white"
 #: send the highlight somewhere the player is not looking.
 HAND_COLUMNS = 3
 
+#: Width of a rendered card box. The longest card name is "Perfected Strike+"
+#: at 17 characters, so 24 leaves room for a border and a cost without the
+#: title wrapping. Three across needs ~78 columns.
+CARD_BOX_WIDTH = 24
+CARD_COLUMNS = 3
+
+#: Fixed box height, so boxes in one row line up. Without it Rich sizes each to
+#: its own text and a row of three comes out ragged — Strike three rows tall
+#: beside Bash at four, which reads as broken rather than as a grid.
+#:
+#: 7 = 2 border + 5 text lines, and 5 is the widest description in the pool
+#: (Clash, wrapped at 20 columns) rather than a guess. A new card longer than
+#: that would be clipped, which CardBoxesFitTheirDescriptions catches.
+CARD_BOX_HEIGHT = 7
+
+
+def build_card_box(card_id, cost: int, index: int | None = None,
+                   focused: bool = False, dim: bool = False) -> Panel:
+    """One card drawn as a card: cost and name on top, rules text below.
+
+    For the screens where the player has STOPPED to read — a pending choice, a
+    pile they opened. The in-combat hand deliberately stays a compact list with
+    detail on the focused card only: a card box is ~7 rows, so a ten-card hand
+    at three across is over 30 rows and does not fit an 80x24 terminal. Real
+    StS makes the same split, compact in hand and full when you inspect.
+    """
+    title = Text()
+    if index is not None:
+        title.append(f"({index}) ", style="dim" if dim else "bold white")
+    title.append(_core.card_name(card_id), style="dim" if dim else "bold")
+    title.append(f"  {{{cost_str(cost)}}}", style="dim" if dim else "yellow")
+
+    body = Text(
+        _core.card_description(card_id), style="dim" if dim else "italic"
+    )
+    return Panel(
+        body,
+        title=title,
+        width=CARD_BOX_WIDTH,
+        height=CARD_BOX_HEIGHT,
+        border_style=FOCUS_STYLE if focused else ("grey35" if dim else "grey50"),
+        padding=(0, 1),
+    )
+
+
+def _card_grid(boxes: list[Panel], columns: int = CARD_COLUMNS) -> Table:
+    """Lay card boxes out in a grid, padding the last row so it aligns."""
+    table = Table.grid(padding=(0, 1))
+    for _ in range(columns):
+        table.add_column()
+    row: list = []
+    for box in boxes:
+        row.append(box)
+        if len(row) == columns:
+            table.add_row(*row)
+            row = []
+    if row:
+        while len(row) < columns:
+            row.append(Text(""))
+        table.add_row(*row)
+    return table
+
 
 def build_hand(env, *, focus: int | None = None) -> tuple[Panel, list]:
     """Build the hand panel and the local-index -> CardId map together.
@@ -382,39 +444,19 @@ def build_hand(env, *, focus: int | None = None) -> tuple[Panel, list]:
     The end-turn local index is len(action_map), and End Turn is drawn as a real
     entry so the highlight can land somewhere visible when it is selected.
 
-    Affordable + targetable cards get a live `(N)` index; others get a dim `-`
-    and are not selectable. `focus` highlights one option and shows its rules
-    text (ROB-97) underneath — with 154 cards, a name is not enough to play by.
+    The hand renders as card boxes, same as the choice and pile screens. It was
+    a compact list first, on the reasoning that boxes cost too much vertical
+    space to play from — but reading a card's text should not require arrowing
+    onto it, and one consistent way of drawing a card beats two.
+
+    Unplayable cards still render, dimmed and unnumbered, because knowing what
+    you are holding and cannot afford is part of planning the turn.
     """
     mask = env.action_masks()
     hand = env.state_piles().hand
 
     action_map: list = []  # local index -> CardId
-    table = Table.grid(padding=(0, 3))
-    for _ in range(HAND_COLUMNS):
-        table.add_column()
-
-    def _entry(index: int | None, label: str, cost: str, playable: bool) -> Text:
-        focused = index is not None and index == focus
-        entry = Text()
-        entry.append(f"{FOCUS_MARK} " if focused else "  ")
-        # No fixed-width padding on the name: Table.grid already sizes columns
-        # to their content, and padding to the longest possible card name
-        # ("Perfected Strike+", 17) pushed the cost onto a second line for a
-        # hand of Strikes.
-        if playable:
-            entry.append(f"({index}) ", style="bold white")
-            entry.append(label, style="white")
-            entry.append(f" {cost}" if cost else "", style="yellow")
-        else:
-            entry.append(" -  ", style="dim")
-            entry.append(label, style="dim")
-            entry.append(f" {cost}" if cost else "", style="dim")
-        if focused:
-            entry.stylize(FOCUS_STYLE)
-        return entry
-
-    row: list[Text] = []
+    boxes: list = []
     for card_id in hand:
         playable = card_playable(mask, card_id)
         index = None
@@ -424,35 +466,30 @@ def build_hand(env, *, focus: int | None = None) -> tuple[Panel, list]:
         # effective_cost, not CardData.cost: Infernal Blade makes a card free
         # for the turn and Blood for Blood drops a point per HP loss. Showing
         # the base cost told the player a number the engine would not charge.
-        cost = env.effective_cost(card_id)
-        row.append(
-            _entry(index, _core.card_name(card_id), f"{{{cost_str(cost)}}}", playable)
+        boxes.append(
+            build_card_box(
+                card_id,
+                env.effective_cost(card_id),
+                index=index,
+                focused=(index is not None and index == focus),
+                dim=not playable,
+            )
         )
-        if len(row) == HAND_COLUMNS:
-            table.add_row(*row)
-            row = []
-    if row:
-        while len(row) < HAND_COLUMNS:
-            row.append(Text(""))
-        table.add_row(*row)
 
-    body: list = [Text("HAND:", style="bold"), table]
-    if not hand:
-        body = [Text("HAND:", style="bold"), Text("   (empty)", style="dim")]
+    body: list = [Text("HAND:", style="bold")]
+    body.append(_card_grid(boxes) if hand else Text("   (empty)", style="dim"))
 
     # End Turn is an option like any other, so it gets an index and can hold the
     # highlight. Previously it existed only in the footer text, which meant
     # arrowing onto it looked like the highlight had vanished.
+    end_index = len(action_map)
+    end = Text()
+    end.append(f"{FOCUS_MARK} " if focus == end_index else "  ")
+    end.append(f"({end_index}) End Turn", style="bold white")
+    if focus == end_index:
+        end.stylize(FOCUS_STYLE)
     body.append(Text(""))
-    body.append(_entry(len(action_map), "End Turn", "", True))
-
-    # Rules text for whatever is focused. This is the reason ROB-97 exists: at
-    # 154 cards you cannot check Sentinel's on-exhaust energy from a name.
-    if focus is not None and 0 <= focus < len(action_map):
-        body.append(Text(""))
-        body.append(
-            Text(f"  {_core.card_description(action_map[focus])}", style="italic cyan")
-        )
+    body.append(end)
 
     return Panel(Group(*body), border_style="grey50"), action_map
 
@@ -497,27 +534,14 @@ def build_choice(env, *, focus: int | None = None) -> tuple[Panel, int]:
     if view.copies > 1:
         header.append(f"  (x{view.copies} copies)", style="yellow")
 
-    table = Table.grid(padding=(0, 3))
-    for _ in range(HAND_COLUMNS):
-        table.add_column()
-    row: list[Text] = []
-    for i, card_id in enumerate(view.options):
-        data = _core.card_data(card_id)
-        entry = Text()
-        entry.append(f"{FOCUS_MARK} " if i == focus else "  ")
-        entry.append(f"({i}) ", style="bold white")
-        entry.append(f"{_core.card_name(card_id):<16}", style="white")
-        entry.append(f"{{{cost_str(data.cost)}}}", style="yellow")
-        if i == focus:
-            entry.stylize(FOCUS_STYLE)
-        row.append(entry)
-        if len(row) == HAND_COLUMNS:
-            table.add_row(*row)
-            row = []
-    if row:
-        while len(row) < HAND_COLUMNS:
-            row.append(Text(""))
-        table.add_row(*row)
+    # Full card boxes, not a name list. This is the screen where the player has
+    # stopped to decide, and choosing which card to Exhume or upgrade is not
+    # answerable from a name once the pool is 154 cards deep.
+    table = _card_grid([
+        build_card_box(card_id, env.effective_cost(card_id), index=i,
+                       focused=(i == focus))
+        for i, card_id in enumerate(view.options)
+    ])
 
     body: list = [header, Text(""), table]
     if view.is_optional:
@@ -533,47 +557,88 @@ def render_choice(console: Console, env) -> int:
     return count
 
 
-def build_piles(env) -> Panel:
-    """Build the pile-view panel (toggled with 'p'). Does not consume a step."""
-    piles = env.state_piles()
+#: Above this many cards a pile renders as a name list rather than card boxes.
+#: A 40-card draw pile as boxes is ~14 rows of grid — past the point where
+#: "inspect one card" turns into "scroll past everything".
+PILE_BOX_LIMIT = 12
 
-    def fmt_list(cards) -> Text:
+
+def build_piles(env, *, focus: int | None = None) -> tuple[Panel, int]:
+    """Build the pile-view panel (toggled with 'p') and its focusable count.
+
+    Small piles render as card boxes, because opening the exhaust pile is
+    usually a question about ONE card's text. Large piles stay a name list:
+    boxes stop helping the moment they no longer fit on screen together.
+
+    Focus moves a highlight across every boxed card, in render order —
+    draw, then discard, then exhaust — so the pile view is browsable rather
+    than a static dump. Nothing here is selectable; keys.py refuses to turn a
+    keypress into an action while the piles are open.
+    """
+    piles = env.state_piles()
+    boxed = 0  # running count, so focus indexes match render order
+
+    def fmt_list(cards) -> Text | Table:
+        nonlocal boxed
         if not cards:
             return Text("    (empty)", style="dim")
+        if len(cards) <= PILE_BOX_LIMIT:
+            grid = _card_grid([
+                build_card_box(c, env.effective_cost(c),
+                               focused=(focus == boxed + i))
+                for i, c in enumerate(cards)
+            ])
+            boxed += len(cards)
+            return grid
         out = Text()
         for c in cards:
-            data = _core.card_data(c)
-            out.append(f"    {_core.card_name(c):<8}", style="white")
-            out.append(f"{{{cost_str(data.cost)}}}\n", style="yellow")
+            out.append(f"    {_core.card_name(c):<20}", style="white")
+            out.append(f"{{{cost_str(env.effective_cost(c))}}}\n", style="yellow")
         return out
 
-    def fmt_counts(count_map) -> Text:
+    def fmt_counts(count_map) -> Text | Table:
+        nonlocal boxed
         if not count_map:
             return Text("    (empty)", style="dim")
+        # Sort by CardId value for stable display (does not reveal draw order —
+        # the draw pile is a count map precisely so order stays hidden).
+        types = sorted(count_map, key=lambda x: int(x))
+        if len(types) <= PILE_BOX_LIMIT:
+            grid = _card_grid([
+                build_card_box(c, env.effective_cost(c),
+                               focused=(focus == boxed + i))
+                for i, c in enumerate(types)
+            ])
+            boxed += len(types)
+            return grid
         out = Text()
-        # Sort by CardId value for stable display (does not reveal draw order).
-        for c in sorted(count_map, key=lambda x: int(x)):
-            data = _core.card_data(c)
-            out.append(f"    {_core.card_name(c):<8}", style="white")
+        for c in types:
+            out.append(f"    {_core.card_name(c):<20}", style="white")
             out.append(f"x{count_map[c]}  ", style="bright_white")
-            out.append(f"{{{cost_str(data.cost)}}}\n", style="yellow")
+            out.append(f"{{{cost_str(env.effective_cost(c))}}}\n", style="yellow")
         return out
 
     draw_total = sum(piles.draw.values())
+    # Built in render order on purpose: `boxed` accumulates as each section is
+    # laid out, so a focus index means the same card the player is looking at.
+    draw_section = fmt_counts(piles.draw)
+    discard_section = fmt_list(piles.discard)
+    exhaust_section = fmt_list(piles.exhaust)
     body = Group(
         Text(f"DRAW ({draw_total}, shuffled — order hidden):", style="bold"),
-        fmt_counts(piles.draw),
+        draw_section,
         Text(f"DISCARD ({len(piles.discard)}, top-most last):", style="bold"),
-        fmt_list(piles.discard),
+        discard_section,
         Text(f"EXHAUST ({len(piles.exhaust)}):", style="bold"),
-        fmt_list(piles.exhaust),
+        exhaust_section,
     )
-    return Panel(body, title="PILES", border_style="grey50")
+    return Panel(body, title="PILES", border_style="grey50"), boxed
 
 
 def render_piles(console: Console, env) -> None:
     """Draw the pile view."""
-    console.print(build_piles(env))
+    panel, _count = build_piles(env)
+    console.print(panel)
 
 
 def render_prompt(console: Console, action_map: list[int], pile_view: bool) -> None:

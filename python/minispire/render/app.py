@@ -93,6 +93,7 @@ class MinispireApp(App):
         self.pending_card = None
         self._action_map: list = []
         self._targets: list[int] = []
+        self._pile_count = 0
         self.exit_code = EXIT_QUIT
 
     # -- lifecycle ----------------------------------------------------------
@@ -113,9 +114,14 @@ class MinispireApp(App):
     # than the one the player was looking at.
 
     def option_count(self) -> int:
-        """How many things are selectable right now."""
+        """How many things the highlight can sit on right now.
+
+        In the pile view these are browsable, not selectable — keys.py refuses
+        to turn a keypress into an action while the piles are open, so a count
+        here does not make anything playable.
+        """
         if self.mode is Mode.PILES:
-            return 0
+            return self._pile_count
         if self.mode is Mode.CHOOSE:
             return len(self._targets) if self.pending_card is not None else self._choice_count()
         return len(self._action_map) + 1  # hand + End Turn
@@ -156,9 +162,14 @@ class MinispireApp(App):
                 # A row is however wide the grid was drawn. keys.py reports
                 # "down a row" without knowing that, which is why the width
                 # lives here next to the rendering.
+                #
+                # Hand, choice and piles are all card grids CARD_COLUMNS wide.
+                # Targeting is the exception: it is a single row of enemies, so
+                # a row step there would jump past every one of them.
                 step = intent.delta
                 if isinstance(intent, MoveRow):
-                    step *= screen.HAND_COLUMNS if self.mode is not Mode.CHOOSE else 1
+                    targeting = self.pending_card is not None
+                    step *= 1 if targeting else screen.CARD_COLUMNS
                 self.focus = (self.focus + step) % count  # wrap
                 self._redraw()
             return
@@ -245,7 +256,7 @@ class MinispireApp(App):
         targeting = self.mode is Mode.CHOOSE and self.pending_card is not None
 
         if self.mode is Mode.PILES:
-            panel = screen.build_piles(self.env)
+            panel, self._pile_count = screen.build_piles(self.env, focus=self.focus)
             self._action_map = []
         elif self.mode is Mode.CHOOSE and not targeting:
             panel, _count = screen.build_choice(self.env, focus=self.focus)

@@ -50,9 +50,6 @@ async def test_p_toggles_pile_view_and_back():
     async with app.run_test() as pilot:
         await pilot.press("p")
         assert app.mode is Mode.PILES
-        # The guard that matters: no options are selectable while browsing, so
-        # a digit cannot step the environment.
-        assert app.option_count() == 0
         await pilot.press("p")
         assert app.mode is Mode.PLAY
 

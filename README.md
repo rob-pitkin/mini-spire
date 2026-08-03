@@ -29,9 +29,10 @@ using a standard Gymnasium interface — action masking included.
   [sb3-contrib `MaskablePPO`](https://sb3-contrib.readthedocs.io) expects.
 - 🎲 **Deterministic & reproducible** — every shuffle and enemy move draws from a
   single seeded RNG, so any fight replays exactly from its seed.
-- 🕹️ **Human-playable** — a `rich` terminal UI (`minispire-play`) with per-enemy
-  ASCII avatars, intents, and status readouts: a faithful terminal Slay the
-  Spire you can point at any Act 1 pool or custom deck.
+- 🕹️ **Human-playable** — a Textual terminal UI (`minispire-play`) with coloured
+  pixel-art avatars, telegraphed intents, full card text and keyboard
+  navigation: a faithful terminal Slay the Spire you can point at any Act 1
+  pool or custom deck.
 
 ## Scope
 
