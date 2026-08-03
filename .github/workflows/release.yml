@@ -38,6 +38,18 @@ jobs:
           CIBW_SKIP: "*-musllinux_* *t-*"
           CIBW_ARCHS_MACOS: "arm64"
           CIBW_ARCHS_LINUX: "x86_64"
+          # manylinux_2_28, not cibuildwheel's default manylinux2014.
+          #
+          # Our wheel builds fine in 2014, but installing it there does not:
+          # current numpy no longer ships manylinux2014 wheels, so pip falls
+          # back to building numpy from source, and that image's GCC 10.2.1 is
+          # below numpy's floor of 10.3. The dry run failed with
+          # "NumPy requires GCC >= 10.3" from inside the test step.
+          #
+          # This narrows the glibc range the wheel supports, which is correct
+          # rather than a compromise: a wheel cannot usefully claim to run
+          # somewhere its required dependency will not install.
+          CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
           # Import and play a fight in the target interpreter. A wheel that
           # builds but cannot load its extension is the failure that matters,
           # and the build step cannot see it.
