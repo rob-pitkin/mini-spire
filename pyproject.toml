@@ -79,7 +79,13 @@ minispire-train = "minispire.train:main"
 minispire-eval = "minispire.eval:main"
 
 [project.urls]
+# These become the sidebar links on the PyPI page. Repository alone left it
+# nearly empty, and a changelog link is the one a user actually wants when
+# deciding whether to upgrade.
+Homepage = "https://github.com/rob-pitkin/mini-spire"
 Repository = "https://github.com/rob-pitkin/mini-spire"
+Changelog = "https://github.com/rob-pitkin/mini-spire/blob/main/CHANGELOG.md"
+Issues = "https://github.com/rob-pitkin/mini-spire/issues"
 
 [tool.scikit-build]
 cmake.version = ">=3.16"

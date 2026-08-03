@@ -18,11 +18,6 @@ using a standard Gymnasium interface — action masking included.
 keystrokes are derived from a real playthrough (`analysis/derive_demo_line.py`)
 rather than transcribed, so the recording re-renders identically.</sub>
 
-> **Read the intro write-up:** [Mini-spire: a fast Slay the Spire RL environment
-> in C++](https://rhp.bearblog.dev) — the story, the design choices, and the M1
-> result (a ~14.7k-parameter PPO agent that wins 100% of the time, trained in
-> ~4 minutes on an M1 MacBook).
-
 ## Highlights
 
 - ⚡ **Fast** — **~259k environment steps/sec** end to end through the Python
@@ -74,27 +69,35 @@ Map traversal, card rewards, and relics are on the roadmap.
 
 ## Install
 
+```bash
+pip install minispire
+```
+
+Wheels are published for CPython 3.11–3.13 on macOS (Apple Silicon) and Linux
+(x86_64). Anywhere else builds from the source distribution, which needs a
+C++17 compiler and CMake ≥ 3.16.
+
+That gives you the engine and the Gymnasium environment and nothing else. The
+terminal UI and the training stack are opt-in, so training a policy does not
+drag a rendering library along with it:
+
+```bash
+pip install "minispire[tui]"      # human play, the policy viewer, env.render()
+pip install "minispire[train]"    # MaskablePPO, torch, W&B
+```
+
+### From source
+
 `uv` is the package manager. ([install uv](https://docs.astral.sh/uv/))
 
 ```bash
 uv venv --python 3.12
-uv pip install -e ".[dev]"        # engine + training + dev extras
+uv pip install -e ".[dev]"        # engine + TUI + training + dev extras
 uv run python -c "import minispire"
 ```
 
 The C++ extension builds automatically via scikit-build-core on install. After
 changing C++ sources, re-run `uv pip install -e .` to rebuild.
-
-A bare install gives you the engine and the Gymnasium environment and nothing
-else. The terminal UI lives behind the `tui` extra, so training a policy does
-not drag a rendering stack along with it; `[dev]` above already includes it.
-
-```bash
-uv pip install -e ".[tui]"        # human play, the policy viewer, env.render()
-uv pip install -e ".[train]"      # MaskablePPO, torch, W&B
-```
-
-Requires Python 3.12, a C++17 compiler, and CMake ≥ 3.16.
 
 ## Quickstart
 
@@ -109,9 +112,12 @@ uv run minispire-play --config fights/showcase.yaml               # deck that ex
                                                                  # choices, exhaust, growth
 ```
 
-Flags (`--pool weak|strong|elite`, `--deck`, `--seed`) are the quick path; a
-`--config <yaml>` file (keys `seed` / `pool` / `deck`) is the reusable-scenario
-layer, and CLI flags override it.
+The seed is positional; `--pool weak|strong|elite` and `--deck` are the quick
+path. A `--config <yaml>` file (keys `seed` / `pool` / `deck`) is the
+reusable-scenario layer, and CLI flags override it.
+
+Arrow keys move the selection and Enter plays it, or press a card's number
+directly. `p` opens the piles, `q` quits.
 
 **Use the environment in Python** — it's a standard Gymnasium env:
 
@@ -259,11 +265,14 @@ See [architecture.md](architecture.md) for detail.
 src/         C++ engine — headers (.h) + implementations (.cc)
 bindings/    pybind11 module (_core)
 python/
-  minispire/ public Python API: env.py (Gymnasium), play/train/eval entry points
+  minispire/ public Python API: env.py (Gymnasium), the Textual TUI, entry points
   tests/     pytest suite
 tests/       GoogleTest C++ unit tests
+docs/design/ why the engine is shaped the way it is
+benchmarks/  throughput harness + published numbers
+fights/      saved play scenarios (--config)
 configs/     training configs (YAML)
-analysis/    blog/figure-generation tooling
+analysis/    figure generation + tooling
 ```
 
 ## Development
