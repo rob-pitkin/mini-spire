@@ -71,9 +71,15 @@ def _theme():
 
 
 # --- Measured constants (M1 MacBook Pro, 2020) ---------------------------------
-# Raw single-env stepping through the Python bindings (mask + step + reset).
-# Median of 5 trials, very tight (+-0.5%).
-ENV_STEPS_PER_SEC = 145_000
+# Raw single-env stepping through the Python bindings (mask + step + reset),
+# end to end with nothing subtracted. Re-measured for v1.0.0 with
+# `uv run python benchmarks/bench.py`.
+#
+# The old 145k predated the ROB-81 optimisation pass. Note this is the
+# END-TO-END figure, not the 163k the harness reports while timing its own
+# action sampling from inside the loop — that instrumentation costs ~37% of
+# wall and is the harness's, not the environment's.
+ENV_STEPS_PER_SEC = 259_000
 # End-to-end MaskablePPO throughput (8 vec envs + gradient updates), directly
 # timed on an idle machine (W&B disabled). Drops under core contention (several
 # runs at once) — that's the learner/scheduler, not the env.

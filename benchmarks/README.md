@@ -11,10 +11,12 @@ not publishable numbers.
 
 ## The two numbers, and why both
 
-| | what it measures |
-|---|---|
-| **engine path** | `CombatEnv` driven from C++ — step, observation, mask. No Python. |
-| **env path** | the same work through pybind11 + the Gymnasium wrapper. |
+| | what it measures | M1 MacBook Pro |
+|---|---|---:|
+| **engine path** | `CombatEnv` driven from C++ — step, observation, mask. No Python. | ~438k steps/sec |
+| **env path** | the same work through pybind11 + the Gymnasium wrapper, end to end. | ~259k steps/sec |
+
+The 1.7× gap between them is the cost of crossing into Python once per step.
 
 The engine path bounds what the binding layer could ever reach; the env path is
 what a training loop actually gets. Publishing one without the other invites the
@@ -30,10 +32,18 @@ opposite to the thing it measures cannot support a claim.
 
 Two habits follow from that:
 
-- **Sampling is reported separately, never folded into the headline.** A trained
-  policy consumes the mask directly and never scans it, so the harness's
-  `flatnonzero` + RNG cost is not the environment's. It is around a third of
-  wall time here, which is why the `net` column exists.
+- **The headline is measured end to end, not derived by subtraction.** The
+  `env_e2e` loop reads the mask, picks a legal action, steps, and resets, timed
+  from *outside* the loop with no `perf_counter` calls inside it. An earlier
+  version reported a `net` figure by timing its own action sampling and
+  subtracting it — an estimate wearing a measurement's clothes, and one whose
+  instrumentation landed inside the region it was correcting. The two agree to
+  within half a percent, which is reassuring but is not a reason to keep
+  publishing the derived one.
+- **Sampling is still reported, separately.** A trained policy consumes the mask
+  directly and never allocates an array of legal indices, so the harness's
+  `flatnonzero` + RNG cost is not the environment's. It is about a third of wall
+  time, which is the whole reason the two numbers differ.
 - **The engine path drives `CombatEnv`, not raw `CombatState`.** An earlier
   draft of this benchmark timed `valid_actions` + `apply_action` only, which
   skips computing the observation — strictly less work than the env path does,

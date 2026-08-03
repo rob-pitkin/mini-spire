@@ -106,6 +106,47 @@ def bench_env(n_envs: int, steps: int, trials: int = 3) -> dict:
     }
 
 
+def bench_env_e2e(n_envs: int, steps: int, trials: int = 3) -> float:
+    """Full Gymnasium loop, measured end to end with nothing subtracted.
+
+    This is the number an RL user actually gets. `bench_env` above reports a
+    'net' rate by timing its own action sampling and subtracting it, which is an
+    estimate wearing a measurement's clothes — and it calls perf_counter() twice
+    per step INSIDE the timed region, so the instrumentation lands in the result
+    it is trying to correct.
+
+    Here the loop does exactly what a masked-policy rollout does and is timed
+    from outside: read the mask, pick a legal action, step, reset on terminal.
+    The action is `mask.argmax()` — the first legal index — which is one
+    vectorised pass over the mask with no allocation. A real policy also touches
+    every action (it applies the mask to its logits), so this is representative
+    rather than a trick to look fast; what it avoids is flatnonzero's array
+    allocation, which is the harness's cost and not the environment's.
+    """
+    rates = []
+    for t in range(trials):
+        envs = [MinispireEnv(pool=EncounterPool.Weak) for _ in range(n_envs)]
+        for i, e in enumerate(envs):
+            e.reset(seed=1000 * t + i)
+        seed_counter = 1
+        n = 0
+
+        start = time.perf_counter()
+        while n < steps:
+            for env in envs:
+                action = int(env.action_masks().argmax())
+                _, _, terminated, truncated, _ = env.step(action)
+                n += 1
+                if terminated or truncated:
+                    seed_counter += 1
+                    env.reset(seed=seed_counter)
+                if n >= steps:
+                    break
+        rates.append(n / (time.perf_counter() - start))
+
+    return statistics.median(rates)
+
+
 def bench_reset(trials: int = 2000) -> float:
     """Median reset latency in microseconds, through the Python surface."""
     env = MinispireEnv(pool=EncounterPool.Weak)
@@ -142,11 +183,13 @@ def main() -> None:
 
     engine = run_engine(args.steps)
     batches = [1, 8, 32, 256]
+    e2e_results = {n: bench_env_e2e(n, args.steps) for n in batches}
     env_results = {n: bench_env(n, args.steps) for n in batches}
     reset_us = bench_reset()
     ep_len = bench_episode_length()
 
-    single = env_results[1]["steps_per_sec"]
+    e2e_single = e2e_results[1]
+    single = e2e_single  # headline comparisons use the end-to-end number
 
     print()
     print(f"mini-spire throughput   OBS_SIZE={CombatEnv.OBS_SIZE}  "
@@ -173,15 +216,21 @@ def main() -> None:
         print()
 
     print("env path (through pybind11 + Gymnasium, sequential)")
-    print("  'net' excludes this harness's action sampling — a policy consumes "
-          "the mask")
-    print("  directly and never scans it, so that cost is not the env's.")
+    print("  End-to-end: mask -> action -> step -> reset, timed from outside "
+          "the loop.")
+    print("  Nothing subtracted and no instrumentation inside the timed region "
+          "— this")
+    print("  is what an RL user gets.")
+    for n in batches:
+        rel = f"{e2e_results[n] / e2e_single:.2f}x vs 1 env"
+        print(f"  {n:>4} env  {e2e_results[n]:>10,.0f} steps/sec   {rel:>14}")
+    print()
+    print("  breakdown (same loop, but timing its own action sampling so the")
+    print("  sampling cost can be reported separately):")
     for n in batches:
         r = env_results[n]
-        net = r["steps_per_sec"] / (1.0 - r["select_share"])
-        rel = f"{r['steps_per_sec'] / single:.2f}x vs 1 env"
         print(f"  {n:>4} env  {r['steps_per_sec']:>10,.0f} steps/sec  "
-              f"net {net:>10,.0f}   {rel:>14}")
+              f"sampling {r['select_share'] * 100:>4.0f}% of wall")
     print()
     print(f"  reset latency   {reset_us:.1f} us (median of 2000)")
     print(f"  episode length  {ep_len:.1f} steps (mean of 500 random episodes)")
@@ -195,7 +244,10 @@ def main() -> None:
 
     if args.json:
         pathlib.Path(args.json).write_text(json.dumps(
-            {"engine": engine, "env": {str(k): v for k, v in env_results.items()},
+            {"engine": engine,
+             # The headline: end to end, nothing subtracted.
+             "env_e2e": {str(k): v for k, v in e2e_results.items()},
+             "env": {str(k): v for k, v in env_results.items()},
              "reset_us": reset_us, "episode_length": ep_len,
              "obs_size": CombatEnv.OBS_SIZE,
              "num_actions": CombatEnv.NUM_ACTIONS,

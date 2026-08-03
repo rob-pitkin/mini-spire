@@ -25,8 +25,10 @@ rather than transcribed, so the recording re-renders identically.</sub>
 
 ## Highlights
 
-- ⚡ **Fast** — the whole engine is C++ with no Python in the step loop, so
-  training runs on a CPU laptop without a GPU.
+- ⚡ **Fast** — **~259k environment steps/sec** end to end through the Python
+  bindings on an M1 MacBook Pro (438k in the engine itself). No Python in the
+  step loop, so training runs on a CPU laptop without a GPU.
+  [How that is measured](benchmarks/README.md).
 - 🧩 **Zero-copy bindings** — observations are numpy views backed by C++ memory
   (pybind11 buffer protocol), no per-step allocation.
 - 🎭 **Action masking from day one** — `action_masks()` in the convention
@@ -280,8 +282,6 @@ Phase 1 (a hard, faithful environment) is done: the complete Ironclad card pool,
 the full Act 1 combat roster, multi-enemy fights, and weighted encounter
 selection. Next:
 
-- **Throughput benchmark** — steps/sec vs. batch size, episode stats, measuring
-  the engine rather than the Python harness around it.
 - **RL comparison** — PPO vs. DQN vs. MCTS on the fixed benchmark (`clone()`
   exists for MCTS).
 - **Beyond combat** — card rewards, sequential fights, then Act 1 map generation

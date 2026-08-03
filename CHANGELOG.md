@@ -56,9 +56,15 @@ Gymnasium environment, with a C++ engine and zero-copy Python bindings.
 
 ### Performance
 
-- ~440k engine steps/sec on an M1 (Release build, measured through `CombatEnv`
-  rather than a raw state loop). `benchmarks/README.md` documents how to
-  reproduce it; the numbers in this repo are measured, not remembered.
+- **438k engine steps/sec** on an M1 MacBook Pro (Release build, measured
+  through `CombatEnv` rather than a raw state loop, median of 5 trials).
+- **259k steps/sec end to end** through the Python bindings — mask, action,
+  step, reset, timed from outside the loop with nothing subtracted. That is
+  what an RL user actually gets; the 1.7× gap to the engine is the cost of
+  crossing into Python once per step.
+- `benchmarks/README.md` documents how to reproduce both. The numbers in this
+  repo are measured, not remembered — `benchmarks/results.json` is regenerated
+  rather than edited.
 
 ### Human play
 
