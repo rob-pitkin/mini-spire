@@ -413,7 +413,8 @@ Standing decisions, and where the reasoning lives when it is longer than a row.
 | RL framework | sb3-contrib MaskablePPO | Action masking built-in, fast iteration |
 | Action masking | Yes, from day one | Highest-leverage training stability trick in game RL |
 | State clone | Yes, from day one | Required for MCTS; painful retrofit |
-| Reward | Sparse win/loss + optional HP shaping | Avoid playstyle bias |
+| Reward (v1, one fight) | Sparse win/loss + optional HP shaping | Avoid playstyle bias |
+| Reward (v2, one run) | Potential-based shaping over floors + HP | `docs/design/run-reward.md` — the one form of shaping that provably cannot bias playstyle |
 | Python bridge | pybind11 zero-copy | Consistent with cpp-pettingzoo experience |
 | Source layout | Flat `src/` (headers + .cc together) | Simpler than src/include split; small project doesn't need it |
 | Effect resolution | Action queue, not direct mutation | `docs/design/effects-architecture.md` |
