@@ -43,7 +43,21 @@ class Select:
 
 @dataclass(frozen=True)
 class MoveFocus:
-    """Move the highlight by `delta`, wrapping at the ends."""
+    """Move the highlight by `delta` options, wrapping at the ends."""
+
+    delta: int
+
+
+@dataclass(frozen=True)
+class MoveRow:
+    """Move the highlight `delta` ROWS, wrapping at the ends.
+
+    Separate from MoveFocus because the hand is drawn as a grid, and pressing
+    down should drop to the card below rather than step one to the right.
+    How wide a row is belongs to whoever laid the grid out, so this reports the
+    intent and the app resolves it — keeping this module free of layout, the
+    same way it is free of game rules.
+    """
 
     delta: int
 
@@ -81,13 +95,15 @@ class Quit(_Singleton):
     """Leave the game."""
 
 
-Intent = Select | MoveFocus | Confirm | Cancel | TogglePiles | Quit
+Intent = Select | MoveFocus | MoveRow | Confirm | Cancel | TogglePiles | Quit
 
-# Textual's key names. Both arrow axes move the selection: a hand reads
-# left-to-right, but a pile list reads top-to-bottom, and the player should not
-# have to think about which widget they are in.
-_BACK = {"left", "up", "shift+tab"}
-_FORWARD = {"right", "down", "tab"}
+# Textual's key names. Left/right step one option; up/down move a whole row,
+# because the hand is drawn as a grid and treating down as +1 made the
+# highlight crawl sideways when the player expected it to drop.
+_BACK = {"left", "shift+tab"}
+_FORWARD = {"right", "tab"}
+_ROW_BACK = {"up"}
+_ROW_FORWARD = {"down"}
 
 
 def key_to_intent(
@@ -127,6 +143,10 @@ def key_to_intent(
         return MoveFocus(-1)
     if key in _FORWARD:
         return MoveFocus(1)
+    if key in _ROW_BACK:
+        return MoveRow(-1)
+    if key in _ROW_FORWARD:
+        return MoveRow(1)
 
     if key == "enter":
         # A stale focus (the hand shrank under it) must not select whatever

@@ -1,0 +1,41 @@
+# A deck built to exercise the mechanics the starter deck cannot reach.
+#
+# Playing Strike/Defend/Bash checks almost nothing: no mid-card choices, no
+# exhaust triggers, no cost mutation, no per-instance growth. Every card here is
+# in the deck because it drives a distinct engine path, so one fight touches
+# most of what the TUI has to render.
+#
+#   Armaments      -> a choice: pick a card in hand to upgrade
+#   Warcry         -> a choice: pick a card to put on top of the draw pile
+#   Dual Wield     -> a choice: pick an Attack/Power to copy
+#   Exhume         -> a choice over the EXHAUST pile (needs something in it)
+#   Sentinel       -> gives energy when exhausted, not when played
+#   True Grit      -> exhausts a random card (the base version; True Grit+ lets
+#                     you choose, which is a different code path again)
+#   Infernal Blade -> adds a random Attack that costs 0 this turn (the
+#                     free-this-turn plane in the observation)
+#   Rampage        -> grows permanently; watch the card's own damage climb
+#   Searing Blow   -> upgradable without limit; pair with Armaments
+#   Whirlwind      -> X-cost, spends all energy
+#   Body Slam      -> damage equal to your Block
+#   Second Wind    -> exhausts your non-Attacks, blocks per card
+#
+# Drawn from a strong-pool fight so there are usually two or more enemies, which
+# is what forces the targeting prompt rather than auto-targeting.
+seed: 7
+pool: strong
+deck:
+  - Armaments
+  - Warcry
+  - DualWield
+  - Exhume
+  - Sentinel
+  - TrueGrit
+  - InfernalBlade
+  - Rampage
+  - SearingBlow
+  - Whirlwind
+  - BodySlam
+  - SecondWind
+  - Strike
+  - Defend

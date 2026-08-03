@@ -13,6 +13,7 @@ from minispire.render.keys import (
     Confirm,
     Mode,
     MoveFocus,
+    MoveRow,
     Quit,
     Select,
     TogglePiles,
@@ -74,17 +75,29 @@ def test_no_options_means_no_selection():
 # --- focus movement --------------------------------------------------------
 
 
-@pytest.mark.parametrize("key", ["left", "up", "shift+tab"])
-def test_backward_keys_move_focus_back(key):
+@pytest.mark.parametrize("key", ["left", "shift+tab"])
+def test_backward_keys_step_one_option(key):
     assert key_to_intent(key, mode=Mode.PLAY, option_count=5, focus=2) == MoveFocus(-1)
 
 
-@pytest.mark.parametrize("key", ["right", "down", "tab"])
-def test_forward_keys_move_focus_forward(key):
-    # Both axes move the selection deliberately: a hand reads left-to-right and
-    # a pile list top-to-bottom, and the player should not have to track which
-    # widget has focus to know which arrow works.
+@pytest.mark.parametrize("key", ["right", "tab"])
+def test_forward_keys_step_one_option(key):
     assert key_to_intent(key, mode=Mode.PLAY, option_count=5, focus=2) == MoveFocus(1)
+
+
+def test_up_and_down_move_by_rows_not_by_one():
+    # The hand is drawn as a grid. Treating down as +1 made the highlight crawl
+    # sideways when the player expected it to drop to the card below — the
+    # first thing noticed on playing it.
+    assert key_to_intent("down", mode=Mode.PLAY, option_count=6, focus=0) == MoveRow(1)
+    assert key_to_intent("up", mode=Mode.PLAY, option_count=6, focus=4) == MoveRow(-1)
+
+
+def test_row_movement_carries_no_row_width():
+    # MoveRow reports intent only. How wide a row is belongs to whoever drew the
+    # grid, so this module stays free of layout the same way it is free of game
+    # rules — the delta is in ROWS, not options.
+    assert key_to_intent("down", mode=Mode.PLAY, option_count=99, focus=0).delta == 1
 
 
 # --- confirm ---------------------------------------------------------------

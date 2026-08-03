@@ -50,7 +50,10 @@ ENEMY_OFF_INTENT_IS_ESCAPING = _INTENT + 5
 ENEMY_OFF_INTENT_IS_SPLITTING = _INTENT + 6
 
 # Turn number is the last obs slot.
-TURN_NUMBER = _core.CombatEnv.OBS_SIZE - 1
+# NOT OBS_SIZE - 1. The choice block sits after the turn float, so that
+# computed index read a choice-channel value — zero unless a choice happened to
+# be pending — and the turn counter never moved. Read the engine's constant.
+TURN_NUMBER = _core.CombatEnv.TURN_OBS_INDEX
 
 
 def enemy_base(slot: int) -> int:
@@ -321,7 +324,20 @@ def card_playable(mask, card_id) -> bool:
     return any(bool(mask[base + t]) for t in range(MAX_ENEMIES))
 
 
-def build_hand(env) -> tuple[Panel, list]:
+#: Marker on the focused entry. A style alone is not enough — reverse video is
+#: invisible in some terminal themes, and a colour cannot be seen at all by a
+#: player who cannot distinguish it. The caret carries the meaning; the style
+#: reinforces it.
+FOCUS_MARK = "▸"
+FOCUS_STYLE = "bold black on bright_white"
+
+#: Cards per row in the hand and choice grids. Published because the app moves
+#: focus by whole rows on up/down, and a width it guessed independently would
+#: send the highlight somewhere the player is not looking.
+HAND_COLUMNS = 3
+
+
+def build_hand(env, *, focus: int | None = None) -> tuple[Panel, list]:
     """Build the hand panel and the local-index -> CardId map together.
 
     Returned as a pair on purpose (ROB-83). The map is what a keypress indexes
@@ -331,48 +347,80 @@ def build_hand(env) -> tuple[Panel, list]:
 
     Each playable card slot gets a local index; targeting is resolved by the
     caller, since a card's global action depends on the chosen target (ROB-60).
-    The end-turn local index is len(action_map).
+    The end-turn local index is len(action_map), and End Turn is drawn as a real
+    entry so the highlight can land somewhere visible when it is selected.
 
     Affordable + targetable cards get a live `(N)` index; others get a dim `-`
-    and are not selectable.
+    and are not selectable. `focus` highlights one option and shows its rules
+    text (ROB-97) underneath — with 154 cards, a name is not enough to play by.
     """
     mask = env.action_masks()
     hand = env.state_piles().hand
 
     action_map: list = []  # local index -> CardId
     table = Table.grid(padding=(0, 3))
-    for _ in range(3):
+    for _ in range(HAND_COLUMNS):
         table.add_column()
+
+    def _entry(index: int | None, label: str, cost: str, playable: bool) -> Text:
+        focused = index is not None and index == focus
+        entry = Text()
+        entry.append(f"{FOCUS_MARK} " if focused else "  ")
+        # No fixed-width padding on the name: Table.grid already sizes columns
+        # to their content, and padding to the longest possible card name
+        # ("Perfected Strike+", 17) pushed the cost onto a second line for a
+        # hand of Strikes.
+        if playable:
+            entry.append(f"({index}) ", style="bold white")
+            entry.append(label, style="white")
+            entry.append(f" {cost}" if cost else "", style="yellow")
+        else:
+            entry.append(" -  ", style="dim")
+            entry.append(label, style="dim")
+            entry.append(f" {cost}" if cost else "", style="dim")
+        if focused:
+            entry.stylize(FOCUS_STYLE)
+        return entry
 
     row: list[Text] = []
     for card_id in hand:
-        data = _core.card_data(card_id)
         playable = card_playable(mask, card_id)
-
-        entry = Text()
+        index = None
         if playable:
-            local = len(action_map)
+            index = len(action_map)
             action_map.append(card_id)
-            entry.append(f"({local}) ", style="bold white")
-            entry.append(f"{_core.card_name(card_id):<8}", style="white")
-            entry.append(f"{{{cost_str(data.cost)}}}", style="yellow")
-        else:
-            entry.append("  -  ", style="dim")
-            entry.append(f"{_core.card_name(card_id):<8}", style="dim")
-            entry.append(f"{{{cost_str(data.cost)}}}", style="dim")
-
-        row.append(entry)
-        if len(row) == 3:
+        # effective_cost, not CardData.cost: Infernal Blade makes a card free
+        # for the turn and Blood for Blood drops a point per HP loss. Showing
+        # the base cost told the player a number the engine would not charge.
+        cost = env.effective_cost(card_id)
+        row.append(
+            _entry(index, _core.card_name(card_id), f"{{{cost_str(cost)}}}", playable)
+        )
+        if len(row) == HAND_COLUMNS:
             table.add_row(*row)
             row = []
     if row:
-        while len(row) < 3:
+        while len(row) < HAND_COLUMNS:
             row.append(Text(""))
         table.add_row(*row)
 
     body: list = [Text("HAND:", style="bold"), table]
     if not hand:
         body = [Text("HAND:", style="bold"), Text("   (empty)", style="dim")]
+
+    # End Turn is an option like any other, so it gets an index and can hold the
+    # highlight. Previously it existed only in the footer text, which meant
+    # arrowing onto it looked like the highlight had vanished.
+    body.append(Text(""))
+    body.append(_entry(len(action_map), "End Turn", "", True))
+
+    # Rules text for whatever is focused. This is the reason ROB-97 exists: at
+    # 154 cards you cannot check Sentinel's on-exhaust energy from a name.
+    if focus is not None and 0 <= focus < len(action_map):
+        body.append(Text(""))
+        body.append(
+            Text(f"  {_core.card_description(action_map[focus])}", style="italic cyan")
+        )
 
     return Panel(Group(*body), border_style="grey50"), action_map
 
@@ -381,7 +429,7 @@ def render_hand(console: Console, env) -> list:
     """Draw the hand and return the local-index -> CardId map. Used by the
     print-and-prompt loop; widgets call build_hand() for the pair.
     """
-    panel, action_map = build_hand(env)
+    panel, action_map = build_hand(env, focus=None)
     console.print(panel)
     return action_map
 
@@ -398,7 +446,7 @@ CHOICE_PROMPTS = {
 }
 
 
-def build_choice(env) -> tuple[Panel, int]:
+def build_choice(env, *, focus: int | None = None) -> tuple[Panel, int]:
     """Build the pending-choice panel and its option count.
 
     Local index i maps to the global action FIRST_OPTION_SLOT + i, so the caller
@@ -418,21 +466,24 @@ def build_choice(env) -> tuple[Panel, int]:
         header.append(f"  (x{view.copies} copies)", style="yellow")
 
     table = Table.grid(padding=(0, 3))
-    for _ in range(3):
+    for _ in range(HAND_COLUMNS):
         table.add_column()
     row: list[Text] = []
     for i, card_id in enumerate(view.options):
         data = _core.card_data(card_id)
         entry = Text()
+        entry.append(f"{FOCUS_MARK} " if i == focus else "  ")
         entry.append(f"({i}) ", style="bold white")
         entry.append(f"{_core.card_name(card_id):<16}", style="white")
         entry.append(f"{{{cost_str(data.cost)}}}", style="yellow")
+        if i == focus:
+            entry.stylize(FOCUS_STYLE)
         row.append(entry)
-        if len(row) == 3:
+        if len(row) == HAND_COLUMNS:
             table.add_row(*row)
             row = []
     if row:
-        while len(row) < 3:
+        while len(row) < HAND_COLUMNS:
             row.append(Text(""))
         table.add_row(*row)
 

@@ -299,6 +299,13 @@ def main() -> None:
         action="store_true",
         help="Use plain ASCII intent icons instead of unicode.",
     )
+    parser.add_argument(
+        "--textual",
+        action="store_true",
+        help="Use the Textual UI (ROB-83) instead of the print-and-prompt loop. "
+        "Temporary, while the two are compared side by side; the Textual one "
+        "becomes the default once it has been played enough to trust.",
+    )
     args = parser.parse_args()
 
     # Config file provides defaults; explicit CLI flags override each key.
@@ -310,6 +317,10 @@ def main() -> None:
     seed = _parse_seed(str(seed_raw) if seed_raw is not None else None)
     pool = _parse_pool(pool_raw)
     deck = _parse_deck(deck_raw)
+    if args.textual:
+        from minispire.render.app import run as run_textual
+
+        sys.exit(run_textual(seed, pool=pool, deck=deck, ascii_only=args.ascii_only))
     sys.exit(run(seed, args.ascii_only, pool=pool, deck=deck))
 
 

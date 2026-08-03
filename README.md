@@ -95,6 +95,8 @@ uv run minispire-play 0                      # seed (positional, optional)
 uv run minispire-play --pool elite 3         # draw an elite fight
 uv run minispire-play --deck "strike,strike,strike,defend,bash"   # custom deck
 uv run minispire-play --config fights/nob.yaml                    # saved scenario
+uv run minispire-play --config fights/showcase.yaml               # deck that exercises
+                                                                 # choices, exhaust, growth
 ```
 
 Flags (`--pool weak|strong|elite`, `--deck`, `--seed`) are the quick path; a

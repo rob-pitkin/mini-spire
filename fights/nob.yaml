@@ -1,0 +1,8 @@
+# Gremlin Nob, starter deck. The elite the README points at.
+#
+# Nob's Enrage punishes Skills: every Skill you play gives it +2 Strength, so
+# the starter deck's four Defends are a trap and the fight is about whether you
+# can race it. A good scenario for checking that Enrage is firing.
+seed: 3
+pool: elite
+# deck omitted -> Ironclad starter

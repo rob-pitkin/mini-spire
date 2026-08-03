@@ -48,6 +48,7 @@ train = [
 # ~60s with the full train extra). Local devs should use [dev].
 ci = [
   "pytest>=8.0",
+  "pytest-asyncio>=0.24",  # Textual's App.run_test() is async
   "pydantic>=2.7",
   "pyyaml>=6.0",
   "minispire[tui]",  # test_play.py covers the renderers
@@ -59,6 +60,7 @@ analysis = [
 ]
 dev = [
   "pytest>=8.0",
+  "pytest-asyncio>=0.24",
   "minispire[train]",
   "minispire[analysis]",
   "minispire[tui]",
@@ -86,3 +88,8 @@ build.targets = ["_core"]
 # wheel — it's research tooling, not part of the shipped package). Add the
 # root to the path so its tests can import it.
 pythonpath = ["."]
+# Textual's App.run_test() is async, so the TUI tests are coroutines. `auto`
+# means they do not each need an @pytest.mark.asyncio decorator, and an
+# accidentally-undecorated async test cannot silently pass by never running.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
