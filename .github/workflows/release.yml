@@ -38,20 +38,14 @@ jobs:
           CIBW_SKIP: "*-musllinux_* *t-*"
           CIBW_ARCHS_MACOS: "arm64"
           CIBW_ARCHS_LINUX: "x86_64"
-          # Import and play a full fight in the target interpreter. A wheel
-          # that builds but cannot load its extension is the failure mode that
-          # matters here, and it is invisible to the build step.
-          CIBW_TEST_REQUIRES: "pytest"
-          CIBW_TEST_COMMAND: >
-            python -c "
-            import minispire, numpy as np;
-            env = minispire.MinispireEnv();
-            obs, _ = env.reset(seed=0);
-            assert obs.shape == (minispire._core.CombatEnv.OBS_SIZE,);
-            steps = 0;
-            [ (env.step(int(np.flatnonzero(env.action_masks())[-1])), ) for _ in range(1) ];
-            print('wheel OK', minispire.__version__, obs.shape)
-            "
+          # Import and play a fight in the target interpreter. A wheel that
+          # builds but cannot load its extension is the failure that matters,
+          # and the build step cannot see it.
+          #
+          # A script, not an inline `python -c`. The first version was a folded
+          # YAML scalar and picked up a leading space, so every platform failed
+          # with IndentationError while the wheels themselves were fine.
+          CIBW_TEST_COMMAND: "python {package}/scripts/smoke_wheel.py"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -79,18 +73,7 @@ jobs:
         run: |
           uv venv --python 3.12 /tmp/sdisttest
           uv pip install --python /tmp/sdisttest/bin/python dist/*.tar.gz
-          /tmp/sdisttest/bin/python -c "
-          import minispire, numpy as np
-          from minispire import _core
-          env = minispire.MinispireEnv(); obs, _ = env.reset(seed=0)
-          assert _core.card_description(_core.CardId.Sentinel)
-          while True:
-              legal = np.flatnonzero(env.action_masks())
-              if legal.size == 0: break
-              obs, r, term, trunc, info = env.step(int(legal[-1]))
-              if term or trunc: break
-          print('sdist OK', minispire.__version__, info)
-          "
+          /tmp/sdisttest/bin/python scripts/smoke_wheel.py
 
       - uses: actions/upload-artifact@v4
         with:
