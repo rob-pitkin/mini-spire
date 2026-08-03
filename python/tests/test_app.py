@@ -131,6 +131,40 @@ async def test_targeting_is_two_phase_and_cancellable():
 
 
 @pytest.mark.asyncio
+async def test_the_app_holds_on_the_end_screen_instead_of_vanishing():
+    # Found by playing, not by the suite: the app called exit() on the winning
+    # blow, and Textual tears the screen down on exit — so a player who won was
+    # dropped straight back to a shell prompt and never saw a result.
+    #
+    # No test caught it because none of them played a fight to the end; they
+    # all asserted on the first turn or two.
+    import numpy as np
+
+    app = MinispireApp(log=False, seed=0)
+    async with app.run_test() as pilot:
+        for _ in range(400):
+            if app.finished:
+                break
+            # Drive with the engine's own mask rather than the UI, to reach a
+            # terminal state quickly regardless of what the hand looks like.
+            legal = np.flatnonzero(app.env.action_masks())
+            if legal.size == 0:
+                break
+            app._step(int(legal[-1]))
+            await pilot.pause()
+
+        assert app.finished, "could not reach a terminal state"
+        assert app.is_running, "the app must still be up to show the result"
+        assert app.exit_code in (0, 1)
+
+        # Any key leaves — there is nothing left to decide, so routing this
+        # through key_to_intent would leave a winner pressing keys at a frozen
+        # screen wondering what it wanted.
+        await pilot.press("3")
+    assert not app.is_running
+
+
+@pytest.mark.asyncio
 async def test_option_count_matches_what_was_rendered():
     # The invariant the whole design turns on: keys are bounds-checked against
     # option_count, and the player chose from the rendered list. If those are

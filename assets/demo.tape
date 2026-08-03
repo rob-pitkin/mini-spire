@@ -2,105 +2,86 @@
 #   brew install vhs   (https://github.com/charmbracelet/vhs)
 #   vhs assets/demo.tape   ->   writes assets/gameplay.gif
 #
-# Replays a complete winning fight on seed 0 (5 turns, ends at 65/80 HP). The
-# keystrokes below are the local action indices the TUI prompts for, transcribed
-# from a real playthrough (logs/...-seed0.jsonl) and verified to reach
-# Outcome.Won. Deterministic because the seed fixes the fight, so this
-# re-renders identically.
+# Replays a complete winning fight on seed 0 (3 turns) in the Textual UI.
 #
-# Pacing notes:
-#   - Local indices shift as the hand changes; once energy is spent the hand
-#     collapses and "end turn" becomes local index 0. We pause BEFORE sending
-#     that 0 so the screen has re-rendered to the "(0) end turn" prompt, and
-#     pause AFTER so the enemy's attack + the new turn are visible.
-#   - The end screen says "(press enter to exit)" — so we send Enter, not q.
+# The keystrokes are DERIVED, not transcribed: `uv run python -m
+# analysis.derive_demo_line` plays the fight headlessly and prints the local
+# index for each press. The previous tape was hand-transcribed from a play log
+# and carried a comment apologising for how easily the indices drift as the
+# hand changes — so the drift is computed now instead of watched for.
+#
+# Textual acts on the keypress itself. The old print-and-prompt loop needed a
+# digit AND an Enter to submit, which is why every keystroke below is a single
+# Type with no Enter, and why the app closes itself on victory rather than
+# waiting on "press enter to exit".
+#
+# The arrow keys and 'p' below change what is on screen but not the game state,
+# so they can be spliced anywhere without shifting the indices that follow.
 
 Output assets/gameplay.gif
 
 Set FontSize 16
-Set Width 1100
-Set Height 700
+Set Width 1200
+# 660 fits the fight panel + hand grid + footer with no dead band. At 800 the
+# bottom third was empty terminal, which reads as a badly cropped screenshot.
+Set Height 660
 Set Padding 20
 Set Theme "Catppuccin Mocha"
 
 Type "uv run minispire-play 0"
 Enter
-Sleep 1.5s
+Sleep 2.5s
 
-# --- Turn 1: Bash (Vulnerable), Defend, end turn ---
-Type "3"
-Sleep 250ms
-Enter
+# Arrow across the hand so the focus highlight and each card's rules text are
+# visible before anything is played — that legibility is the point of the
+# revamp, and a still frame of the opening hand does not show it.
+Right
+Sleep 800ms
+Right
+Sleep 800ms
+Down
 Sleep 900ms
-Type "2"
-Sleep 250ms
-Enter
-Sleep 1s            # let the hand collapse to "(0) end turn"
-Type "0"
-Sleep 250ms
-Enter
-Sleep 1.6s          # show enemy attack + new turn
-
-# --- Turn 2: Strike, Strike, Defend, end turn ---
-Type "2"
-Sleep 250ms
-Enter
-Sleep 800ms
-Type "2"
-Sleep 250ms
-Enter
-Sleep 800ms
-Type "0"
-Sleep 250ms
-Enter
+Left
 Sleep 1s
-Type "0"
-Sleep 250ms
-Enter
-Sleep 1.6s
 
-# --- Turn 3: Defend, Defend, Strike, end turn ---
+# --- Turn 1 ---
 Type "2"
-Sleep 250ms
-Enter
-Sleep 800ms
-Type "2"
-Sleep 250ms
-Enter
-Sleep 800ms
+Sleep 1.1s
 Type "0"
-Sleep 250ms
-Enter
-Sleep 1s
+Sleep 1.1s
 Type "0"
-Sleep 250ms
-Enter
-Sleep 1.6s
+Sleep 1.4s
+Type "0"
+Sleep 1.8s
 
-# --- Turn 4: Bash, Defend, end turn ---
+# --- Turn 2 ---
 Type "0"
-Sleep 250ms
-Enter
-Sleep 900ms
-Type "0"
-Sleep 250ms
-Enter
-Sleep 1s
-Type "0"
-Sleep 250ms
-Enter
-Sleep 1.6s
-
-# --- Turn 5: Strike, Bash -> lethal, fight won ---
+Sleep 1.1s
 Type "1"
-Sleep 250ms
-Enter
-Sleep 900ms
-Type "3"
-Sleep 250ms
-Enter
-Sleep 2.5s          # linger on the YOU WIN screen
+Sleep 1.1s
+Type "0"
+Sleep 1.4s
 
-# End screen: "(press enter to exit)".
-Enter
-Sleep 800ms
+# Open the piles mid-fight: the discard now holds real cards, so this shows
+# the box view and that browsing does not cost a turn.
+Type "p"
+Sleep 1.6s
+Right
+Sleep 700ms
+Down
+Sleep 900ms
+Type "p"
+Sleep 1s
+
+Type "1"
+Sleep 1.1s
+
+# --- Turn 3: lethal ---
+Type "1"
+Sleep 1.1s
+Type "0"
+Sleep 1.1s
+Type "4"
+Sleep 1.1s
+Type "2"
+Sleep 3s          # linger on the victory screen

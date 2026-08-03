@@ -123,6 +123,9 @@ class MinispireApp(App):
         self._want_log = log
         self._log = None
         self.log_path: str | None = None
+        # True once the fight is over and the end screen is up. The app stays
+        # alive in this state so the result can be read.
+        self.finished = False
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -171,6 +174,14 @@ class MinispireApp(App):
     # -- input --------------------------------------------------------------
 
     def on_key(self, event: events.Key) -> None:
+        # The end screen takes any key. Routing it through key_to_intent would
+        # mean a player who won and pressed "3" sat there wondering why nothing
+        # happened — there is nothing left to decide.
+        if self.finished:
+            event.stop()
+            self.exit(self.exit_code)
+            return
+
         intent = key_to_intent(
             event.key,
             mode=self.mode,
@@ -274,8 +285,12 @@ class MinispireApp(App):
             # is set and so is not a reliable win signal.
             won = bool(info.get("won", self.env.outcome == _core.Outcome.Won))
             self.exit_code = EXIT_WIN if won else EXIT_LOSS
-            self._redraw(final=True)
-            self.exit(self.exit_code)
+            # Do NOT exit here. Textual tears the screen down on exit, so
+            # exiting on the winning blow dropped the player straight back to a
+            # shell prompt with no result — the fight simply vanished. Hold on
+            # the end screen until a key is pressed, as the old loop did.
+            self.finished = True
+            self._redraw()
             return
         # A card may have opened a mid-resolution choice (Armaments, Exhume).
         view = self.env.choice_view()
@@ -284,7 +299,17 @@ class MinispireApp(App):
 
     # -- rendering ----------------------------------------------------------
 
-    def _redraw(self, *, final: bool = False) -> None:
+    def _redraw(self) -> None:
+        if self.finished:
+            self.query_one("#board", Static).update(
+                screen.build_end_screen(
+                    self.obs, self.env, self.env.outcome, self.log_path
+                )
+            )
+            self.query_one("#panel", Static).update(Text(""))
+            self.query_one("#footer", Static).update(self._footer())
+            return
+
         self.query_one("#board", Static).update(
             screen.build_fight(self.obs, self.env, ascii_only=self.ascii_only)
         )
@@ -318,15 +343,11 @@ class MinispireApp(App):
             panel = Group(panel, prompt)
 
         self.query_one("#panel", Static).update(panel)
-        self.query_one("#footer", Static).update(self._footer(final=final))
+        self.query_one("#footer", Static).update(self._footer())
 
-    def _footer(self, *, final: bool = False) -> Text:
-        if final:
-            won = self.exit_code == EXIT_WIN
-            return Text(
-                "  VICTORY" if won else "  DEFEAT",
-                style="bold green" if won else "bold red",
-            )
+    def _footer(self) -> Text:
+        if self.finished:
+            return Text("  press any key to exit", style="dim")
         if self.mode is Mode.PILES:
             return Text("  p back  ·  q quit", style="dim")
         count = self.option_count()

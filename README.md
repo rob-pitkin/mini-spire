@@ -12,7 +12,11 @@ pybind11 bindings, so you can train an agent with
 [Stable-Baselines3](https://github.com/DLR-RM/stable-baselines3) and friends
 using a standard Gymnasium interface — action masking included.
 
-![Playing a fight in the terminal](assets/gameplay.gif)
+![Playing a fight in the terminal — pixel-art avatars, card text, and telegraphed enemy intents](assets/gameplay.gif)
+
+<sub>A complete three-turn win on seed 0, played in the terminal UI. The
+keystrokes are derived from a real playthrough (`analysis/derive_demo_line.py`)
+rather than transcribed, so the recording re-renders identically.</sub>
 
 > **Read the intro write-up:** [Mini-spire: a fast Slay the Spire RL environment
 > in C++](https://rhp.bearblog.dev) — the story, the design choices, and the M1
@@ -33,6 +37,9 @@ using a standard Gymnasium interface — action masking included.
   pixel-art avatars, telegraphed intents, full card text and keyboard
   navigation: a faithful terminal Slay the Spire you can point at any Act 1
   pool or custom deck.
+- 🪶 **Lean install** — `pip install minispire` is the engine and the Gymnasium
+  env, nothing else. The terminal UI and the training stack are opt-in extras,
+  so training an agent does not pull a rendering library.
 
 ## Scope
 

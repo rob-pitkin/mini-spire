@@ -619,11 +619,16 @@ def build_piles(env, *, focus: int | None = None) -> tuple[Panel, int]:
     return Panel(body, title="PILES", border_style="grey50"), boxed
 
 
-def render_end_screen(
-    console: Console, obs: np.ndarray, env, outcome, log_path: str | None
-) -> None:
-    """Render the terminal end-of-fight screen."""
-    console.clear()
+def build_end_screen(
+    obs: np.ndarray, env, outcome, log_path: str | None
+) -> Panel:
+    """Build the end-of-fight screen.
+
+    Split out (ROB-86) because the Textual app exited the instant the fight
+    ended, and Textual tears the screen down on exit — so a player who won saw
+    their terminal prompt, not a result. The app now renders this and waits for
+    a keypress, which is what the print-and-prompt loop did all along.
+    """
     won = outcome == _core.Outcome.Won
     banner = Text(
         "*** YOU WIN ***" if won else "*** YOU LOSE ***",
@@ -650,7 +655,14 @@ def render_end_screen(
     if log_path:
         summary.append(f"Trajectory saved to {log_path}\n", style="dim")
 
-    console.print(
-        Panel(Group(banner, summary), title="MINI-SPIRE", border_style="bright_blue")
+    return Panel(
+        Group(banner, summary), title="MINI-SPIRE", border_style="bright_blue"
     )
-    console.print("(press enter to exit)")
+
+
+def render_end_screen(
+    console: Console, obs: np.ndarray, env, outcome, log_path: str | None
+) -> None:
+    """Draw the end screen. Used by the policy viewer, which is not interactive."""
+    console.clear()
+    console.print(build_end_screen(obs, env, outcome, log_path))
