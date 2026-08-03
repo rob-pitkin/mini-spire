@@ -5,6 +5,8 @@ state_piles to render the fight. Pure rendering — no input handling.
 """
 from __future__ import annotations
 
+import functools
+
 import numpy as np
 from rich.console import Console, Group
 from rich.panel import Panel
@@ -12,7 +14,7 @@ from rich.table import Table
 from rich.text import Text
 
 from minispire import _core
-from minispire.render import avatars
+from minispire.render import avatars, sprites
 from minispire.render.intent import intent_text
 
 # --- Observation layout (ROB-40 + ROB-59 multi-enemy) ----------------------
@@ -178,6 +180,33 @@ def _energy_pips(energy: int, per_turn: int) -> Text:
     return out
 
 
+@functools.lru_cache(maxsize=1)
+def _has_color() -> bool:
+    """Whether the terminal can show colour at all.
+
+    Deliberately NOT a truecolor check. Rich quantizes RGB down to 256 or 16
+    colours by itself, and a quantized sprite still reads as a creature, so
+    demanding truecolor would drop good terminals to ASCII for no reason. Only
+    a genuinely colourless output — a pipe, a dumb terminal — needs the
+    fallback, and there the sprite would be a field of identical blocks.
+
+    `--ascii-only` remains the escape hatch for terminals that render colour
+    fine but misalign unicode.
+    """
+    return Console().color_system is not None
+
+
+def _avatar(name: str, hp: int, max_hp: int, ascii_only: bool) -> Text:
+    """The creature's picture: a 12x12 sprite, or ASCII where colour is not
+    available. `hp` picks the expression, not the palette (ROB-83)."""
+    if not ascii_only and _has_color():
+        sprite = sprites.SPRITES.get(name)
+        if sprite is not None:
+            hurt = max_hp > 0 and hp / max_hp <= avatars.CRITICAL_THRESHOLD
+            return sprite.render("hurt" if hurt else "normal")
+    return Text(avatars.select_avatar(name, hp, max_hp), style="bold")
+
+
 def _entity_block(
     title: str,
     avatar_name: str,
@@ -188,10 +217,11 @@ def _entity_block(
     status_slice: slice,
     extra_lines: list[Text] | None = None,
     status_names: list[str] | None = None,
+    ascii_only: bool = False,
 ) -> Group:
     """Render one entity: avatar, name, HP bar, block, plus extra lines."""
     lines: list = []
-    lines.append(Text(avatars.select_avatar(avatar_name, hp, max_hp), style="bold"))
+    lines.append(_avatar(avatar_name, hp, max_hp, ascii_only))
     lines.append(Text(title, style="bold white"))
 
     hp_line = Text("HP  ")
@@ -255,6 +285,7 @@ def build_fight(
                 _energy_pips(int(obs[CHAR_ENERGY]), int(obs[CHAR_ENERGY_PER_TURN]))
             )
         ],
+        ascii_only=ascii_only,
     )
 
     # One column per living enemy, labeled with its real per-slot name (ROB-79).
@@ -286,6 +317,7 @@ def build_fight(
                 _enemy_status_slice(slot),
                 extra_lines=[intent],
                 status_names=ENEMY_STATUS_NAMES,
+                ascii_only=ascii_only,
             )
         )
 
