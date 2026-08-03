@@ -9,6 +9,14 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every version pyproject.toml claims to support. Claiming 3.11-3.13
+        # and testing only 3.12 would make the metadata a guess; the widening
+        # was done because the suite was run on all three, and this is what
+        # keeps that true.
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       # v5 runs on Node 24. v4 targets the deprecated Node 20 and is currently
       # force-shimmed by the runner; that shim will go away.
@@ -32,11 +40,11 @@ jobs:
 
       # ---- Python build + tests --------------------------------------------
 
-      - name: Install uv + Python 3.12
+      - name: Install uv + Python ${{ matrix.python-version }}
         # v7 is the first major on Node 24; v6 is node20 (deprecated).
         uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
 
       - name: Install Python package + ci deps (frozen)
@@ -44,7 +52,7 @@ jobs:
         # the lockfile is out of date. `--extra ci` pulls in pytest only,
         # skipping the train extras (torch / sb3) which would dominate
         # CI install time.
-        run: uv sync --frozen --extra ci
+        run: uv sync --frozen --extra ci --python ${{ matrix.python-version }}
 
       - name: Run Python tests
         run: uv run pytest python/tests

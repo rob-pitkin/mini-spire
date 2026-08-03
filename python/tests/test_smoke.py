@@ -7,7 +7,18 @@ import minispire
 
 
 def test_package_imports():
-    assert minispire.__version__ == "0.1.0"
+    assert minispire.__version__
+
+
+def test_version_has_exactly_one_source():
+    # __version__ used to be a literal in __init__.py AND in pyproject.toml,
+    # which is one of two places to forget at the moment it matters most —
+    # cutting a release. It now reads installed metadata, so this asserts the
+    # two can no longer disagree rather than asserting a specific number that
+    # every future release would have to edit.
+    from importlib.metadata import version
+
+    assert minispire.__version__ == version("minispire")
 
 
 def test_core_extension_loadable():

@@ -1,0 +1,119 @@
+name: Release
+
+# Tag-triggered. Pushing v1.0.0 builds wheels + sdist, smoke-tests each wheel,
+# and publishes to PyPI via Trusted Publishing (OIDC) — no token stored in the
+# repo or in Actions secrets.
+#
+# Dry run before tagging: trigger manually from the Actions tab. That builds and
+# tests everything and stops short of publishing, which is the only way to find
+# out a wheel does not import WITHOUT having already burned the version number —
+# PyPI will not let you re-upload one.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  wheels:
+    name: wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-14 is arm64 (Apple Silicon); ubuntu builds manylinux x86_64.
+        # Together these cover the realistic audience: a laptop to iterate on
+        # and a cloud box to train on. Everyone else builds from the sdist,
+        # which is verified below rather than assumed.
+        os: [macos-14, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.21
+        env:
+          # Matches requires-python. Free-threaded builds are excluded: the
+          # engine has never been tested under them, and shipping an untested
+          # wheel is worse than not shipping one.
+          CIBW_BUILD: "cp311-* cp312-* cp313-*"
+          CIBW_SKIP: "*-musllinux_* *t-*"
+          CIBW_ARCHS_MACOS: "arm64"
+          CIBW_ARCHS_LINUX: "x86_64"
+          # Import and play a full fight in the target interpreter. A wheel
+          # that builds but cannot load its extension is the failure mode that
+          # matters here, and it is invisible to the build step.
+          CIBW_TEST_REQUIRES: "pytest"
+          CIBW_TEST_COMMAND: >
+            python -c "
+            import minispire, numpy as np;
+            env = minispire.MinispireEnv();
+            obs, _ = env.reset(seed=0);
+            assert obs.shape == (minispire._core.CombatEnv.OBS_SIZE,);
+            steps = 0;
+            [ (env.step(int(np.flatnonzero(env.action_masks())[-1])), ) for _ in range(1) ];
+            print('wheel OK', minispire.__version__, obs.shape)
+            "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist
+        run: uv build --sdist
+
+      - name: Install the sdist in a clean venv and play a fight
+        # The sdist is the fallback for every platform without a wheel, so
+        # "it builds from a clean checkout" is a promise to those users. It
+        # also catches a missing non-source file — src/card_descriptions.inc
+        # is #included by card.h and is exactly the kind of thing an sdist
+        # silently drops.
+        run: |
+          uv venv --python 3.12 /tmp/sdisttest
+          uv pip install --python /tmp/sdisttest/bin/python dist/*.tar.gz
+          /tmp/sdisttest/bin/python -c "
+          import minispire, numpy as np
+          from minispire import _core
+          env = minispire.MinispireEnv(); obs, _ = env.reset(seed=0)
+          assert _core.card_description(_core.CardId.Sentinel)
+          while True:
+              legal = np.flatnonzero(env.action_masks())
+              if legal.size == 0: break
+              obs, r, term, trunc, info = env.step(int(legal[-1]))
+              if term or trunc: break
+          print('sdist OK', minispire.__version__, info)
+          "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  publish:
+    name: publish to PyPI
+    # Tags only. A manual run is a dry run: it builds and tests everything and
+    # stops here.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [wheels, sdist]
+    runs-on: ubuntu-24.04
+    environment: pypi
+    permissions:
+      id-token: write  # Trusted Publishing (OIDC); no API token anywhere
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: What is about to be published
+        run: ls -la dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

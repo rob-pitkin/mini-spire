@@ -4,19 +4,26 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "minispire"
-version = "0.1.0"
+version = "1.0.0"
 description = "Fast Slay the Spire combat engine for RL research"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Rob Pitkin" }]
-requires-python = ">=3.12,<3.13"
+# 3.11-3.13. Each is tested in CI rather than asserted: the pin was 3.12-only
+# because that is what development happened on, not because anything required
+# it. The full suite was run on 3.11 and 3.13 before widening this.
+requires-python = ">=3.11,<3.14"
 keywords = ["reinforcement-learning", "slay-the-spire", "gymnasium", "cpp"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 5 - Production/Stable",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: C++",
+  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Games/Entertainment",
+  "Intended Audience :: Science/Research",
 ]
 dependencies = [
   "numpy>=2.0",
