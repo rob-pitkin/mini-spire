@@ -117,9 +117,16 @@ class CombatEnv {
   static constexpr int kChoiceObsSize =
       kChoiceHeaderSize + kNumOptionSlots * kChoiceSlotStride;
 
-  static constexpr int kObsSize = kPlayerObsSize +
-                                  kMaxEnemies * kEnemyObsStride + kPileObsSize +
-                                  1 + kChoiceObsSize;
+  // Index of the turn-number float. Exposed because it is NOT kObsSize - 1:
+  // the choice block sits after it. The TUI computed it that way and spent
+  // every fight rendering a float from the choice channel — zero unless a
+  // choice happened to be pending — as the turn counter. Same shape as the
+  // kEndTurnAction bug: a landmark that used to be last, silently displaced by
+  // a block appended after it.
+  static constexpr int kTurnObsIndex =
+      kPlayerObsSize + kMaxEnemies * kEnemyObsStride + kPileObsSize;
+
+  static constexpr int kObsSize = kTurnObsIndex + 1 + kChoiceObsSize;
 
   // Action space: the combat block (card x target + end-turn, ROB-60) plus the
   // Stage 4c option-slot channel. Layout constants live in turn_loop.h next to
@@ -188,6 +195,13 @@ class CombatEnv {
   // Per-enemy-slot kind, in slot order (ROB-79). The obs doesn't carry kind
   // (not a stat); the TUI needs it to show each enemy's real name. Debug only.
   std::vector<EnemyKind> enemy_kinds() const;
+
+  // What `card` costs to play RIGHT NOW, which is not always CardData::cost:
+  // Infernal Blade's grant makes a card free for the turn, and Blood for Blood
+  // drops a point per HP loss this combat. Delegates to the query layer, so the
+  // number a player reads is the number the engine will charge — the TUI used
+  // to print the base cost and was simply wrong for both cases.
+  int effective_cost(CardId card) const;
 
  private:
   CombatState state_;

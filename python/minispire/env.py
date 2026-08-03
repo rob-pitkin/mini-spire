@@ -140,6 +140,16 @@ class MinispireEnv(gym.Env):
         """
         return self._env.choice_view()
 
+    def effective_cost(self, card_id) -> int:
+        """What `card_id` costs to play right now.
+
+        Not always CardData.cost: Infernal Blade makes a card free for the turn,
+        and Blood for Blood drops a point per HP loss this combat. The TUI
+        displayed the base cost and so showed a number the engine would not
+        charge. For rendering and inspection — not the training loop.
+        """
+        return self._env.effective_cost(card_id)
+
     def enemy_max_hps(self):
         """Per-enemy-slot max HP (the obs omits enemy max_hp; ROB-59). For the
         TUI's enemy HP bars — not used in the training loop."""

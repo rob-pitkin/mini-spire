@@ -333,7 +333,11 @@ void CombatEnv::compute_obs() {
   }
 
   // --- Turn number ---
+  // Pinned to the published constant so a consumer reading CombatEnv's
+  // kTurnObsIndex and the writer here cannot drift apart.
   constexpr int kTurnOff = kPileBase + kPileObsSize;
+  static_assert(kTurnOff == CombatEnv::kTurnObsIndex,
+                "turn float is not where kTurnObsIndex says it is");
   o[kTurnOff] = static_cast<float>(state_.turn_number);
 
   // --- Choice block (Stage 4c) ---
@@ -415,6 +419,10 @@ std::vector<EnemyKind> CombatEnv::enemy_kinds() const {
   out.reserve(state_.enemies.size());
   for (const Enemy& e : state_.enemies) out.push_back(e.kind);
   return out;
+}
+
+int CombatEnv::effective_cost(CardId card) const {
+  return minispire::effective_cost(state_, card);
 }
 
 }  // namespace minispire

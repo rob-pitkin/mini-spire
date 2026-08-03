@@ -466,6 +466,10 @@ PYBIND11_MODULE(_core, m) {
       .def_readonly_static("ENEMY_INTENT_SIZE", &CombatEnv::kEnemyIntentSize)
       .def_readonly_static("ENEMY_KIND_SIZE", &CombatEnv::kEnemyKindSize)
       .def_readonly_static("NUM_ENEMY_KINDS", &kNumEnemyKinds)
+      // NOT OBS_SIZE - 1: the choice block sits after the turn float. Computing
+      // it that way made the TUI render a choice-channel float as the turn
+      // counter for every fight.
+      .def_readonly_static("TURN_OBS_INDEX", &CombatEnv::kTurnObsIndex)
       .def_readonly_static("NUM_DEBUFFS", &kNumDebuffs)
       .def_readonly_static("NUM_ENEMY_POWERS", &kNumEnemyPowers)
       .def_readonly_static("NUM_PLAYER_POWERS", &kNumPlayerPowers)
@@ -515,6 +519,10 @@ PYBIND11_MODULE(_core, m) {
       .def("enemy_kinds", &CombatEnv::enemy_kinds,
            "Per-enemy-slot EnemyKind, in slot order. For the TUI to name each "
            "enemy; not for the training loop.")
+      .def("effective_cost", &CombatEnv::effective_cost, py::arg("card_id"),
+           "What the card costs to play right now — not always CardData.cost. "
+           "Infernal Blade's grant makes a card free for the turn, and Blood "
+           "for Blood drops a point per HP loss this combat.")
       .def("obs", &obs_view,
            "Current observation as a zero-copy numpy view (same buffer as "
            "reset/step return). For inspecting a state without stepping.")
