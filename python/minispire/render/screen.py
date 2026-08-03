@@ -218,19 +218,22 @@ def _enemy_status_slice(slot: int) -> slice:
     return slice(base + ENEMY_OFF_STATUS.start, base + ENEMY_OFF_STATUS.stop)
 
 
-def render_fight(
-    console: Console,
+def build_fight(
     obs: np.ndarray,
     env,
     *,
     ascii_only: bool = False,
-) -> None:
-    """Clear the screen and render the main fight panel from the obs vector.
+) -> Panel:
+    """Build the main fight panel from the obs vector, without drawing it.
 
     `env` is the live env (for enemy max HP, which the obs intentionally omits).
-    """
-    console.clear()
 
+    Split from render_fight (ROB-83) so the same renderable can be printed to a
+    Console by the print-and-prompt loop OR returned from a Textual widget's
+    render(). Textual draws Rich renderables natively, so the migration reuses
+    this code rather than reimplementing it — but only once "build it" stopped
+    being fused to "print it".
+    """
     turn = int(obs[TURN_NUMBER])
     max_hps = env.enemy_max_hps()
     kinds = env.enemy_kinds()  # per-slot EnemyKind (ROB-79)
@@ -289,9 +292,23 @@ def render_fight(
         grid.add_column(ratio=1)
     grid.add_row(char, *enemy_columns)
 
-    console.print(
-        Panel(grid, title=f"MINI-SPIRE  ·  Turn {turn}", border_style="bright_blue")
+    return Panel(
+        grid, title=f"MINI-SPIRE  ·  Turn {turn}", border_style="bright_blue"
     )
+
+
+def render_fight(
+    console: Console,
+    obs: np.ndarray,
+    env,
+    *,
+    ascii_only: bool = False,
+) -> None:
+    """Clear the screen and draw the fight panel. Used by the print-and-prompt
+    loop; the Textual widgets call build_fight() and return the panel instead.
+    """
+    console.clear()
+    console.print(build_fight(obs, env, ascii_only=ascii_only))
 
 
 def card_playable(mask, card_id) -> bool:
@@ -304,13 +321,17 @@ def card_playable(mask, card_id) -> bool:
     return any(bool(mask[base + t]) for t in range(MAX_ENEMIES))
 
 
-def render_hand(console: Console, env) -> list:
-    """Render every card in hand (duplicates included) as a numbered list.
+def build_hand(env) -> tuple[Panel, list]:
+    """Build the hand panel and the local-index -> CardId map together.
 
-    Each playable card slot gets a local index. Returns the local-index ->
-    CardId mapping (targeting is resolved by the controller, since a card's
-    global action depends on the chosen target — ROB-60). The end-turn local
-    index is len(returned list).
+    Returned as a pair on purpose (ROB-83). The map is what a keypress indexes
+    into, and the panel is what the player read before pressing — deriving them
+    in separate passes is how a selection ends up meaning a different card than
+    the one on screen. One pass, one source, no chance of disagreement.
+
+    Each playable card slot gets a local index; targeting is resolved by the
+    caller, since a card's global action depends on the chosen target (ROB-60).
+    The end-turn local index is len(action_map).
 
     Affordable + targetable cards get a live `(N)` index; others get a dim `-`
     and are not selectable.
@@ -353,8 +374,15 @@ def render_hand(console: Console, env) -> list:
     if not hand:
         body = [Text("HAND:", style="bold"), Text("   (empty)", style="dim")]
 
-    console.print(Panel(Group(*body), border_style="grey50"))
+    return Panel(Group(*body), border_style="grey50"), action_map
 
+
+def render_hand(console: Console, env) -> list:
+    """Draw the hand and return the local-index -> CardId map. Used by the
+    print-and-prompt loop; widgets call build_hand() for the pair.
+    """
+    panel, action_map = build_hand(env)
+    console.print(panel)
     return action_map
 
 
@@ -370,11 +398,13 @@ CHOICE_PROMPTS = {
 }
 
 
-def render_choice(console: Console, env) -> int:
-    """Render the pending-choice screen. Returns the number of options.
+def build_choice(env) -> tuple[Panel, int]:
+    """Build the pending-choice panel and its option count.
 
-    Local index i maps to the global action FIRST_OPTION_SLOT + i, so the
-    controller does not need its own mapping table.
+    Local index i maps to the global action FIRST_OPTION_SLOT + i, so the caller
+    needs no mapping table of its own. The count is returned alongside the panel
+    for the same reason build_hand returns its map: it is what a keypress is
+    bounds-checked against, and it must describe the panel actually shown.
     """
     view = env.choice_view()
     prompt = CHOICE_PROMPTS.get(
@@ -410,12 +440,18 @@ def render_choice(console: Console, env) -> int:
     if view.is_optional:
         body.append(Text(f"\n(s) skip", style="dim"))
 
-    console.print(Panel(Group(*body), border_style="yellow", title="CHOOSE"))
-    return len(view.options)
+    return Panel(Group(*body), border_style="yellow", title="CHOOSE"), len(view.options)
 
 
-def render_piles(console: Console, env) -> None:
-    """Render the pile view (toggled with 'p'). Does not consume a step."""
+def render_choice(console: Console, env) -> int:
+    """Draw the pending-choice screen and return the number of options."""
+    panel, count = build_choice(env)
+    console.print(panel)
+    return count
+
+
+def build_piles(env) -> Panel:
+    """Build the pile-view panel (toggled with 'p'). Does not consume a step."""
     piles = env.state_piles()
 
     def fmt_list(cards) -> Text:
@@ -449,7 +485,12 @@ def render_piles(console: Console, env) -> None:
         Text(f"EXHAUST ({len(piles.exhaust)}):", style="bold"),
         fmt_list(piles.exhaust),
     )
-    console.print(Panel(body, title="PILES", border_style="grey50"))
+    return Panel(body, title="PILES", border_style="grey50")
+
+
+def render_piles(console: Console, env) -> None:
+    """Draw the pile view."""
+    console.print(build_piles(env))
 
 
 def render_prompt(console: Console, action_map: list[int], pile_view: bool) -> None:
