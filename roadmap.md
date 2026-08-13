@@ -41,17 +41,19 @@ An episode becomes **one run** rather than one fight. See
 
 Every non-combat interaction — card reward, path choice, shop, event, rest — is
 a **decision point**: the game stops and asks the player to pick one of N
-options. That is exactly what the option-slot channel already does for Armaments
-and Exhume (`docs/design/decision-points.md`), in a fixed-shape action space.
+options. All of them live in **one action space**, so v2 needs no second
+network and no macro/micro split. Miles Oram's project reported that split as
+its limitation — his macro model "could not consider run context." Mini-spire
+can plausibly learn combat and deck-building with **one policy**, which is the
+differentiator worth building toward.
 
-If that holds, v2 does not need a second action space, a second network, or a
-macro/micro split. Miles Oram's project reported that split as its limitation —
-his macro model "could not consider run context." Mini-spire can plausibly learn
-combat and deck-building with **one policy**, which is the differentiator worth
-building toward.
-
-Where a decision does not fit the channel, the channel gets extended. That is
-the design constraint, not a fallback.
+**The claim survived design; the mechanism did not.** The plan was to reuse
+v1.0.0's positional option-slot channel. Design (`docs/design/v2-spec.md` §6.2)
+replaced it with **entity-indexed** blocks — action *k* means the same card,
+relic or map position forever, rather than "the *k*th option offered". That is
+the fix `decision-points.md` §5.2 identified as correct and rejected because
+map paths and shop items had no `CardId`; giving each its own block voids the
+objection. One action space, as claimed — just not the one v1.0.0 shipped.
 
 ### Phase 4.5 — design, and try to break it
 
@@ -66,12 +68,16 @@ redesign. A break found in design costs an afternoon; the same break found in
 Phase 6 costs the layout, and v1.0.0 froze that layout, so a second break is a
 second major version.
 
-- [ ] Run state + episode boundary spec
-- [ ] Decision-point taxonomy — one design doc covering all five
-- [ ] Observation additions (deck, potions, gold, map, choices)
+- [x] Scope decision — `docs/design/v2-obs-notes.md`
+- [x] Run state + episode boundary spec — `docs/design/v2-spec.md` §2–3
+- [x] Decision-point taxonomy — `v2-spec.md` §6, §8
+- [x] Observation additions (deck, potions, gold, map, choices) — `v2-spec.md` §5
 - [x] Reward — `docs/design/run-reward.md`
-- [ ] **Adversarial pass**: for each decision type, find an instance that does
-      not fit. Shops and events are the expected failure points.
+- [x] **Adversarial pass** — four agent reviews. Shops *were* the failure point,
+      as predicted: the purpose collision (§6.1). Events came second (§9).
+- [ ] **Human review** — Rob's pass over the spec
+- [ ] Remaining blockers: `?` roll distribution, relic counter lifetimes,
+      exact vocabularies (`v2-spec.md` §10)
 
 **Exit criterion:** every one of the five decision types has a worked example
 showing how it encodes, *including* the ones that needed the channel extended.

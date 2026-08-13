@@ -11,7 +11,9 @@ terminal `hp_reward_coeff` bonus) is unaffected and stays as it is.
 
 ## 1. The problem
 
-An episode becomes ~50 floors instead of ~18 steps. The obvious reward — "+1 if
+An episode becomes ~16 floors and ~200 steps instead of ~18 steps (this document
+originally said ~50 floors, which is a four-act run; v2.0.0 is Act 1 only — see
+`v2-spec.md`). The obvious reward — "+1 if
 you clear the act" — is a single scalar at the end of a very long trajectory,
 and that does not train.
 
@@ -63,9 +65,23 @@ for a potential function `Φ` over states. By
 [Ng, Harada & Russell (1999), *Policy Invariance Under Reward Transformations*](https://people.eecs.berkeley.edu/~pabbeel/cs287-fa09/readings/NgHaradaRussell-shaping-ICML1999.pdf),
 this leaves the **optimal policy provably unchanged** for any choice of `Φ`.
 
-That is the whole reason it is the right tool here. It is not "shaping we hope
-is harmless" — it is the one form of shaping that cannot bias playstyle, which
-is exactly the constraint we were trying to satisfy.
+That is why it is the right tool here: it is the one form of shaping with a
+proof attached, rather than shaping we hope is harmless.
+
+> **Do not overstate this, and an earlier draft of this document did.** Ng et al.
+> preserve the **optimal policy**. They say nothing about the policy a
+> finite-budget, entropy-regularised optimiser with a bootstrapped critic
+> actually converges to — and changing which policies are *reachable* is the
+> entire point of shaping, so it biases *learned* playstyle by construction.
+>
+> Worse for us specifically: under **entropy-regularised or MaxEnt objectives —
+> which includes PPO's entropy bonus — PBRS invariance genuinely does not hold**
+> and the optimum moves.
+>
+> The correct claim is: **potential-based shaping does not change the optimal
+> policy.** That is still the strongest guarantee available and still the reason
+> to choose it. §7.3 already conceded this; §3 asserted the absolute version
+> anyway, and a referee would catch the contradiction.
 
 ### Why it cannot be farmed
 
@@ -93,10 +109,20 @@ coefficient until behaviour looks acceptable.
 ## 4. The shape
 
 ```
-Φ(s) = α · floors_cleared(s)  +  β · (hp / max_hp)
+Φ(s) = α · floors_cleared(s)  +  β · (hp / HP_REF)      # HP_REF is a CONSTANT
 
 reward = terminal(win / loss)  +  γ·Φ(s') − Φ(s)
 ```
+
+> **CORRECTED 2026-08-13 — this was `hp / max_hp` and that was a bug.**
+> Normalising by *current* `max_hp` makes Φ **fall when Max HP is gained**:
+> at 50/80, taking +8 Max HP moves Φ from 0.625 to 0.568, a **negative** shaping
+> step. So the design produced a wrong-signed incentive on Singing Bowl, Neow's
+> Max-HP blessings and several events — precisely the resource-vs-investment
+> decisions §2 was written to protect.
+>
+> Fix: divide by a fixed constant (`HP_REF = 80`, the Ironclad's starting Max
+> HP) so gaining Max HP is neutral and gaining HP is positive. Found in review.
 
 | term | role |
 |---|---|
@@ -143,6 +169,29 @@ collapses to the constant `−Φ(s₀)`.
 
 **`γ` in the shaping must equal the learner's `γ`.** A mismatch breaks the
 cancellation and silently reintroduces bias.
+
+> **This is a principle-3 violation and it makes M3 incoherent.** If the
+> environment's reward depends on a *learner* hyperparameter, the environment is
+> taking a position on the algorithm. Worse for the comparison: PPO at γ=0.99,
+> DQN at γ=0.995 and MCTS undiscounted would be optimising **three different
+> MDPs**, so their win rates would not be comparable.
+>
+> **Required fix — cheap, and the most important validity item in this
+> document: always log the RAW UNSHAPED return alongside the shaped one, and
+> evaluate every algorithm on the raw return.** Shaping is then a training aid
+> that never touches the reported metric.
+
+**Reward normalisation and clipping destroy the telescoping.** `VecNormalize`
+and reward clipping are SB3 defaults people reach for on long episodes, and both
+break the exact cancellation the guarantee depends on. If either is used, the
+invariance claim no longer applies.
+
+**A depth-scaled step penalty hides inside the floor term.** Within a floor,
+`γΦ(s′) − Φ(s) = (γ−1)·α·floors` — at γ=0.99 that is −0.01·α per step on floor 1
+and **−0.15·α per step on floor 15**. It cancels exactly in theory. In practice
+it is a step penalty that *grows with progress*, and toypiper's documented
+failure (§1) was a step penalty teaching the agent to die quickly. **Test for
+it.**
 
 ```python
 def potential(state) -> float:
