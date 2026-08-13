@@ -1,5 +1,26 @@
 # Decision points: the RL interface for non-combat choices
 
+> ## ⚠️ SUPERSEDED IN PART BY v2 DESIGN (2026-08-13)
+>
+> **The Option Slot Channel shipped in v1.0.0 and worked. v2 replaces it with
+> entity-indexed selection** — `docs/design/v2-spec.md` §6.1–6.2.
+>
+> This document is **retained as the record of why the positional design was
+> chosen**, which is still worth reading: the reasoning was sound for what was
+> known in 2026-07, and three of its premises simply expired.
+>
+> | section | status |
+> |---|---|
+> | §5.3 canonical ordering | **superseded** — see the amendment in §5.3 |
+> | §6 "PPO never sees these decisions" | **superseded** — see §6 |
+> | §7 per-instance state argument | **void** — see §7 |
+> | everything else | historical, and accurate for v1.0.0 |
+>
+> Numbers throughout (obs 834, `Discrete(614)`) are the **design-time estimates**
+> from 2026-07. v1.0.0 shipped 1,772 and `Discrete(1136)`. Read them as
+> illustrative, not as the interface — `src/combat_env.h` and `src/turn_loop.h`
+> are the authority.
+
 **Status:** **Accepted (2026-07)** — the Option Slot Channel, §5. **Scope:** how
 this environment represents decision points that are not "play a card from
 hand" — mid-card choices (Stage 4c) *and* the roadmap (card rewards, map paths,
@@ -248,6 +269,24 @@ Because ordering is ascending `CardId`, slot *k* is stable across states that
 share an option set — which recovers much of the index-stability that a pure
 positional design gives up (§6).
 
+> ### ⚠️ Amended 2026-08-13 — superseded by v2's entity indexing
+>
+> This section exists to **mitigate** rank-indexing: ordering slots by ascending
+> `CardId` makes slot *k* stable across states that share an option set. v2
+> removes the positional slots entirely (`v2-spec.md` §6.2), so there is nothing
+> left to order.
+>
+> | clause | status under v2 |
+> |---|---|
+> | card choices ordered by ascending `CardId` | **moot** — the action index *is* the `CardId` |
+> | non-card choices by natural index (map branch, shop slot, event option) | **superseded** — each gets its own entity-indexed block |
+> | "deduplicated by type; two identical cards collapse to one slot" | **survives — and it is what licenses the replacement.** Identical cards being interchangeable is exactly why entity indexing loses no information |
+>
+> Note also that **§5.2 already identified entity indexing as the correct fix**
+> and rejected it because "map paths, shop items, events and rest options have no
+> `CardId`". Under v2 each of those has its own block, so the objection is void.
+> The reason for the compromise expired along with the compromise.
+
 ### 5.4 Engine mechanism
 
 ```cpp
@@ -313,6 +352,29 @@ to this project:
    learn these decisions can read identity directly rather than infer it from
    position.
 
+> ### ⚠️ Amended 2026-08-13 — premise 1 is superseded
+>
+> **"PPO never sees these decisions" was load-bearing here, and it is no longer
+> true.** The 2026-07 plan was PPO for combat plus an **LLM for non-combat
+> decisions**, which made "hard for an MLP, easy to read as a rendered menu" a
+> good trade.
+>
+> v2 reverses that on an explicit principle (Rob, 2026-08):
+>
+> > We shouldn't prescribe an algorithm as the solution to the problem. The obs
+> > and action space should be exhaustive, and then researchers can implement
+> > additional infra and algorithms on top of the environment.
+>
+> So the environment can no longer assume *any* particular consumer — LLM, PPO,
+> DQN or MCTS — and a design whose weakness is "hard for an MLP" can no longer be
+> excused by naming the solver. `roadmap.md` now targets **one policy over combat
+> and deck-building**, which is the case this section assumed away.
+>
+> Premise 2 survives, and is the seed of the replacement: reading identity
+> directly rather than inferring it from position is precisely what entity
+> indexing does — it just makes the index *be* the identity instead of publishing
+> it alongside.
+
 ## 7. Known long-horizon risk
 
 `card.h` anticipates **per-instance card state** (Searing Blow's cumulative
@@ -326,6 +388,32 @@ one**: slots are positional, so the fix is to stop deduplicating and let each
 *instance* occupy its own slot — the 102-slot block is already wide enough for
 any single pile, and the obs payload gains an instance-state float. No action
 space change, no re-encoding. This was the deciding long-horizon argument.
+
+> ### ⚠️ Amended 2026-08-13 — this argument is VOID, and it was the deciding one
+>
+> Per-instance card state landed (ROB-87) — and **not the way this section
+> predicted.** Rung ladders make per-instance state part of card **identity**: a
+> Searing Blow upgraded three times is its own `CardId`, not a Searing Blow
+> carrying a state float. See `observation-space.md` §5 and CLAUDE.md's decision
+> log.
+>
+> The consequence is the exact reverse of what is written above:
+>
+> | | predicted | actual |
+> |---|---|---|
+> | two "identical" cards | stop being interchangeable | **stay interchangeable** — if they differ, they are different `CardId`s |
+> | dedup-by-type | must be abandoned | **still valid** |
+> | card-type indexing | breaks | **works fine** |
+>
+> So the positional design's "deciding long-horizon argument" rests on a
+> prediction that did not come true, and the weakness it was defending against
+> never materialised for the alternative. This is worth stating plainly rather
+> than quietly dropping: **the strongest argument for the shipped design has
+> been invalidated by a later, unrelated decision.**
+>
+> It does not make the v1.0.0 choice wrong at the time — rung ladders were a year
+> away and unforeseeable. It does mean nothing here should be cited as a reason
+> to keep positional slots in v2.
 
 ## 8. Requirements check
 

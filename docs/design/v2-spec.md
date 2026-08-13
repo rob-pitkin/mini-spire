@@ -422,9 +422,74 @@ one (`observation-space.md` §1; the environment ships the superset).
 
 ### 5.1 Layout
 
-Planning vocabulary: `CARDS = 250` ⚠️ (189 today + ~48 colorless + ~13 curses —
-**must be counted exactly before implementation**), `RELICS = 170` ⚠️,
-`POTIONS = 42` ⚠️.
+Planning vocabulary — see §5.0 for the scoping rules and current confidence.
+
+### 5.0 Vocabulary scoping (ROB-104, in progress 2026-08-13)
+
+**The counts are not "how many exist in Slay the Spire". They are "how many are
+reachable in v2.0.0's scope"**, and the scoping rules are the design decision —
+counting is mechanical once they are fixed.
+
+Rules:
+
+1. **Ironclad + colorless only.** Silent / Defect / Watcher cards and
+   class-specific relics and potions are unreachable and excluded.
+2. **Boss relics excluded** — awarded *after* an act boss, and the run ends there
+   (§9). This removes all 22.
+3. **Blights excluded** — not part of the base game's normal run.
+4. **Upgraded variants count separately.** v1.0.0's 189 counts `Strike` and
+   `Strike+` as distinct ids, and rung ladders add more (§ `observation-space.md` §5).
+   Any colorless or curse count must be expanded the same way.
+5. **Act 1 reachability** where a pool is act-gated.
+
+#### Established
+
+| | count | confidence |
+|---|---:|---|
+| Ironclad cards **today**, incl. upgrades and rungs | **189** | **certain** — `CARD_DATABASE` has exactly 189 rows and `static_assert(kObsCardOrder.size() == kNumCardTypes)` in `combat_env.cc` enforces it |
+
+#### Provisional — relics, from the wiki.gg Relics List
+
+Excluding boss relics, blights, and other-class relics:
+
+| pool | total | minus other-class | in scope |
+|---|---:|---:|---:|
+| Starter | 4 | −3 | **1** (Burning Blood) |
+| Common | 26 | −3 | **23** |
+| Uncommon | 31 | −6 | **25** |
+| Rare | 24 | −6 | **18** |
+| Shop | 16 | −3 | **13** |
+| Event / Special | 24 | — | **24** |
+| Boss | 22 | — | **0** (excluded, rule 2) |
+| Blights | 12 | — | **0** (excluded, rule 3) |
+| **RELICS** | | | **≈104** |
+
+⚠️ Derived from a wiki page summary, not a verified enumeration. Circlet /
+Red Circlet (awarded when all relics are collected) are an unhandled edge case.
+
+#### Still uncounted — these remain blocking
+
+| | why not yet counted |
+|---|---|
+| **Colorless cards** | No source consulted so far gives an StS1 total; search results returned StS2's 64. Needs the card list enumerated, then doubled for upgrades. |
+| **Curses** | Same. StS2 has 18; StS1 differs and most curses have no upgrade, so the doubling rule does **not** apply uniformly. |
+| **POTIONS** | The wiki.gg potions fetch returned "Total: 19+" and explicitly said it was not exhaustive. **A summary that says "19+" is not a count.** |
+| **Event options** | Needs the Act 1 event list enumerated with per-event option counts. |
+
+**Method note.** These must be counted by reading the list pages, not by asking
+for a total — the same discipline CLAUDE.md records for grep. A fetch summary
+that omits items looks identical to a complete one.
+
+#### A gap found while counting
+
+**`CardData` has no `rarity` and no `color` field.** Fields today are name, cost,
+damage, hits, block, target, debuffs, powers, type, exhaust, ethereal,
+unplayable — plus `CardType` (Attack/Skill/Power/Status/Curse).
+
+v2 needs both: **rarity** drives card-reward rarity rolls (§10 run-content
+generation) and shop pricing, and **color** separates Ironclad from colorless in
+shop stock. Adding them touches all 189 rows of `CARD_DATABASE`. This belongs in
+the vocabulary task, since it is the same pass over the same table.
 
 | # | block | size | contents |
 |---|---|---:|---|
@@ -471,9 +536,30 @@ structurally impossible, not merely absent.
 So block 13 is a *local* edge mask: 315 floats, lossless, no wasted capacity. An
 off-grid neighbour (column 0 has no `c−1`) is a hard 0.
 
-⚠️ Two conventions still need fixing before implementation, or two implementers
-produce incompatible buffers: **row-major or column-major flattening**, and the
-**order of the 3 edge slots**. Publish both as header constants.
+### 5.1.3 Layout conventions — PROPOSED (ROB-105), for ratification
+
+`v2-spec.md` gave block sizes but no internal layout, which is enough for two
+implementers to produce incompatible buffers. Proposed conventions, each with its
+reason:
+
+| convention | choice | why |
+|---|---|---|
+| **Map flattening** | **floor-major**: `index = floor * 7 + column` | The current floor's 7 positions are then **contiguous**, which is what both the renderer and any incremental-update path want. Column-major scatters them by 15. |
+| **Floor ordering** | floor 0 at index 0, ascending | Matches `RunState::floor` directly; no arithmetic to get it wrong. |
+| **Edge slot order** | `[c−1, c, c+1]` ascending | Matches the generator's own ordering (`sts_map_oracle` edges reach `c−1, c, c+1`), so the port needs no remapping. |
+| **Nonexistent neighbour** | hard `0.0` | Column 0 has no `c−1`. Structurally impossible ≠ "absent"; both read as 0, and no third value is needed because the node-type block already marks empty positions. |
+| **Room type one-hot order** | `None, Monster, Elite, Event, Rest, Shop, Treasure, Unknown` | 8 wide. **`None` first at index 0** so a zeroed buffer means "no room", which is the correct default for an unallocated map. |
+| **Normalisation** | per-block **fixed constants**, published beside the offsets | Never a varying denominator — `run-reward.md` records the `hp/max_hp` bug. |
+| **Offsets** | `constexpr` in a header, surfaced to Python | Exactly as `combat_env.h` does today. Re-deriving offsets caused the `TURN_NUMBER = OBS_SIZE − 1` bug. |
+
+⚠️ **The 8 room types are a *different* 8 from §4's phase enumeration.** Phases
+include `neow`, `card_reward` and `combat` which are not map positions; room
+types include `None` and `Unknown` which are not phases. **Do not share an
+enum between them** — they look interchangeable and are not.
+
+**Required:** a `static_assert` tying each block's published offset to the code
+that writes it, mirroring how `kTurnObsIndex` is asserted against its writer
+today. That assertion is what turns a layout doc into an enforced contract.
 
 ### 5.1.2 Do count vectors and multi-hots hurt learning? (Rob asked)
 

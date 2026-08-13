@@ -207,6 +207,63 @@ shaped = terminal_reward + GAMMA * potential(next_state) - potential(prev_state)
 plain terminal bonus on a won fight (ROB-52) and is unaffected; the two can
 coexist, and v1.0.0 behaviour does not move.
 
+## 5.1 γ and the horizon — why the default cannot be 0.99
+
+Added 2026-08-13. This was missing, and it changes how §4's floor term should be
+justified.
+
+**The arithmetic.** A discount factor has an effective horizon of `1/(1−γ)`:
+
+| γ | effective horizon | `γ^700` |
+|---:|---:|---:|
+| 0.99 | ~100 steps | **0.0009** |
+| 0.995 | ~200 steps | 0.030 |
+| 0.999 | ~1000 steps | **0.50** |
+
+v2 episodes are ~400–700 steps (`v2-spec.md` §2). **At the RL default of γ=0.99,
+a win at step 700 is worth 0.0009 at step 0** — the terminal reward, which §4
+calls "the actual objective, and the largest signal", is numerically invisible to
+every decision made in the first half of the run. That includes Neow, the first
+card rewards, and the first shop: exactly the deck-building decisions this
+project exists to study.
+
+**So γ ≈ 0.999 is the floor for a run-scoped episode**, with the standard cost:
+longer horizons mean higher-variance value estimates and slower critic
+convergence.
+
+### This is the stronger argument for the floor term
+
+§4 sells `α · floors_cleared` as "dense progress". The better justification is
+that **it makes the horizon tractable at any γ**. With ~16 floors over ~700 steps
+a floor clears roughly every 40 steps, so a reward arrives every ~40 steps
+instead of once at the end. At γ=0.99, `0.99^40 ≈ 0.67` — well inside the
+horizon, where `0.99^700 ≈ 0.0009` is not.
+
+Put plainly: the shaping is not merely a convenience, it is what makes the
+problem representable at a discount factor a critic can actually learn. That
+reframes §7's first open question — *"is `α·floors` too coarse?"* — because the
+term is doing structural work beyond signal density.
+
+### γ is an environment parameter, not a training detail
+
+§5 already requires shaping-γ to equal the learner's γ, and flags that as a
+principle-3 violation. The horizon arithmetic makes it concrete: **the
+environment's γ default cannot be chosen without knowing the episode length**,
+and the episode length is a property of the environment.
+
+The resolution stays the one in §5: ship γ as a constructor parameter, document
+that it must match the learner, **and always evaluate on the raw unshaped
+return** so no reported metric depends on it.
+
+### Two consequences to check when the skeleton runs
+
+1. **Measure the real episode length first** (`v2-spec.md` §2 — ~400–700 is an
+   estimate). If runs are longer than 700 steps, even γ=0.999 starts to truncate.
+2. **The §12 turn cap interacts with rollout buffers.** A capped episode at
+   ~10,000 steps spans ~5 refreshes at a typical `n_steps=2048`, with no terminal
+   in between. Correct with proper truncation bootstrapping, but worth knowing
+   before someone debugs it.
+
 ## 6. What is deliberately not in Φ
 
 **Deck quality.** A stronger deck is objectively closer to winning, and it is
