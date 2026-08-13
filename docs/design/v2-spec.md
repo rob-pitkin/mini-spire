@@ -397,22 +397,133 @@ monster steadily more likely — the game's pity system. All three counters
 **reset at act transitions**, which is unobservable within v2.0.0's single act
 but should be implemented anyway so Act 2 does not inherit a silent bug.
 
-**Sources.** wiki.gg confirms the *mechanism* — "any time a specific encounter is
-not seen, its spawn chance increases; when it is seen, it will reset to the
-original amount" — but publishes no numbers. The numbers come from the Fandom
-wiki and Spire Codex, which agree:
+**Sources — now confirmed against a third, and it is executable.**
+`sts_lightspeed`'s `GameContext::getEventRoomOutcomeHelper` matches the wiki
+numbers exactly. Confidence upgraded from "two secondary sources" to
+"**two secondary sources plus a working implementation**".
 
-- [wiki.gg — Map Locations](https://slaythespire.wiki.gg/wiki/Map_Locations) (mechanism)
+- [wiki.gg — Map Locations](https://slaythespire.wiki.gg/wiki/Map_Locations) (mechanism only)
 - [Fandom — Unknown Location](https://slay-the-spire.fandom.com/wiki/Unknown_Location) (numbers)
-- [Spire Codex — Unknown Room Probabilities](https://spire-codex.com/mechanics/unknown-rooms) (numbers + act reset)
+- [Spire Codex](https://spire-codex.com/mechanics/unknown-rooms) (numbers, but StS2)
+- **`sts_lightspeed` `src/game/GameContext.cpp`** — the algorithm below
 
-⚠️ **Confidence: two secondary sources agreeing, not decompiled ground truth,
-and Spire Codex covers StS2.** Good enough to implement against — and far better
-than the inverted version — but the eventual check is `sts_map_oracle` or a
-decompile. Record it as a derived-not-verified number.
+#### The exact algorithm (port this)
+
+```
+roll = eventRng.random()                      // [0,1)
+idx  = (int)(roll * 100)
+
+monsterSize  = monsterChance * 100                                  // 10
+shopSize     = (lastRoomWasShop ? 0 : shopChance * 100) + monsterSize
+treasureSize = treasureChance * 100 + shopSize
+
+idx < monsterSize   -> MONSTER
+idx < shopSize      -> SHOP
+idx < treasureSize  -> TREASURE
+else                -> EVENT
+
+// drift, applied to the FINAL choice
+MONSTER  ? monsterChance = 0.10 : monsterChance += 0.10
+SHOP     ? shopChance    = 0.03 : shopChance    += 0.03
+TREASURE ? treasureChance= 0.02 : treasureChance+= 0.02
+```
+
+**Three rules we did not have, all easy to get wrong:**
+
+1. ⚠️ **A `?` cannot become a Shop if the previous room was a Shop** —
+   `lastRoomWasShop` zeroes the shop band for that roll. Note the shop band is
+   *removed*, so its probability falls through to Treasure/Event, and
+   `shopChance` still increments because the choice was not SHOP.
+2. ⚠️ **Juzu Bracelet converts a MONSTER result into an EVENT — but
+   `monsterChance` still resets to 0.10.** The conversion happens *inside* the
+   `choice == MONSTER` branch, before the reset. An implementation that checks
+   the room type after the swap would increment instead of reset, and drift
+   apart over a run. This is the subtlest parity trap found so far.
+3. **Tiny Chest** forces every 4th `?` to TREASURE via a relic counter
+   (0→3, reset on fire), *before* the roll — and the forced TREASURE then feeds
+   the normal drift block, resetting `treasureChance`.
+
+**Shrine vs event:** `generateEvent` rolls `SHRINE_CHANCE = 0.25` first. So a `?`
+that resolves to EVENT is 25% a shrine, 75% a regular event, falling back to the
+other list when either is exhausted.
 
 **Those exact numbers are not yet verified** and the parity test §5.6.1 mandates
 cannot be written without them. This is a remaining blocker.
+
+## 4.2 Run-content generation (ROB-106)
+
+From `sts_lightspeed` `src/game/GameContext.cpp`. This section was previously
+listed as "entirely unspecified"; it is now specified except where marked.
+
+### Gold
+
+| source | amount |
+|---|---|
+| normal combat | `treasureRng.random(10, 20)` |
+| elite combat | `treasureRng.random(25, 35)` |
+| boss combat | `100 + miscRng.random(-5, 5)` |
+
+Golden Idol adds `round(gold * 0.25)` in all three cases. (Ascension ≥13 scales
+boss gold to 75% — not reachable at our pinned A0, §3.0.)
+
+### Potion drops
+
+```
+chance = 40 + potionChance          // potionChance starts at 0
+if White Beast Statue: chance = 100
+if (potionCount + relicCount + goldRewardCount + cardRewardCount) >= 4: chance = 0
+
+if potionRng.random(99) >= chance:  potionChance += 10      // no drop
+else:                               drop a potion; potionChance -= 10
+```
+
+⚠️ **Two things a naive implementation gets wrong.** The drift is **±10 and
+symmetric** — it goes *down* on a successful drop, so it is not a one-way pity
+counter. And **a reward screen already holding 4 items suppresses potions
+entirely**, which couples potion drops to relic and card rewards rather than
+being independent.
+
+### Card reward rarity
+
+```
+roll = cardRng.random(99) + cardRarityFactor      // cardRarityFactor starts at 5
+
+if room == BOSS: RARE
+
+rareChance     = (room == ELITE ? 10 : 3)
+uncommonChance = (room == ELITE ? 40 : 37)
+if room != REST and N'loth's Gift: rareChance *= 3
+
+roll < rareChance                  -> RARE
+roll < rareChance + uncommonChance -> UNCOMMON
+else                               -> COMMON
+```
+
+Drift, applied per card rolled:
+
+| result | effect on `cardRarityFactor` |
+|---|---|
+| COMMON | `max(factor − 1, −40)` |
+| UNCOMMON | **unchanged** |
+| RARE | reset to `5` |
+
+⚠️ Note the factor is **added to the roll**, so a *lower* factor makes rares more
+likely — it drifts from +5 down to −40. Uncommon leaving it untouched is easy to
+miss and would otherwise make rares far too common.
+
+### Elite relics
+
+`returnRandomRelic(returnRandomRelicTierElite(relicRng))`, drawn from `relicRng`.
+Black Star adds a second. Burning elites set `emeraldKey` — not applicable to v2
+(key/Act 4 content is out of scope).
+
+### Still open
+
+- **Shop stock generation and pricing** — `src/game/Shop.cpp` is downloaded but
+  not yet read.
+- **Neow blessing enumeration** — `include/game/Neow.h`, likewise.
+- **Per-event option counts** — needs the event logic, not the event list.
+- **Act 1 event-relic subset**.
 
 ## 5. Observation
 
