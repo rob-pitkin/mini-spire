@@ -442,43 +442,89 @@ Rules:
    Any colorless or curse count must be expanded the same way.
 5. **Act 1 reachability** where a pool is act-gated.
 
-#### Established
+#### Source: `sts_lightspeed`, not wiki prose
 
-| | count | confidence |
-|---|---:|---|
-| Ironclad cards **today**, incl. upgrades and rungs | **189** | **certain** — `CARD_DATABASE` has exactly 189 rows and `static_assert(kObsCardOrder.size() == kNumCardTypes)` in `combat_env.cc` enforces it |
+Counted from
+[`gamerpuppy/sts_lightspeed`](https://github.com/gamerpuppy/sts_lightspeed)
+`include/constants/` — `CardPools.h`, `RelicPools.h`, `Potions.h`, `Events.h`.
+These are **declared array sizes in a working simulator**, so they are
+machine-checkable and re-verifiable, unlike a wiki page summary.
 
-#### Provisional — relics, from the wiki.gg Relics List
+An earlier pass used wiki fetches and produced "Total: 19+" for potions with a
+note that it was not exhaustive. **A summary that says "19+" is not a count**,
+and an incomplete enumeration is indistinguishable from a complete one — the
+same discipline CLAUDE.md records for grep. The numbers below replace that pass.
 
-Excluding boss relics, blights, and other-class relics:
+#### CARDS
 
-| pool | total | minus other-class | in scope |
-|---|---:|---:|---:|
-| Starter | 4 | −3 | **1** (Burning Blood) |
-| Common | 26 | −3 | **23** |
-| Uncommon | 31 | −6 | **25** |
-| Rare | 24 | −6 | **18** |
-| Shop | 16 | −3 | **13** |
-| Event / Special | 24 | — | **24** |
-| Boss | 22 | — | **0** (excluded, rule 2) |
-| Blights | 12 | — | **0** (excluded, rule 3) |
-| **RELICS** | | | **≈104** |
+| group | base | upgrades? | ids |
+|---|---:|---|---:|
+| Ironclad obtainable pool | 72 | yes | 144 |
+| Ironclad starters (Strike, Defend, Bash) | 3 | yes | 6 |
+| Searing Blow rung ladder | — | — | ~35 |
+| Statuses (Slimed, Dazed, Burn, Wound) | 4 | — | 4 |
+| **= v1.0.0 today** | | | **189** ✅ |
+| **Colorless** | **35** | yes | **+70** |
+| **Curses** (random pool) | **10** | no | **+10** |
+| **CARDS** | | | **≈269** |
 
-⚠️ Derived from a wiki page summary, not a verified enumeration. Circlet /
-Red Circlet (awarded when all relics are collected) are an unhandled edge case.
+- Ironclad pool is `RarityCardPool::groupSize[0] = {20, 36, 16}` → 72, matching
+  `cardPoolSize[0]`. Independently confirms our 189.
+- Colorless is `srcColorlessCardPoolSize = 35`, split `{0 common, 20 uncommon, 15 rare}`.
+- Curses are `curseCardPoolSize = 10`: Regret, Injury, Shame, Parasite,
+  Normality, Doubt, Writhe, Pain, Decay, Clumsy. **Curses do not upgrade**, so
+  the doubling rule does not apply to them.
 
-#### Still uncounted — these remain blocking
+⚠️ **Special curses** — Curse of the Bell (Calling Bell), Necronomicurse
+(Necronomicon), Pride — are outside the random pool and need per-source
+reachability checks. **Ascender's Bane is excluded automatically**: it is granted
+at Ascension 10+, and §3.0 pins us at 0. A concrete payoff from that decision.
 
-| | why not yet counted |
-|---|---|
-| **Colorless cards** | No source consulted so far gives an StS1 total; search results returned StS2's 64. Needs the card list enumerated, then doubled for upgrades. |
-| **Curses** | Same. StS2 has 18; StS1 differs and most curses have no upgrade, so the doubling rule does **not** apply uniformly. |
-| **POTIONS** | The wiki.gg potions fetch returned "Total: 19+" and explicitly said it was not exhaustive. **A summary that says "19+" is not a count.** |
-| **Event options** | Needs the Act 1 event list enumerated with per-event option counts. |
+#### RELICS — Ironclad pools, boss excluded
 
-**Method note.** These must be counted by reading the list pages, not by asking
-for a total — the same discipline CLAUDE.md records for grep. A fetch summary
-that omits items looks identical to a complete one.
+| pool | count |
+|---|---:|
+| Starter (Burning Blood) | 1 |
+| Common | 33 |
+| Uncommon | 30 |
+| Rare | 28 |
+| Shop | 17 |
+| **subtotal** | **109** |
+| Boss | **0** — excluded by rule 2 (22 in the pool) |
+| Event / special | ⚠️ not in these pools; needs the Act 1 subset |
+| **RELICS** | **≈109 + event relics** |
+
+Note the per-class pools differ (Ironclad rare is 28, Defect 26, Watcher 27), so
+the Ironclad-specific arrays are the right source — a generic total would be wrong.
+
+#### POTIONS = 33
+
+`Potions.h`: `potionPool[4][33]`, `poolSize = 33`. Per class, so 33 for Ironclad.
+
+#### EVENTS ≤ 31 reachable in Act 1
+
+| group | count |
+|---|---:|
+| `Act1::events` | 11 |
+| `Act1::shrines` | 6 |
+| `oneTimeEventsAsc0` | 14 |
+| **total** | **≤31** |
+
+The one-time list is **14 at Ascension 0 and 13 at Ascension 15** (Note For
+Yourself drops out) — a second place the §3.0 ascension pin changes a count.
+
+⚠️ **Still open:** whether the one-time events are act-gated (they sit outside
+the per-act namespaces, so they may not all reach Act 1), and the **per-event
+option counts**, which need the event logic read rather than the event list.
+`EVENT_OPTIONS` is bounded at roughly 31 × 2–4 ≈ **60–95** — so the reviewer's
+"~60 is low by 2–3×" was directionally right but the ceiling is ~95, not ~180.
+
+#### Impact on §5.1
+
+`CARDS ≈ 269` against the planning figure of 250 widens blocks 3, 7, 10 and 18.
+**Do not update §5.1's sizes until the event-relic and event-option counts
+close** — a second recount is exactly what the layout-versioning decision exists
+to make survivable.
 
 #### A gap found while counting
 
