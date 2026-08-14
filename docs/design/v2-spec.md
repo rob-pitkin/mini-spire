@@ -517,11 +517,171 @@ miss and would otherwise make rares far too common.
 Black Star adds a second. Burning elites set `emeraldKey` — not applicable to v2
 (key/Act 4 content is out of scope).
 
+### 4.3 Shops
+
+From `src/game/Shop.cpp` and `include/game/Shop.h`.
+
+**Cross-checked against [wiki.gg — Shop](https://slaythespire.wiki.gg/wiki/Shop);
+every figure below matched exactly** — stock composition, the 75 + 25 removal
+progression, and the single 50%-off card. No corrections needed.
+
+**Stock is 5 class cards + 2 colorless + 3 relics + 3 potions + 1 removal.**
+
+| slot | contents |
+|---|---|
+| 0, 1 | two **Attack** cards, distinct, rarity rolled per slot |
+| 2, 3 | two **Skill** cards, distinct |
+| 4 | one **Power** card — **rarity upgraded: a COMMON roll becomes UNCOMMON** |
+| 5 | colorless **UNCOMMON** |
+| 6 | colorless **RARE** |
+| 7–9 | relics — slots 0/1 by tier roll, **slot 2 is always the SHOP tier** |
+| 10–12 | potions |
+| 13 | card removal |
+
+**Shop rarity roll** differs from the combat-reward roll (§4.2):
+
+```
+BASE_RARE_CHANCE = 9        // vs 3 for combat rewards
+BASE_UNCOMMON_CHANCE = 37
+roll = cardRng.random(99) + cardRarityFactor
+roll < 9                 -> RARE
+roll >= 9 + 37           -> COMMON
+else                     -> UNCOMMON
+```
+
+⚠️ Note it shares `cardRarityFactor` with combat rewards, so **shop purchases and
+card rewards drift each other's rarity odds**. Another coupling to model rather
+than treat as independent.
+
+**Pricing**
+
+| item | price |
+|---|---|
+| class card | `cardRarityPrices[rarity] * merchantRng.random(0.9, 1.1)` |
+| colorless uncommon (slot 5) | `75 * random(0.9, 1.1) * 1.2` |
+| colorless rare (slot 6) | `150 * random(0.9, 1.1) * 1.2` |
+| relic | `relicBasePrice * merchantRng.random(0.95, 1.05)` |
+| potion | `potionRarityPrices[rarity] * merchantRng.random(0.95, 1.05)` |
+
+`cardRarityPrices = {50, 75, 150, …}` (common, uncommon, rare).
+`relicTierPrices = {150, 250, 300, 999, 150, 300, 400}`.
+`potionRarityPrices = {50, 75, 100}`.
+
+**One card slot of the first five is half price**:
+`saleIdx = merchantRng.random(4); prices[saleIdx] /= 2`. This is the discount
+slot §5.1 block 18 must expose.
+
+**Card removal:**
+
+```
+cost = 75 + 25 * shopRemoveCount      // BASE_REMOVE_PRICE + REMOVE_PRICE_INCREASE
+Smiling Mask: flat 50
+```
+
+`shopRemoveCount` is **per-run, not per-shop** — removal gets permanently more
+expensive each time it is used. That is run state, and it belongs in `RunState`.
+
+**Discounts** are multiplicative on all prices: The Courier ×0.80,
+Membership Card ×0.50. (Ascension ≥16 ×0.80 — not reachable at A0.)
+
+### 4.4 Neow — and a spec contradiction it exposes
+
+From `src/game/Neow.cpp`, **cross-checked against
+[wiki.gg — Neow](https://slaythespire.wiki.gg/wiki/Neow)**.
+
+#### The 4-option ruling, precisely
+
+The wiki and `sts_lightspeed` appear to disagree, and resolving it *strengthens*
+§8 rather than undermining it:
+
+| source | says |
+|---|---|
+| wiki.gg | **two or four** blessings — two if you did not reach the Act 1 boss on your previous run, four if you did |
+| `sts_lightspeed` | `getOptions` returns `std::array<Option,4>` **unconditionally** |
+
+They do not actually conflict. `sts_lightspeed` is a **single-run simulator with
+no cross-run history**, so it cannot evaluate the condition and always takes the
+4-option branch. That is the same reason §8 gives for our ruling.
+
+**So: two independent projects diverge from the real game in the same direction,
+for the same structural reason.** Our divergence is confirmed, and now precisely
+statable:
+
+> The real game shows 2 blessings to a player who has not yet reached the Act 1
+> boss, and 4 otherwise. Mini-spire has no cross-run state, so it always shows 4.
+> **A mini-spire run is therefore equivalent to a real run by a player who has
+> previously reached the Act 1 boss** — never to a first-ever run.
+
+That belongs in the README divergence table (§9) in exactly those terms, because
+it is the difference between "we simplified" and "we pinned a well-defined
+branch".
+
+Each option is a `(Bonus, Drawback)` pair. Generation:
+
+| slot | bonus | drawback |
+|---|---|---|
+| 0 | `random(0,5)` from tier 1 | **NONE** |
+| 1 | `6 + random(0,4)` from tier 2 | **NONE** |
+| 2 | from a pool **selected by the drawback** | `2 + random(0,3)` |
+| 3 | **always `BOSS_RELIC`** | **always `LOSE_STARTER_RELIC`** |
+
+Tier 1 (0–5): three cards · random rare card · remove a card · upgrade a card ·
+transform a card · random colorless.
+Tier 2 (6–10): three potions · random common relic · +10% Max HP · Neow's Lament
+· 100 gold.
+Tier 3 (11–17): rare colorless · remove two · rare relic · three rare cards ·
+250 gold · transform two · +20% Max HP.
+
+Drawbacks: −10% Max HP · lose all gold · obtain a curse · HP damage ·
+lose starter relic.
+
+⚠️ **The damage drawback is not "30%".** `sts_lightspeed` labels it
+`"Take 30% Hp damage."`, but wiki.gg gives the actual formula:
+
+```
+damage = floor(currentHp / 10) * 3
+```
+
+These differ. At 75 HP: `floor(7.5) * 3 = 21`, where a literal 30% would be 22.5.
+**Implement the floor-based formula**, and treat the simulator's display string
+as a label rather than a spec — a case where the wiki is the better source.
+
+⚠️ **The Neow boss-relic pool excludes one relic.** wiki.gg: *"Cannot switch to
+the stronger version of your character's Base Relic."* For the Ironclad that
+means **Black Blood is not offered** by Neow (it is the upgraded Burning Blood).
+It remains in `RELICS` for the observation, but not in Neow's draw pool.
+
+Slot 2's bonus pool depends on its drawback (e.g. NO_GOLD excludes the
+250-gold bonus, CURSE excludes remove-two). `PERCENT_DAMAGE` draws from all of
+tier 3.
+
+⚠️ **`r.random(0, 0)` is called at the end of `getOptions` — a draw that changes
+nothing but advances the stream.** Our RNG must consume it too or every
+subsequent Neow-stream draw desynchronises. Exactly the kind of thing CLAUDE.md
+means by treating the RNG stream as an interface.
+
+#### ⚠️ This contradicts §9: boss relics are NOT structurally absent
+
+§9 currently says:
+
+> **Boss relics are absent structurally, not excluded** — they are awarded after
+> an act boss, and the run ends there.
+
+**That is wrong.** Neow's slot 3 is *always* a boss relic, offered on floor 0, in
+exchange for the starter relic. Boss relics are reachable in every single run.
+
+Consequences:
+
+1. **`RELICS` grows by the 22 boss relics** — ~109 → ~131, plus event relics.
+   §5.0's count must be revised.
+2. **Burning Blood can be lost**, so the relic multi-hot must represent a run
+   with no starter relic. Any code assuming Burning Blood is always present is
+   wrong.
+3. **A boss relic on floor 0 is a large swing** — this is a real strategic
+   decision the agent must be able to see and take, not an edge case.
+
 ### Still open
 
-- **Shop stock generation and pricing** — `src/game/Shop.cpp` is downloaded but
-  not yet read.
-- **Neow blessing enumeration** — `include/game/Neow.h`, likewise.
 - **Per-event option counts** — needs the event logic, not the event list.
 - **Act 1 event-relic subset**.
 
@@ -545,8 +705,9 @@ Rules:
 
 1. **Ironclad + colorless only.** Silent / Defect / Watcher cards and
    class-specific relics and potions are unreachable and excluded.
-2. **Boss relics excluded** — awarded *after* an act boss, and the run ends there
-   (§9). This removes all 22.
+2. ~~**Boss relics excluded**~~ — ⚠️ **WITHDRAWN 2026-08-14.** Boss relics are
+   **in scope**: Neow offers one on floor 0 of every run (§4.4). The original
+   reasoning only considered post-boss awards.
 3. **Blights excluded** — not part of the base game's normal run.
 4. **Upgraded variants count separately.** v1.0.0's 189 counts `Strike` and
    `Strike+` as distinct ids, and rung ladders add more (§ `observation-space.md` §5).
@@ -600,10 +761,16 @@ at Ascension 10+, and §3.0 pins us at 0. A concrete payoff from that decision.
 | Uncommon | 30 |
 | Rare | 28 |
 | Shop | 17 |
-| **subtotal** | **109** |
-| Boss | **0** — excluded by rule 2 (22 in the pool) |
+| Boss | **22** — ⚠️ **IN scope, corrected 2026-08-14** |
+| **subtotal** | **131** |
 | Event / special | ⚠️ not in these pools; needs the Act 1 subset |
-| **RELICS** | **≈109 + event relics** |
+| **RELICS** | **≈131 + event relics** |
+
+⚠️ **Rule 2 was wrong and is withdrawn.** Boss relics were excluded on the
+grounds that the run ends at the Act 1 boss before one can be awarded. But
+**Neow's slot 3 offers a boss relic on floor 0 of every run** (§4.4), so all 22
+are reachable. This is the second time a "structurally unreachable" claim has
+turned out to have a second source — worth distrusting that phrase generally.
 
 Note the per-class pools differ (Ironclad rare is 28, Defect 26, Watcher 27), so
 the Ironclad-specific arrays are the right source — a generic total would be wrong.
@@ -1049,8 +1216,28 @@ sts_lightspeed agents **cannot interpret the numbers without this table.** That
 is the actual reason it goes in the README rather than politeness about
 limitations.
 
-**Boss relics are absent structurally, not excluded** — they are awarded after an
-act boss, and the run ends there.
+> ### ⚠️ CORRECTED 2026-08-14 — boss relics are IN scope
+>
+> This section previously read: *"Boss relics are absent structurally, not
+> excluded — they are awarded after an act boss, and the run ends there."*
+>
+> **That is wrong.** The reasoning was sound as far as it went — we do end at the
+> Act 1 boss, so no *post-boss* relic is ever awarded — but it missed the other
+> source. `Neow::getOptions` sets slot 3 unconditionally:
+>
+> ```cpp
+> rewards[3].r = Bonus::BOSS_RELIC;
+> rewards[3].d = Drawback::LOSE_STARTER_RELIC;
+> ```
+>
+> **Every run is offered a boss relic on floor 0**, in exchange for the starter
+> relic. Boss relics are not an edge case; they are available before the first
+> fight of every single episode.
+>
+> Consequences: `RELICS` includes all 22 boss relics (§5.0); **Burning Blood is
+> losable**, so nothing may assume the starter relic is present; and the Neow
+> boss-relic swap is a real strategic decision the agent must be able to see and
+> take.
 
 ### Multi-select: costed, and the answer is "defer" (Rob asked)
 
