@@ -158,18 +158,40 @@ entire job is to agree with another function.
   normalisation, rather than inheriting ours;
 - makes the normalisation **auditable** instead of implicit.
 
-⚠️ Tension with our current design: we normalise in-engine with fixed constants,
-and `run-reward.md` records a real bug from normalising by a *varying*
-denominator. Publishing maxima does not conflict with that — it makes the
-constants explicit and inspectable. **Recommendation: publish
-`OBS_MAXIMUMS` alongside the offset constants**, whether or not we also
-normalise.
+**DECIDED (Rob, 2026-08-14): adopt, narrowed to publishing the constants.**
 
-### 5.2 Cap count-vector entries
+An earlier draft of this section implied we might emit **raw** values and let the
+consumer normalise. That has a cost this section glossed over: unnormalised input
+is a training footgun, and every user would have to redo the same work correctly
+before the environment behaves well. That is not algorithm-agnostic, it is
+unhelpful-by-default.
 
-`cardCountMax = 7` bounds deck counts. Cheap, bounds the input range, and no
-realistic Act 1 deck holds 8 copies of one card where the 8th changes a decision.
-Worth doing, with the cap published like any other constant.
+| | |
+|---|---|
+| **Publish the normalisation constants** | ✅ **adopted** — cheap, auditable, says exactly what the divisor was, no behaviour change |
+| Add a `normalize=False` raw mode | **deferred** — genuinely principle-3 pure, but a second code path nobody has asked for. Additive later. |
+
+### 5.2 Cap count-vector entries — REJECTED
+
+`cardCountMax = 7` caps their deck counts. **We are not adopting this**, and the
+reason is our own governing rule.
+
+`observation-space.md` §1: *the observation should match what a human player can
+see*. Under a cap of 7, an agent holding nine Strikes sees the same vector as one
+holding seven. **A human sees the difference.** That is a parity defect in the
+same category as an engine bug, by the standard we already hold ourselves to.
+
+The benefit was bounding the input range — which we already get by dividing by a
+fixed constant. So the cap buys nothing we do not have and costs a parity
+guarantee.
+
+If an overflow guard is ever wanted, set it somewhere provably unreachable in Act
+1 (32, say). That is a different thing from a compression, and it should be
+documented as a guard rather than as an encoding choice.
+
+**Noted as a process point:** this was recommended in the first draft *because
+`sts_lightspeed` does it*, without checking it against our §1. Prior art is
+evidence about what works for the other project's goals, not a default.
 
 ### 5.3 Expose a legal-action enumeration for MCTS
 
@@ -226,12 +248,14 @@ objectives, and their central design decision — a variable-length legal-action
 list feeding tree search over a run-level value network — is the exact
 macro/micro split our roadmap is built to avoid.
 
-**Four things to adopt**, all additive, none breaking:
+**Three things adopted** (Rob, 2026-08-14), all additive, none breaking:
 
-1. Publish `OBS_MAXIMUMS` alongside the offset constants (§5.1).
-2. Cap count-vector entries and publish the cap (§5.2).
-3. Expose `legal_actions()` for MCTS consumers (§5.3).
-4. Add a no-observation step path to the benchmark and stop comparing unlike
+1. ✅ Publish the **normalisation constants** alongside the offset constants
+   (§5.1). Raw-output mode deferred.
+2. ❌ **Count capping rejected** (§5.2) — it is a parity defect under
+   `observation-space.md` §1, and the range bound it buys we already have.
+3. ✅ Expose `legal_actions()` for MCTS consumers (§5.3).
+4. ✅ Add a no-observation step path to the benchmark and stop comparing unlike
    numbers (§5.4).
 
 **One thing to keep doing**, now with evidence: `static_assert` published offsets
