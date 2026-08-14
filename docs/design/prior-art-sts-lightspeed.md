@@ -241,6 +241,66 @@ verify, not a fact.
 | **Tree-search tooling** | A real MCTS-ish agent exists and runs. Ours is planned. |
 | **Data tables** | Complete, machine-readable game constants — which is why ROB-104/106 are now nearly closed. |
 
+## 7.5 Standing rule: every mechanic taken from here is wiki-checked
+
+**Policy (Rob, 2026-08-14): nothing sourced from `sts_lightspeed` enters the spec
+or the engine until it has been cross-checked against the wiki — retroactively
+for what is already taken, and as a gate for everything new.**
+
+The rule exists because the first cross-check found two defects in one pass:
+
+- The Neow damage drawback is `floor(currentHp / 10) * 3`, while
+  `sts_lightspeed`'s display string says *"Take 30% Hp damage."* At 75 HP that is
+  21 versus 22.5. **A UI string had been read as a spec.**
+- Neow's boss-relic pool excludes the upgraded form of the base relic
+  (no Black Blood for the Ironclad) — a constraint absent from the code we read.
+
+`sts_lightspeed` is a **reimplementation**, exactly like `sts_map_oracle`. It is
+the best executable source available and it is not ground truth. Where the two
+disagree, that is a flag, not an answer — and the resolution can go either way
+(§7.6's Neow row resolved *in the simulator's favour*, the damage drawback
+against it).
+
+### 7.6 Retroactive audit
+
+| mechanic | source | wiki-checked | result |
+|---|---|---|---|
+| `?` room distribution (10/3/2, event as fallback) | GameContext.cpp | ✅ | **confirmed** — matches wiki.gg mechanism + Fandom numbers |
+| Shop stock composition | Shop.cpp | ✅ | **confirmed exactly** |
+| Shop removal 75 + 25/use | Shop.cpp | ✅ | **confirmed** |
+| Shop 50%-off slot | Shop.cpp | ✅ | **confirmed** |
+| Neow always 4 options | Neow.cpp | ✅ | **divergence understood** — wiki says 2-or-4 on cross-run history; both projects pin the 4 branch for the same structural reason |
+| Neow slot 4 = boss relic | Neow.cpp | ✅ | **confirmed** |
+| Neow damage drawback | Neow.cpp | ✅ | ❌ **CORRECTED** — `floor(hp/10)*3`, not 30% |
+| Neow boss pool exclusion | — | ✅ | ➕ **ADDED** — wiki-only constraint |
+| Potion drop 40% ±10 | GameContext.cpp | ✅ | **confirmed** — including that it *decreases* on a drop |
+| Card rarity drift | GameContext.cpp | ✅ | **confirmed, opposite sign** — see below |
+| Gold amounts (10–20 / 25–35 / 100±5) | GameContext.cpp | ⚠️ **not yet** | |
+| `SHRINE_CHANCE = 0.25` | GameContext.cpp | ⚠️ **not yet** | |
+| `lastRoomWasShop` shop suppression | GameContext.cpp | ⚠️ **not yet** | simulator-only so far |
+| Juzu Bracelet reset ordering | GameContext.cpp | ⚠️ **not yet** | simulator-only so far |
+| Tiny Chest every-4th-`?` | GameContext.cpp | ⚠️ **not yet** | simulator-only so far |
+| Vocabulary pool sizes | CardPools/RelicPools/Potions | ⚠️ **not yet** | |
+| Neow tier composition | Neow.cpp | ⚠️ **partially** | slot structure confirmed; per-tier contents not |
+
+#### ⚠️ The card-rarity sign trap
+
+The two sources describe the **same system with opposite sign**, and mixing them
+gives you the mechanic exactly backwards:
+
+| | wiki.gg | `sts_lightspeed` |
+|---|---|---|
+| starts at | **−5** | **+5** |
+| per common | **+1** | **−1** |
+| bound | **+40** max | **−40** floor |
+| on rare | reset to −5 | reset to +5 |
+| applied to | the **rare chance** (higher = more rares) | the **roll** (lower = more rares) |
+
+`offset_wiki = −factor_lightspeed`. Both agree that commons make rares more
+likely and that a rare resets the pity. **Implement one convention and state
+which**, or a reader checking against the other source will "fix" it into being
+wrong. Both also agree boss rewards reset the counter despite bypassing the roll.
+
 ## 8. Verdict
 
 **No change to the architecture.** The two projects optimise different

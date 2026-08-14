@@ -55,6 +55,22 @@ This section is the most important one. Read it before every session.
    approximate. If parity requires an engine change, that's the correct path.
    When unsure of the exact StS behavior, ask rather than guess.
 
+### Rule 2 corollary: reimplementations are evidence, the wiki is the check
+
+We source game mechanics from `sts_lightspeed` and `sts_map_oracle`. Both are
+**reimplementations** — the best executable sources available, and not ground
+truth.
+
+**Every mechanic taken from one of them is cross-checked against the wiki before
+it enters the spec or the engine.** This is not ceremony: the first check found
+that a *display string* (`"Take 30% Hp damage."`) had been read as a spec when
+the real formula is `floor(hp/10)*3`, and surfaced a pool constraint the code did
+not encode at all.
+
+Where the two disagree, that is a flag rather than an answer — resolution has
+gone both ways. Audit table and the standing policy:
+`docs/design/prior-art-sts-lightspeed.md` §7.5–7.6.
+
 ### Bash discipline — rule 1, with teeth
 
 Rule 1 has been violated repeatedly in practice, always with the same shape: a
