@@ -297,17 +297,50 @@ outcome must not change any combat's card order.
 
 #### Roll timing is part of parity, not an implementation detail
 
-⚠️ **Potions that offer a card choice (Attack Potion, Skill Potion, Power
-Potion) roll their options at the START of the fight, not when the potion is
-drunk.** Rob observed this in StS2 and flagged that he is **unsure whether StS1
-behaves the same way** — so this needs verifying against StS1 before
-implementation.
+#### Potion card-choices: rolled ON USE, from a stream that rarely advances
 
-It is called out here because it is exactly the kind of detail that gets
-implemented the intuitive way (roll on use) and is then very hard to notice is
-wrong. If it holds for StS1, the options must be drawn from `combat[floor]` at
-fight start and stored, or the agent could re-roll a bad offer by delaying the
-potion — a strategy the real game does not permit.
+**RESOLVED 2026-08-15.** Rob's play observation was that Attack/Skill/Power
+Potion options "don't change based on when you use the potion", suggesting they
+are rolled at fight start. **The observation is correct; the mechanism is not
+what it looks like, and the difference changes the implementation.**
+
+`sts_lightspeed` `Actions::DiscoveryAction` generates the cards **inside the
+action's lambda** — that is, when the action *executes*, i.e. when the potion is
+drunk:
+
+```cpp
+Action Actions::DiscoveryAction(CardType type, int amount) {
+    return {[=] (BattleContext &bc) {
+        bc.openDiscoveryScreen(
+            sts::generateDiscoveryCards(bc.cardRandomRng, bc.player.cc, type), amount);
+    }};
+}
+```
+
+So the roll happens on use. **Both observations are consistent** because
+`cardRandomRng` is a *dedicated combat stream that almost nothing advances*.
+Drinking the potion on turn 1 or turn 5 draws from the same stream position, so
+the same cards come out — which looks exactly like a fight-start roll.
+
+**Why the distinction is load-bearing:** anything else that draws from
+`cardRandomRng` *does* change the offer. Infernal Blade uses
+`getTrulyRandomCardInCombat(bc.cardRandomRng, …)`, as does another Discovery. So
+in the real game, **playing an Infernal Blade before drinking an Attack Potion
+changes which cards the potion offers.**
+
+| model | matches "timing doesn't matter"? | matches the Infernal Blade interaction? |
+|---|---|---|
+| roll at fight start, store | ✅ | ❌ — offer would be frozen |
+| **roll on use from `cardRandomRng`** | ✅ | ✅ |
+
+**Implement: roll on use, drawing from a dedicated per-combat `cardRandomRng`.**
+The "cannot re-roll by waiting" behaviour then falls out naturally, without
+being special-cased — and the obscure interaction that *does* re-roll is
+preserved for free.
+
+⚠️ This makes `cardRandomRng` a **named stream in its own right** (§3.5), not a
+convenience alias for the combat stream. Which draws land on it is now a parity
+question: get the set wrong and potion offers desynchronise from the real game.
 
 **Generalise the question:** for every random offer in the run, *when* is it
 rolled? Card rewards at fight end or on entering the reward screen? Shop stock on
@@ -1194,9 +1227,20 @@ It also inherits the property §6 requires: **action *k* means the same option
 forever.** "Take the gold from Big Fish" is one fixed index, never "the second
 option on this screen".
 
-Sizing: ~20 Act 1 events × 2–4 options each ≈ **60–90 ids**. Cheap. §10 flags one
-reviewer's belief that 60 is low by 2–3×, so **count it, don't estimate it** —
-but even 3× is negligible next to `CARDS`.
+Sizing: ≤31 reachable Act 1 events (11 events + 6 shrines + 14 one-time, §5.0) ×
+2–4 options ≈ **60–95 ids**. Cheap either way next to `CARDS`. **Count it, don't
+estimate it** — the count needs each event's *logic* read, not a list, since
+options live in branches rather than a table.
+
+**Conditionally-offered options get their own ids (Rob, 2026-08-15).** Where an
+event branch is only available under a condition — enough gold, a relic held —
+it is a **distinct id that the mask hides when unavailable**, not a shared id
+whose meaning changes.
+
+Same argument as everywhere else in §6: action *k* means one thing forever. A
+shared id would make "pay 50 gold" and "leave" the same index under different
+conditions, which is rank-indexing wearing an entity-indexed costume — and it
+would alias two genuinely different choices in the policy's output layer.
 
 Note this is also why events need **no bespoke observation machinery**: block 17
 holds the current event one-hot, the mask says which options are live, and the
