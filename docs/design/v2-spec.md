@@ -674,12 +674,40 @@ Each option is a `(Bonus, Drawback)` pair. Generation:
 | 2 | from a pool **selected by the drawback** | `2 + random(0,3)` |
 | 3 | **always `BOSS_RELIC`** | **always `LOSE_STARTER_RELIC`** |
 
-Tier 1 (0–5): three cards · random rare card · remove a card · upgrade a card ·
-transform a card · random colorless.
-Tier 2 (6–10): three potions · random common relic · +10% Max HP · Neow's Lament
-· 100 gold.
-Tier 3 (11–17): rare colorless · remove two · rare relic · three rare cards ·
-250 gold · transform two · +20% Max HP.
+**Tier contents wiki-confirmed (2026-08-14)** — counts match `sts_lightspeed`'s
+index ranges exactly: 6 / 5 / 7.
+
+| tier | contents |
+|---|---|
+| 1 (idx 0–5) | choose 1 of 3 cards · random rare card · remove a card · upgrade a card · transform a card · uncommon colorless |
+| 2 (idx 6–10) | 3 potions · random common relic · **+8 Max HP** · Neow's Lament · 100 gold |
+| 3 (idx 11–17) | rare colorless · remove 2 · rare relic · choose a rare card · 250 gold · transform 2 · **+16 Max HP** |
+| drawbacks | **−8 Max HP** · `floor(hp/10)*3` damage · obtain a curse · lose all gold |
+
+#### ⚠️ Max HP changes are FLAT per character, not percentages
+
+`sts_lightspeed` names these `TEN_PERCENT_HP_BONUS`, `TWENTY_PERCENT_HP_BONUS`
+and `TEN_PERCENT_HP_LOSS`. The wiki gives per-character flat values:
+
+| blessing | Ironclad | Silent | Defect | Watcher |
+|---|---:|---:|---:|---:|
+| tier-2 Max HP gain | **+8** | +6 | +7 | +7 |
+| tier-3 Max HP gain | **+16** | +12 | +14 | +14 |
+| Max HP loss drawback | **−8** | −7 | −7 | −7 |
+
+**The percentage reading is a coincidence that holds only for the Ironclad.**
+80 × 10% = 8 and 80 × 20% = 16 — correct. But the Silent has 70 Max HP, where
+10% would be 7 and the real value is 6.
+
+Since v2.0.0 is Ironclad-only the numbers agree either way, so this is not a
+present-day bug. **Implement the flat values anyway.** Storing it as a percentage
+is a latent defect that would silently produce wrong numbers the moment a second
+character is added — and it would look correct in every Ironclad test.
+
+This is the third case of a `sts_lightspeed` *identifier or display string* being
+misleading where its behaviour is right (after `"Take 30% Hp damage."` and the
+inverted card-rarity sign). Pattern worth naming: **read their arithmetic, not
+their names.**
 
 Drawbacks: −10% Max HP · lose all gold · obtain a curse · HP damage ·
 lose starter relic.
@@ -801,7 +829,7 @@ same discipline CLAUDE.md records for grep. The numbers below replace that pass.
 reachability checks. **Ascender's Bane is excluded automatically**: it is granted
 at Ascension 10+, and §3.0 pins us at 0. A concrete payoff from that decision.
 
-#### RELICS — Ironclad pools, boss excluded
+#### RELICS — Ironclad pools, boss INCLUDED
 
 | pool | count |
 |---|---:|
@@ -823,6 +851,16 @@ turned out to have a second source — worth distrusting that phrase generally.
 
 Note the per-class pools differ (Ironclad rare is 28, Defect 26, Watcher 27), so
 the Ironclad-specific arrays are the right source — a generic total would be wrong.
+
+⚠️ **These come from `sts_lightspeed`'s declared `std::array` literals, and an
+earlier wiki-derived count of the same thing was wrong.** A summarising fetch of
+wiki.gg's relic list reported **26** common relics against the declared pool's
+**33**. The declared array is compiler-checked and re-verifiable; a fetch summary
+under-counts silently, exactly as it did for potions ("Total: 19+", self-declared
+incomplete). The earlier **≈104** total built on that summary is **withdrawn**.
+See `prior-art-sts-lightspeed.md` §7.8.
+
+⚠️ Still unhandled: Circlet / Red Circlet, awarded when every relic is collected.
 
 #### POTIONS = 33
 

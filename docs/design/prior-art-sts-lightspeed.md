@@ -281,8 +281,58 @@ against it).
 | Juzu Bracelet **reset ordering** | GameContext.cpp | ⚠️ **unverifiable** | the wiki states the *effect*, not whether `monsterChance` resets on a converted roll. Simulator-only, and no wiki source can settle it — see note below |
 | Gold amounts (10–20 / 25–35 / 100±5) | GameContext.cpp | ✅ | **confirmed exactly** — wiki gives 10–20, 25–35, 95–105. Asc 13+ → 71–79 matches the ×0.75 factor |
 | `SHRINE_CHANCE = 0.25` | GameContext.cpp | ⚠️ **not found** | no wiki source states the shrine-vs-event split. Remains simulator-only |
-| Vocabulary pool sizes | CardPools/RelicPools/Potions | ⚠️ **not yet** | |
-| Neow tier composition | Neow.cpp | ⚠️ **partially** | slot structure confirmed; per-tier contents not |
+| Neow tier composition | Neow.cpp | ✅ | **confirmed** — 6 / 5 / 7 contents match the index ranges exactly |
+| Neow Max HP amounts | Neow.cpp | ✅ | ❌ **CORRECTED** — flat per-character (+8/+16/−8 Ironclad), not the 10%/20% its enum names claim. Coincides only for the Ironclad |
+| Vocabulary pool sizes | CardPools/RelicPools/Potions | ⚠️ **not fetch-verifiable** | see §7.8 — and an earlier wiki-derived count was **wrong** |
+
+### 7.7 The pattern: read their arithmetic, not their names
+
+Three of the four defects found by cross-checking were **not behavioural** — the
+code computed the right thing under a wrong label:
+
+| what was wrong | what the code actually did |
+|---|---|
+| `"Take 30% Hp damage."` | computed `floor(hp/10)*3` — not 30% |
+| `TEN_PERCENT_HP_BONUS` / `TWENTY_PERCENT_HP_BONUS` | applied flat per-character values that only *look* like 10%/20% for the Ironclad |
+| `cardRarityFactor` sign | correct, but inverted relative to how the wiki describes the same system |
+
+**So the failure mode when mining this repo is not "their logic is wrong", it is
+"we read the name and believed it".** Trust the arithmetic; treat every
+identifier and display string as a comment.
+
+The fourth defect was different in kind — Neow's boss-relic pool exclusion is
+absent from the code entirely and only the wiki has it. That is the case for
+cross-checking even when the code looks unambiguous.
+
+### 7.8 Pool sizes: the one row the wiki cannot settle by fetch
+
+Attempting this row surfaced a **contradiction that discredits an earlier
+number**, so it is worth recording rather than quietly resolving.
+
+| source | Ironclad common relic pool |
+|---|---:|
+| wiki.gg page summary (fetched 2026-08-13) | **26 total**, of which 3 are other-class → **23** |
+| `sts_lightspeed` `RelicPools.h` | **33** (declared `std::array<RelicId, 33>`) |
+
+These cannot both be right, and **the wiki figure is the one to distrust.** It
+came from a *summarising fetch* — a small model reading a long list page and
+reporting a total. That is precisely the failure mode already recorded in
+`v2-spec.md` §5.0 for potions ("Total: 19+", self-described as not exhaustive):
+an under-count is indistinguishable from a complete one.
+
+`sts_lightspeed`'s figure is a **declared array literal**. It is machine-checked
+by its own compiler and re-verifiable by anyone at any time.
+
+**Consequence: the `≈104` relic estimate from 2026-08-13 was built on the bad
+number and is withdrawn.** The current figure (§5.0, ≈131 + event relics) derives
+from the declared pools and is the one to use.
+
+**What real verification would take:** enumerating the wiki's category listings
+item by item and counting them, not asking a model for a total. That is a
+different and slower kind of work than every other row in this audit, and it is
+**not yet done**. Until it is, pool sizes are marked *derived from declared
+arrays, not independently confirmed* — which is honest, and materially stronger
+than the wiki summary they replaced.
 
 #### ⚠️ The card-rarity sign trap
 
