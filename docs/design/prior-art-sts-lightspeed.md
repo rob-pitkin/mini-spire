@@ -275,11 +275,12 @@ against it).
 | Neow boss pool exclusion | — | ✅ | ➕ **ADDED** — wiki-only constraint |
 | Potion drop 40% ±10 | GameContext.cpp | ✅ | **confirmed** — including that it *decreases* on a drop |
 | Card rarity drift | GameContext.cpp | ✅ | **confirmed, opposite sign** — see below |
-| Gold amounts (10–20 / 25–35 / 100±5) | GameContext.cpp | ⚠️ **not yet** | |
-| `SHRINE_CHANCE = 0.25` | GameContext.cpp | ⚠️ **not yet** | |
-| `lastRoomWasShop` shop suppression | GameContext.cpp | ⚠️ **not yet** | simulator-only so far |
-| Juzu Bracelet reset ordering | GameContext.cpp | ⚠️ **not yet** | simulator-only so far |
-| Tiny Chest every-4th-`?` | GameContext.cpp | ⚠️ **not yet** | simulator-only so far |
+| `lastRoomWasShop` shop suppression | GameContext.cpp | ✅ | **confirmed** — "the game does not allow generating two shops in a row… setting the shop chance to 0". ➕ **and it applies whether the previous shop was a Shop *room* or a `?` that became one** |
+| Tiny Chest every-4th-`?` | GameContext.cpp | ✅ | **confirmed** — "Every 4th ? room is a Treasure room" |
+| Juzu Bracelet monster→event | GameContext.cpp | ✅ | **confirmed** — "Regular enemy combats are no longer encountered in ? rooms" |
+| Juzu Bracelet **reset ordering** | GameContext.cpp | ⚠️ **unverifiable** | the wiki states the *effect*, not whether `monsterChance` resets on a converted roll. Simulator-only, and no wiki source can settle it — see note below |
+| Gold amounts (10–20 / 25–35 / 100±5) | GameContext.cpp | ✅ | **confirmed exactly** — wiki gives 10–20, 25–35, 95–105. Asc 13+ → 71–79 matches the ×0.75 factor |
+| `SHRINE_CHANCE = 0.25` | GameContext.cpp | ⚠️ **not found** | no wiki source states the shrine-vs-event split. Remains simulator-only |
 | Vocabulary pool sizes | CardPools/RelicPools/Potions | ⚠️ **not yet** | |
 | Neow tier composition | Neow.cpp | ⚠️ **partially** | slot structure confirmed; per-tier contents not |
 

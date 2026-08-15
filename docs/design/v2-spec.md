@@ -428,24 +428,73 @@ SHOP     ? shopChance    = 0.03 : shopChance    += 0.03
 TREASURE ? treasureChance= 0.02 : treasureChance+= 0.02
 ```
 
-**Three rules we did not have, all easy to get wrong:**
+**Three rules we did not have, all easy to get wrong. All three wiki-confirmed
+(2026-08-14):**
 
-1. ⚠️ **A `?` cannot become a Shop if the previous room was a Shop** —
-   `lastRoomWasShop` zeroes the shop band for that roll. Note the shop band is
-   *removed*, so its probability falls through to Treasure/Event, and
-   `shopChance` still increments because the choice was not SHOP.
-2. ⚠️ **Juzu Bracelet converts a MONSTER result into an EVENT — but
-   `monsterChance` still resets to 0.10.** The conversion happens *inside* the
-   `choice == MONSTER` branch, before the reset. An implementation that checks
-   the room type after the swap would increment instead of reset, and drift
-   apart over a run. This is the subtlest parity trap found so far.
-3. **Tiny Chest** forces every 4th `?` to TREASURE via a relic counter
+1. ✅ **A `?` cannot become a Shop if the previous room was a Shop** —
+   `lastRoomWasShop` zeroes the shop band for that roll. The band is *removed*,
+   so its probability falls through to Treasure/Event, and `shopChance` still
+   increments because the choice was not SHOP.
+   ➕ **Wiki adds:** this applies whether the previous shop was a Shop *room* or
+   a `?` that resolved to one. So `lastRoomWasShop` is set by both paths.
+2. ✅ **Juzu Bracelet converts a MONSTER result into an EVENT.** Wiki: *"Regular
+   enemy combats are no longer encountered in ? rooms."*
+   ⚠️ **But the reset ordering is simulator-only and no wiki source can settle
+   it.** In `sts_lightspeed` the conversion happens *inside* the
+   `choice == MONSTER` branch, so `monsterChance` **still resets to 0.10** even
+   though the room became an event. An implementation that checks the room type
+   *after* the swap would increment instead — and the two drift apart over a run
+   while both looking correct in any single-room test.
+   **Follow the simulator here**, and record it as a derived-not-verified
+   behaviour: it is an internal counter, invisible to a player except through
+   long-run distribution, which is precisely why the wiki does not document it.
+3. ✅ **Tiny Chest** forces every 4th `?` to TREASURE via a relic counter
    (0→3, reset on fire), *before* the roll — and the forced TREASURE then feeds
-   the normal drift block, resetting `treasureChance`.
+   the normal drift block, resetting `treasureChance`. Wiki: *"Every 4th ? room
+   is a Treasure room."*
 
 **Shrine vs event:** `generateEvent` rolls `SHRINE_CHANCE = 0.25` first. So a `?`
 that resolves to EVENT is 25% a shrine, 75% a regular event, falling back to the
 other list when either is exhausted.
+
+⚠️ **`SHRINE_CHANCE = 0.25` is simulator-only — no wiki source states the
+shrine-vs-event split.** Implement it, flagged as derived-not-verified.
+
+Note also that several "one-time" events (All-Knowing Skull, The Joust, Secret
+Portal) are **internally treated as shrines**, which matches `Events.h` drawing
+them through the shrine path rather than the per-act event lists.
+
+#### ⚠️ OPEN PARITY DECISION: the shrine re-entry bug
+
+[Correlated Randomness in Slay the Spire](https://forgottenarbiter.github.io/Correlated-Randomness/)
+documents a **bug in the real game**: after encountering a shrine event, the
+first `?` room re-entered has roughly an **80% chance of being a regular enemy
+encounter**, under some circumstances — the result of a coding error, not a
+designed mechanic.
+
+**DECIDED (Rob, 2026-08-14): reproduce it. Stay faithful to the game.**
+
+The one real argument against reproducing a bug is that it might be patched,
+turning today's parity into tomorrow's divergence. **That argument does not apply
+here: Slay the Spire 1 is no longer being updated.** The game is a fixed target,
+so its behaviour — including its bugs — is a stable specification rather than a
+moving one.
+
+That settles the general principle too, and it is worth stating once:
+
+> **"Faithful to Slay the Spire" means faithful to the shipped artifact, not to
+> the designers' intent.** Where they differ, the shipped artifact wins. An agent
+> trained against the intended-but-nonexistent version is trained against a game
+> nobody plays.
+
+Consistent with what we already do: §3.5 treats Neow's *no-op* `r.random(0,0)`
+as load-bearing, which is the same category of unintended-but-real behaviour, and
+both `sts_map_oracle` and `sts_lightspeed` chase bit-exact RNG including quirks.
+
+⚠️ **Implementation note:** this needs the *exact* conditions, which
+["under some circumstances"](https://forgottenarbiter.github.io/Correlated-Randomness/)
+does not give. Read the linked analysis properly before implementing, and treat
+the 80% figure as approximate until the mechanism is understood.
 
 **Those exact numbers are not yet verified** and the parity test §5.6.1 mandates
 cannot be written without them. This is a remaining blocker.
