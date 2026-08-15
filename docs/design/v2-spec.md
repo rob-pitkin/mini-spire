@@ -342,10 +342,31 @@ preserved for free.
 convenience alias for the combat stream. Which draws land on it is now a parity
 question: get the set wrong and potion offers desynchronise from the real game.
 
-**Generalise the question:** for every random offer in the run, *when* is it
-rolled? Card rewards at fight end or on entering the reward screen? Shop stock on
-generation or on entry? Each answer is observable to a player who reloads a save,
-so each is a parity claim.
+#### Roll timing for every random offer — RESOLVED
+
+Each of these is observable to a player who reloads a save, so each is a parity
+claim rather than an implementation detail.
+
+| offer | rolled | stream | source |
+|---|---|---|---|
+| Map (whole act) | at run start | `map` | `sts_map_oracle` |
+| `?` room contents | **on entry** | `event` | `getEventRoomOutcomeHelper` (§4.1) |
+| Which event a `?` becomes | on entry, after the `?` roll | `event` | `generateEvent` |
+| Combat card reward | **at fight end** — `createCombatReward()` builds the reward and opens the screen in the same step | `card` | `GameContext.cpp` |
+| Combat gold / potion drop | at fight end, same call | `treasure` / `potion` | as above |
+| Elite relic | at fight end | `relic` | `createEliteCombatReward` |
+| **Shop stock and prices** | **on entering the shop room** — `screenState = SHOP_ROOM` and `info.shop.setup(*this)` are the same two lines; nothing is generated at map time | `merchant` / `card` | `GameContext.cpp:834–835` |
+| Potion card-choices | **on use** — see above | `cardRandom` | `Actions::DiscoveryAction` |
+
+**The pattern: everything is rolled when its screen opens, not when the map is
+generated.** The one exception is the map itself. Potion card-choices look like
+an exception and are not — they are rolled when *their* screen opens, which is on
+use (and appear frozen only because their stream rarely advances).
+
+⚠️ **Consequence for `RunState`:** shop stock is **not** part of map generation
+and must not be pre-computed at run start. Doing so would be observable — a
+player who reloads before entering a shop gets different stock in our engine and
+the same stock in the real game, or vice versa.
 
 ## 4. Phases
 
@@ -920,11 +941,12 @@ listings item by item. See `prior-art-sts-lightspeed.md` §7.8 and §15.
 The one-time list is **14 at Ascension 0 and 13 at Ascension 15** (Note For
 Yourself drops out) — a second place the §3.0 ascension pin changes a count.
 
-⚠️ **Still open:** whether the one-time events are act-gated (they sit outside
-the per-act namespaces, so they may not all reach Act 1), and the **per-event
-option counts**, which need the event logic read rather than the event list.
-`EVENT_OPTIONS` is bounded at roughly 31 × 2–4 ≈ **60–95** — so the reviewer's
-"~60 is low by 2–3×" was directionally right but the ceiling is ~95, not ~180.
+**`EVENT_OPTIONS = 77`** — counted per event in §6.3, not estimated.
+
+⚠️ **Still open:** whether the one-time events are act-gated. They sit outside
+the per-act namespaces in `Events.h`, so some may not reach Act 1 — which would
+*reduce* both 31 and 77. Counting them in is the safe direction (a reserved id
+costs one float; a missing one is a layout change).
 
 #### Impact on §5.1
 
@@ -1227,10 +1249,50 @@ It also inherits the property §6 requires: **action *k* means the same option
 forever.** "Take the gold from Big Fish" is one fixed index, never "the second
 option on this screen".
 
-Sizing: ≤31 reachable Act 1 events (11 events + 6 shrines + 14 one-time, §5.0) ×
-2–4 options ≈ **60–95 ids**. Cheap either way next to `CARDS`. **Count it, don't
-estimate it** — the count needs each event's *logic* read, not a list, since
-options live in branches rather than a table.
+#### `EVENT_OPTIONS = 77` — counted, not estimated
+
+From `sts_lightspeed` `GameAction::getValidEventSelectBits`, which returns a
+**bitmask of valid options per event** — the compact source for this, rather than
+the ~1,400-line `chooseEventOption` switch.
+
+| group | events | option ids |
+|---|---|---:|
+| Act 1 events | 11 | **29** |
+| Act 1 shrines | 6 | **10** |
+| One-time (Asc 0) | 14 | **38** |
+| **total** | **31** | **77** |
+
+Per-event (max bit position used, since conditional options are masked in place):
+
+| ids | events |
+|---:|---|
+| 1 | Lab · Wheel of Change |
+| 2 | Dead Adventurer · World of Goop · The Ssssserpent · Hypnotizing Mushrooms · Scrap Ooze · Shining Light · Transmorgrifier · Purifier · Upgrade Shrine · Duplicator · The Divine Fountain · Note For Yourself · Secret Portal · The Joust |
+| 3 | Big Fish · The Cleric · Wing Statue · Living Wall · Golden Shrine · Ominous Forge · Face Trader · N'loth |
+| 4 | Knowing Skull · The Woman in Blue · We Meet Again |
+| 5 | **Golden Idol** — two phases on *disjoint* bit ranges (`0b11` then `0b11100`) |
+| 6 | **Designer In-Spire** — five conditional options plus a fixed "leave" at bit 5 |
+| — | **Match and Keep!** — returns 0, handled separately (§9 auto-resolve) |
+
+**Three things this confirms:**
+
+1. **Conditional options are masked in place, not renumbered.** Pleading Vagrant
+   returns `0x7` with enough gold and `0b110` without — *the same bit positions*.
+   The Cleric, Wing Statue, Living Wall, Purifier and others all follow this
+   shape. Independent confirmation of the ruling above.
+2. **Golden Idol proves multi-phase events need disjoint id ranges.** Its two
+   phases use bits 0–1 and 2–4, commented *"map these to different selections"*.
+   One event, five stable ids.
+3. **Events carry internal state.** `gc.info.eventData` is a phase counter
+   (Colosseum, Cursed Tome, Golden Idol). ⚠️ **`RunState` needs an event-phase
+   field**, and it must be in the observation — a player can see which phase of
+   an event they are in.
+
+⚠️ **Do not inherit `BONFIRE_SPIRITS = 0`.** The comment says *"we skip the
+select phase of this event"* — a deliberate simplification in `sts_lightspeed`,
+not game behaviour. Bonfire Spirits asks the player to sacrifice a card, which in
+our design is a **card-selection purpose** (§6.1), not an event-option id. It
+contributes 0 to the 77 and one entry to the purpose enum.
 
 **Conditionally-offered options get their own ids (Rob, 2026-08-15).** Where an
 event branch is only available under a condition — enough gold, a relic held —
