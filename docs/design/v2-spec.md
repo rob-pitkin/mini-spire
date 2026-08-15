@@ -534,7 +534,7 @@ Note also that several "one-time" events (All-Knowing Skull, The Joust, Secret
 Portal) are **internally treated as shrines**, which matches `Events.h` drawing
 them through the shrine path rather than the per-act event lists.
 
-#### ⚠️ OPEN PARITY DECISION: the shrine re-entry bug
+#### The shrine re-entry bug — reproduce it
 
 [Correlated Randomness in Slay the Spire](https://forgottenarbiter.github.io/Correlated-Randomness/)
 documents a **bug in the real game**: after encountering a shrine event, the
@@ -807,20 +807,16 @@ nothing but advances the stream.** Our RNG must consume it too or every
 subsequent Neow-stream draw desynchronises. Exactly the kind of thing CLAUDE.md
 means by treating the RNG stream as an interface.
 
-#### ⚠️ This contradicts §9: boss relics are NOT structurally absent
+#### Boss relics reach the run through Neow
 
-§9 currently says:
-
-> **Boss relics are absent structurally, not excluded** — they are awarded after
-> an act boss, and the run ends there.
-
-**That is wrong.** Neow's slot 3 is *always* a boss relic, offered on floor 0, in
-exchange for the starter relic. Boss relics are reachable in every single run.
+Neow's slot 3 is *always* a boss relic, offered on floor 0 in exchange for the
+starter relic — so **all 22 are reachable in every run**, before the first fight.
+No *post-boss* relic is ever awarded, since the run ends at the Act 1 boss, but
+that was never the only source.
 
 Consequences:
 
-1. **`RELICS` grows by the 22 boss relics** — ~109 → ~131, plus event relics.
-   §5.0's count must be revised.
+1. **`RELICS` includes all 22 boss relics** — see §5.0.
 2. **Burning Blood can be lost**, so the relic multi-hot must represent a run
    with no starter relic. Any code assuming Burning Blood is always present is
    wrong.
@@ -929,24 +925,21 @@ listings item by item. See `prior-art-sts-lightspeed.md` §7.8 and §15.
 
 `Potions.h`: `potionPool[4][33]`, `poolSize = 33`. Per class, so 33 for Ironclad.
 
-#### EVENTS ≤ 31 reachable in Act 1
+#### EVENTS = 25 reachable in Act 1
 
 | group | count |
 |---|---:|
 | `Act1::events` | 11 |
 | `Act1::shrines` | 6 |
-| `oneTimeEventsAsc0` | 14 |
-| **total** | **≤31** |
+| `oneTimeEventsAsc0`, **act-gated to Act 1** | **8** of 14 |
+| **total** | **25** |
 
 The one-time list is **14 at Ascension 0 and 13 at Ascension 15** (Note For
-Yourself drops out) — a second place the §3.0 ascension pin changes a count.
+Yourself drops out) — a second place the §3.0 ascension pin changes a count. Of
+those 14, `canAddOneTimeEvent` gates **6 out of Act 1** entirely; see §6.3 for
+the per-event table.
 
-**`EVENT_OPTIONS = 77`** — counted per event in §6.3, not estimated.
-
-⚠️ **Still open:** whether the one-time events are act-gated. They sit outside
-the per-act namespaces in `Events.h`, so some may not reach Act 1 — which would
-*reduce* both 31 and 77. Counting them in is the safe direction (a reserved id
-costs one float; a missing one is a layout change).
+**`EVENT_OPTIONS = 58`** — counted per event in §6.3, not estimated.
 
 #### Impact on §5.1
 
@@ -1249,7 +1242,7 @@ It also inherits the property §6 requires: **action *k* means the same option
 forever.** "Take the gold from Big Fish" is one fixed index, never "the second
 option on this screen".
 
-#### `EVENT_OPTIONS = 77` — counted, not estimated
+#### `EVENT_OPTIONS = 58` — counted, not estimated
 
 From `sts_lightspeed` `GameAction::getValidEventSelectBits`, which returns a
 **bitmask of valid options per event** — the compact source for this, rather than
@@ -1259,8 +1252,38 @@ the ~1,400-line `chooseEventOption` switch.
 |---|---|---:|
 | Act 1 events | 11 | **29** |
 | Act 1 shrines | 6 | **10** |
-| One-time (Asc 0) | 14 | **38** |
-| **total** | **31** | **77** |
+| One-time, **Act 1 reachable** | 8 | **19** |
+| **total** | **25** | **58** |
+
+**One-time events are act-gated, and most are not Act 1.**
+`GameContext::canAddOneTimeEvent` gates each one:
+
+| event | gate | Act 1? |
+|---|---|:--:|
+| Ominous Forge · Bonfire Spirits · Lab · Note For Yourself · We Meet Again | none (default `true`) | ✅ |
+| Face Trader | `act == 1 \|\| act == 2` | ✅ |
+| The Woman in Blue | `gold >= 50` | ✅ |
+| The Divine Fountain | `deck.hasCurse()` | ✅ *(rare at A0 — needs a Neow curse drawback or an event curse, but reachable)* |
+| Designer In-Spire | `(act == 2 \|\| act == 3) && gold >= 75` | ❌ |
+| Duplicator | `act == 2 \|\| act == 3` | ❌ |
+| Knowing Skull | `act == 2 && curHp > 12` | ❌ |
+| N'loth | `act == 2 && relics.size() >= 2` | ❌ |
+| The Joust | `act == 2 && gold >= 50` | ❌ |
+| Secret Portal | `act == 3 && !speedrunPace` | ❌ |
+
+So 6 of the 14 are unreachable in Act 1, removing 19 ids (Designer In-Spire 6,
+Knowing Skull 4, N'loth 3, The Joust 2, Secret Portal 2, Duplicator 2).
+
+**Sizing decision: `EVENT_OPTIONS = 58`, exact — do not reserve the other 19.**
+The full-game enumeration is 77, but acts 2–3 would change far more than event
+ids (new enemies, new encounters, new relic pools), so that is a new layout
+version regardless. Reserving buys nothing and inflates every published number.
+
+⚠️ This also settles §5.0's open question in the *opposite* direction from the
+safe guess: the earlier note said counting all one-time events in was the safe
+choice because a missing id costs a layout change. With the gates known, 6 events
+are simply unreachable — including them would reserve dead indices the agent can
+never use, which is its own (smaller) parity smell.
 
 Per-event (max bit position used, since conditional options are masked in place):
 
