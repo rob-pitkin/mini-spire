@@ -1,12 +1,31 @@
 # v2.0.0 — full Act 1 run: implementable spec
 
-**Status: DRAFT.** Scope is settled (see `v2-obs-notes.md` § SCOPE DECIDED);
-sizings are computed but not yet ratified. Open questions are in §10 and are
-called out inline as ⚠️.
+**Status: DRAFT**, pending human review. Scope is settled
+(`v2-obs-notes.md` § SCOPE DECIDED). Remaining open items are in §10.
 
 **Audience: an implementer with no prior context.** Everything needed to build
-this should be here or linked. Where a number is a planning estimate rather than
-a counted fact, it says so.
+this should be here or linked.
+
+**How to read this document**
+
+- **Section bodies state what is currently true.** Read them as the spec.
+- **⚠️ marks something still open** — a decision not taken, or a number not yet
+  verified. Every one of them is listed in §10.
+- **Confidence is labelled** wherever a figure is not a counted fact:
+  *confirmed* (cross-checked against the wiki), *derived-not-verified* (taken
+  from a reimplementation, no wiki source), or *estimate*.
+- **§15 is the corrections log.** Several things in here were wrong earlier and
+  were fixed; the history lives there rather than inline, so that the spec reads
+  as a spec. Consult it when you want to know *why* something is the way it is —
+  or before "fixing" something back.
+
+**Sources.** Game mechanics are taken from
+[`sts_lightspeed`](https://github.com/gamerpuppy/sts_lightspeed) and
+[`sts_map_oracle`](https://github.com/Ru5ty0ne/sts_map_oracle) (both MIT, both
+reimplementations, both cited), and **cross-checked against
+[wiki.gg](https://slaythespire.wiki.gg)** before entering this spec. That check
+is mandatory — see CLAUDE.md and `prior-art-sts-lightspeed.md` §7.5. We transfer
+mechanics, not code.
 
 ---
 
@@ -42,8 +61,7 @@ A run does **not** begin in combat. `reset()` returns an observation in the
 `neow` phase. This differs from v1.0.0 and is the first thing an implementer
 will trip on.
 
-**On episode length (Rob, 2026-08-13).** An earlier draft said ~200 steps by
-multiplying 9 fights × 18. That is too low, for four reasons:
+**On episode length.** ~400–700 is an **estimate**, and it is built from:
 
 - **One step is one card**, so a turn playing 3 cards is 4 steps with end-turn.
 - **Cards with choices cost 2 steps** (Armaments, Exhume, Warcry) — the v1.0.0
@@ -102,11 +120,10 @@ published on PyPI with users. It also disciplines the design — anything that
 Concretely: relic and potion state lives in `CombatState` with empty defaults, so
 a `CombatEnv` constructed the v1.0.0 way behaves exactly as it does today.
 
-### 3.1 `CombatState` IS modified — an earlier draft claimed otherwise
+### 3.1 `CombatState` is modified
 
-That claim was wrong and is withdrawn. It fails four independent ways, and
-pretending otherwise would mislead an implementer on the largest piece of work
-in the project:
+v2 changes `CombatState`. This is the largest piece of work in the project, and
+it is forced four independent ways:
 
 | # | what forces a change |
 |---|---|
@@ -234,11 +251,11 @@ today.
 
 ### 3.4 `clone()`
 
-`RunState::clone()` must be a plain copy for MCTS. Note the earlier draft
-demanded "POD members, fixed arrays, no heap-owned graphs" and then listed three
-`std::vector`s — `CombatState` already clones correctly *with* vectors, so the
-constraint as stated was simply wrong. The real requirement is: **no raw
-pointers or shared ownership**; value semantics throughout.
+`RunState::clone()` must be a plain copy for MCTS.
+
+**The requirement is: no raw pointers, no shared ownership — value semantics
+throughout.** `std::vector` members are fine; `CombatState` already clones
+correctly with them.
 
 ### 3.5 RNG streams — independent, named, derived
 
@@ -375,15 +392,14 @@ four. Do not "tidy" that — it is the game's behaviour.
 Row 0 is the documented escape hatch: if no type passes, row 0 takes the first
 row-assignable type anyway.
 
-### The `?` resolution distribution — CORRECTED, and the spec had it backwards
+### The `?` resolution distribution
 
 Room types are fixed at generation **except `EventRoom`**, whose contents are
 rolled **on entry** (§5.6.1).
 
-> ⚠️ **An earlier draft of this spec said "event chance starts at 0.1 and rises
-> by 0.1 per non-event `?`". That is inverted.** Event is not the rare outcome
-> drifting upward — it is the **fallback**, and it is the common one. Monster,
-> Shop and Treasure are the rare rolls that drift.
+**Event is the fallback, and it is the common outcome.** Monster, Shop and
+Treasure are rare rolls that drift upward until they hit. *(This is the reverse
+of the intuitive reading — see §15.)*
 
 | outcome | base | on failing to occur | on occurring |
 |---|---:|---|---|
@@ -772,7 +788,7 @@ one (`observation-space.md` §1; the environment ships the superset).
 
 Planning vocabulary — see §5.0 for the scoping rules and current confidence.
 
-### 5.0 Vocabulary scoping (ROB-104, in progress 2026-08-13)
+### 5.0 Vocabulary scoping (ROB-104)
 
 **The counts are not "how many exist in Slay the Spire". They are "how many are
 reachable in v2.0.0's scope"**, and the scoping rules are the design decision —
@@ -782,9 +798,7 @@ Rules:
 
 1. **Ironclad + colorless only.** Silent / Defect / Watcher cards and
    class-specific relics and potions are unreachable and excluded.
-2. ~~**Boss relics excluded**~~ — ⚠️ **WITHDRAWN 2026-08-14.** Boss relics are
-   **in scope**: Neow offers one on floor 0 of every run (§4.4). The original
-   reasoning only considered post-boss awards.
+2. **Boss relics included** — Neow offers one on floor 0 of every run (§4.4).
 3. **Blights excluded** — not part of the base game's normal run.
 4. **Upgraded variants count separately.** v1.0.0's 189 counts `Strike` and
    `Strike+` as distinct ids, and rung ladders add more (§ `observation-space.md` §5).
@@ -829,7 +843,9 @@ same discipline CLAUDE.md records for grep. The numbers below replace that pass.
 reachability checks. **Ascender's Bane is excluded automatically**: it is granted
 at Ascension 10+, and §3.0 pins us at 0. A concrete payoff from that decision.
 
-#### RELICS — Ironclad pools, boss INCLUDED
+#### RELICS — Ironclad pools
+
+*Confidence: derived-not-verified — see the note below.*
 
 | pool | count |
 |---|---:|
@@ -838,27 +854,20 @@ at Ascension 10+, and §3.0 pins us at 0. A concrete payoff from that decision.
 | Uncommon | 30 |
 | Rare | 28 |
 | Shop | 17 |
-| Boss | **22** — ⚠️ **IN scope, corrected 2026-08-14** |
+| Boss | 22 |
 | **subtotal** | **131** |
 | Event / special | ⚠️ not in these pools; needs the Act 1 subset |
 | **RELICS** | **≈131 + event relics** |
 
-⚠️ **Rule 2 was wrong and is withdrawn.** Boss relics were excluded on the
-grounds that the run ends at the Act 1 boss before one can be awarded. But
-**Neow's slot 3 offers a boss relic on floor 0 of every run** (§4.4), so all 22
-are reachable. This is the second time a "structurally unreachable" claim has
-turned out to have a second source — worth distrusting that phrase generally.
+Per-class pools differ (Ironclad rare is 28, Defect 26, Watcher 27), so the
+**Ironclad-specific arrays are the right source** — a generic total would be
+wrong.
 
-Note the per-class pools differ (Ironclad rare is 28, Defect 26, Watcher 27), so
-the Ironclad-specific arrays are the right source — a generic total would be wrong.
-
-⚠️ **These come from `sts_lightspeed`'s declared `std::array` literals, and an
-earlier wiki-derived count of the same thing was wrong.** A summarising fetch of
-wiki.gg's relic list reported **26** common relics against the declared pool's
-**33**. The declared array is compiler-checked and re-verifiable; a fetch summary
-under-counts silently, exactly as it did for potions ("Total: 19+", self-declared
-incomplete). The earlier **≈104** total built on that summary is **withdrawn**.
-See `prior-art-sts-lightspeed.md` §7.8.
+⚠️ **Confidence note.** These are `sts_lightspeed`'s declared `std::array`
+literals: compiler-checked and re-verifiable, but **not independently confirmed
+against the wiki**, and the wiki cannot confirm them by fetch — a summarising
+fetch under-counts silently. Real verification means enumerating wiki category
+listings item by item. See `prior-art-sts-lightspeed.md` §7.8 and §15.
 
 ⚠️ Still unhandled: Circlet / Red Circlet, awarded when every relic is collected.
 
@@ -1303,28 +1312,17 @@ sts_lightspeed agents **cannot interpret the numbers without this table.** That
 is the actual reason it goes in the README rather than politeness about
 limitations.
 
-> ### ⚠️ CORRECTED 2026-08-14 — boss relics are IN scope
->
-> This section previously read: *"Boss relics are absent structurally, not
-> excluded — they are awarded after an act boss, and the run ends there."*
->
-> **That is wrong.** The reasoning was sound as far as it went — we do end at the
-> Act 1 boss, so no *post-boss* relic is ever awarded — but it missed the other
-> source. `Neow::getOptions` sets slot 3 unconditionally:
->
-> ```cpp
-> rewards[3].r = Bonus::BOSS_RELIC;
-> rewards[3].d = Drawback::LOSE_STARTER_RELIC;
-> ```
->
-> **Every run is offered a boss relic on floor 0**, in exchange for the starter
-> relic. Boss relics are not an edge case; they are available before the first
-> fight of every single episode.
->
-> Consequences: `RELICS` includes all 22 boss relics (§5.0); **Burning Blood is
-> losable**, so nothing may assume the starter relic is present; and the Neow
-> boss-relic swap is a real strategic decision the agent must be able to see and
-> take.
+### Boss relics are in scope
+
+**Every run is offered a boss relic on floor 0**, as Neow's slot 3, in exchange
+for the starter relic (§4.4). No *post-boss* relic is ever awarded — the run ends
+at the Act 1 boss — but Neow makes all 22 reachable before the first fight of
+every episode.
+
+Consequences: `RELICS` includes all 22 boss relics (§5.0); **Burning Blood is
+losable**, so nothing may assume the starter relic is present; and the Neow
+boss-relic swap is a real strategic decision the agent must see and be able to
+take.
 
 ### Multi-select: costed, and the answer is "defer" (Rob asked)
 
@@ -1601,3 +1599,54 @@ Related: **entity-indexed actions give zero generalisation across cards.** The
 policy learns "index 137" from scratch and sees perhaps 10–15 card types per run.
 Stable indexing solved *semantics*, not *sample efficiency*, and the attribute
 encoding considered in `v2-obs-notes.md` is the lever that would address this.
+
+---
+
+## 15. Corrections log
+
+Things this spec got wrong, and what they were changed to. Kept because the
+reasoning is why the current text is trustworthy — and because several of these
+look "wrong" to someone who half-remembers the game and would otherwise be
+"fixed" back.
+
+The section bodies above state current truth; nothing here needs reading to
+implement the spec.
+
+### Design corrections
+
+| # | was | is | why it changed |
+|---|---|---|---|
+| 1 | `CombatState` unchanged in v2 | **modified**, four ways (§3.1) | Card vocabulary widens, relics hook in, potions enter the action queue, curses need enumerators. "Unchanged" would have misled an implementer on the largest piece of work in the project. |
+| 2 | `clone()` needs "POD members, fixed arrays, no heap-owned graphs" | **no raw pointers, no shared ownership** (§3.4) | The old constraint listed three `std::vector`s in the same breath. `CombatState` already clones correctly *with* vectors, so the rule as stated was self-contradicting. |
+| 3 | Episode ≈ 200 steps | **~400–700**, to be measured (§2) | Computed as 9 fights × 18. Missed that one step is one card, that choice-cards cost 2 steps, that Act 1 is ~16 floors, and that shops add many decisions. |
+| 4 | Positional option-slot channel carries v2's decisions | **entity-indexed everywhere** (§6.2) | `decision-points.md` §5.2 had already identified entity indexing as correct and rejected it because map/shop/event options have no `CardId`. Giving each its own block voids that objection. |
+| 5 | Card selection needs a `(purpose, entity)` action dimension | **two-phase selection** (§6.1) | The real UI already chooses purpose first (click *removal service*, then the card). Parity dissolved the collision at zero action-space cost. |
+| 6 | Evaluation protocol required in this spec | **out of scope** (§13) | This spec covers functional implementation; training and evaluation come after v2.0.0. The determinism test survives, because it is a determinism test, not an eval one. |
+| 7 | Multi-select must be designed now — "painful to retrofit" | **deferred** (§9) | Costed rather than asserted: a confirm action, a selected-cards plane, an accumulate flag. All additive, none moving an existing index. |
+| 8 | Ascension a live parameter | **pinned at 0** (§3.0) | Scope creep before all four acts exist. Also removes Ascender's Bane, shrinks the one-time event pool 14→13, and drops the boss-gold scaling branch. |
+
+### Parity corrections — mechanics we had wrong
+
+| # | was | is | source |
+|---|---|---|---|
+| 9 | `?` event chance starts 10% and drifts **up** | **Event is the fallback** (~85% on a first `?`); Monster 10/+10, Shop 3/+3, Treasure 2/+2 drift (§4.1) | Inverted. wiki.gg + Fandom + `sts_lightspeed` all agree on the corrected form. |
+| 10 | Boss relics structurally unreachable | **all 22 reachable** on floor 0 (§4.4, §9) | Neow's slot 3 is unconditionally a boss relic swap. The original reasoning only considered *post-boss* awards. Second "structurally unreachable" claim to have a second source — **distrust that phrase**. |
+| 11 | Neow damage drawback = 30% of HP | **`floor(currentHp / 10) * 3`** (§4.4) | `sts_lightspeed`'s *display string* says 30%; its arithmetic and the wiki agree on the floor form. At 75 HP: 21, not 22.5. |
+| 12 | Neow Max HP changes are 10% / 20% | **flat per-character**: +8 / +16 / −8 for the Ironclad (§4.4) | Their enum *names* say percent. Coincides only for the Ironclad (80 HP); the Silent's real values are +6/+12/−7. Latent defect that every Ironclad test would pass. |
+| 13 | `RELICS ≈ 104` | **≈131 + event relics** (§5.0) | The 104 came from a *summarising wiki fetch* reporting 26 common relics against the declared pool's 33. A fetch summary under-counts silently. |
+| 14 | Φ normalised by `hp / max_hp` | **`hp / HP_REF`**, a constant (`run-reward.md` §4) | Dividing by *current* `max_hp` made Φ **fall** when Max HP was gained — a wrong-signed incentive on exactly the resource-vs-investment decisions the reward design exists to protect. |
+| 15 | PBRS "cannot bias playstyle" | **does not change the optimal policy** (`run-reward.md` §3) | Ng et al. preserve the optimum, not the learned policy — and under entropy-regularised objectives (PPO's bonus) invariance does not hold at all. |
+
+### Standing traps
+
+Recorded because each is a place where a careful reader, checking against another
+source, would "correct" the spec into being wrong.
+
+| trap | |
+|---|---|
+| **Card-rarity sign** | wiki describes an offset starting −5 rising +1 per common, applied to the *rare chance*. `sts_lightspeed` uses a factor starting +5 falling −1, applied to the *roll*. `offset_wiki = −factor_lightspeed`. Same system; mixing conventions inverts it. |
+| **Juzu Bracelet reset** | Converting MONSTER→EVENT still resets `monsterChance` to 0.10, because the conversion happens *inside* the `choice == MONSTER` branch. Checking room type after the swap increments instead. Invisible in any single-room test. |
+| **Neow's no-op draw** | `getOptions` ends with `r.random(0, 0)` — consumes a draw, changes nothing. Skip it and every later Neow-stream draw desynchronises. |
+| **Read arithmetic, not names** | Three of four defects found by cross-checking `sts_lightspeed` were mislabelled-but-correct code (#11, #12, and the rarity sign). Treat every identifier and display string there as a comment. |
+| **Room types ≠ phases** | The 8 map room types and the 8 phases are *different* 8s that look interchangeable. Do not share an enum. |
+| **`kEndTurnAction` ≠ `size − 1`** | v1.0.0 precedent (CLAUDE.md): the option-slot channel sits after the combat block. Re-deriving offsets instead of reading published constants broke the TUI and 13 tests. |
