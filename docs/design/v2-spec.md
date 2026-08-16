@@ -29,6 +29,40 @@ mechanics, not code.
 
 ---
 
+## Contents
+
+| § | | |
+|---|---|---|
+| 1 | [What v2.0.0 is](#1-what-v200-is) | scope, and what is excluded |
+| 2 | [Episode definition](#2-episode-definition) | reset / step / terminate, episode length |
+| 3 | [Architecture](#3-architecture) | `RunState`, the handoff contract, `clone()`, RNG streams |
+| 4 | [Phases](#4-phases) | map generation, run content, shops, Neow |
+| 5 | [Observation](#5-observation) | vocabularies, layout, encoding rationale |
+| 6 | [Action space](#6-action-space) | entity indexing, two-phase selection, event options |
+| 7 | [Reward](#7-reward) | potential-based shaping, configurability |
+| 8 | [Decision points](#8-decision-points) | what the agent is asked, per phase |
+| 9 | [Shape-breakers](#9-shape-breakers-auto-resolve) | auto-resolve, and the divergence table |
+| 10 | [Open questions](#10-open-questions) | **what still blocks, and what is accepted** |
+| 11 | [Implementation order](#11-suggested-implementation-order) | |
+| 12 | [Non-termination hazard](#12-non-termination-hazard) | the turn cap |
+| 13 | [Evaluation protocol](#13-evaluation-protocol-out-of-scope) | out of scope, retained as input |
+| 14 | [The biggest research risk](#14-the-biggest-research-risk) | does drafting discriminate at A0? |
+| 15 | [Corrections log](#15-corrections-log) | history and standing traps |
+
+**Key figures**, all counted rather than estimated (§5.1):
+
+| | |
+|---|---:|
+| `CARDS` | 269 |
+| `RELICS` | 151 |
+| `POTIONS` | 33 |
+| `EVENTS` | 25 |
+| `EVENT_OPTIONS` | 58 |
+| **observation** | **4,241 floats** (2.39× v1.0.0) |
+| **action space** | **2,141** (63% of it the combat block v1.0.0 already ships) |
+
+---
+
 ## 1. What v2.0.0 is
 
 A **complete Act 1 run** of Slay the Spire as an Ironclad, as a Gymnasium
@@ -81,7 +115,7 @@ normal play.
 RunState                     ← NEW. owns the run.
   ├── floor, gold
   ├── master deck  (vector<Card>)
-  ├── relics       (vector<RelicId> — order matters, see §5.4)
+  ├── relics       (vector<RelicId> — order matters, see §5.8)
   ├── potions      (vector<PotionId>)
   ├── map          (105 nodes + edges + visited)
   ├── card_removal_price
@@ -89,7 +123,7 @@ RunState                     ← NEW. owns the run.
   └── CombatState  ← EXISTING, extended. owned, not inherited.
 ```
 
-### 3.0 Two scope decisions (Rob, 2026-08-13)
+### 3.0 Two scope decisions
 
 **Ascension is hardcoded to 0 and is not in `RunState` or the observation.**
 Ascension changes enemy HP, elite counts, starting HP and adds a curse — a real
@@ -105,7 +139,7 @@ Both are recorded because *omitting* them is the decision — a reader who knows
 Slay the Spire will otherwise assume they were forgotten. This also closes §10's
 "Ascension is undefined": it is now defined as pinned at 0.
 
-### 3.0.1 Keep the `CombatState` additions non-breaking (Rob, 2026-08-13)
+### 3.0.1 Keep the `CombatState` additions non-breaking
 
 Relics, potions and the wider card vocabulary are additions to `CombatState`.
 **Make them additive wherever possible, so v1.x remains a usable standalone
@@ -200,7 +234,7 @@ two implementers cannot disagree.
 | status cards generated in combat (Wound, Dazed, Slimed, Burn) | **discarded** | they exist only for that fight |
 | **permanent card changes** | **written back by uid** — see below | Feed, Ritual Dagger, a mid-fight Armaments |
 
-#### Card instance identity — DECIDED: `Card` gains a uid (Rob, 2026-08-13)
+#### Card instance identity: `Card` gains a uid
 
 `Card` currently carries `card_id`, `bonus_damage`, `upgrades` and **no unique
 id**. v2 cannot work without one, because these are indistinguishable on
@@ -257,7 +291,7 @@ today.
 throughout.** `std::vector` members are fine; `CombatState` already clones
 correctly with them.
 
-### 3.5 RNG streams — independent, named, derived
+### 3.5 RNG streams
 
 v1.0.0's determinism is per-`CombatState` (one `seed`, one `mt19937`). A run has
 many random systems, and **sharing one stream across them is a trap**: adding a
@@ -342,7 +376,7 @@ preserved for free.
 convenience alias for the combat stream. Which draws land on it is now a parity
 question: get the set wrong and potion offers desynchronise from the real game.
 
-#### Roll timing for every random offer — RESOLVED
+#### Roll timing for every random offer
 
 Each of these is observable to a player who reloads a save, so each is a parity
 claim rather than an implementation detail.
@@ -392,7 +426,7 @@ The phase one-hot slot is **retained** — the agent should still see that it is
 on a treasure floor, and collapsing the enumerator would renumber the others for
 no benefit. Which relic the chest grants is drawn from the `relic` stream (§3.5).
 
-## 4.1 Map generation
+### 4.1 Map generation
 
 **Reimplemented in C++, deriving from
 [`sts_map_oracle`](https://github.com/Ru5ty0ne/sts_map_oracle) (MIT).** No Rust
@@ -406,7 +440,7 @@ Rob's note stands: it is a very good starting point but **not verified as 100%
 correct**, so treat divergence from the real game as a bug in our port *or* in
 the reference, and check before assuming which.
 
-### Parameters (`src/main.rs`)
+#### Parameters
 
 ```
 map_height   = 15      // grid rows; floor 16 is the boss, floor 17 the chest
@@ -414,13 +448,13 @@ map_width    = 7       // grid columns
 path_density = 6       // paths carved, NOT the width — a floor holds ≤6 rooms
 ```
 
-### Room types
+#### Room types
 
 `MonsterRoom` · `MonsterRoomElite` · `EventRoom` (`?`) · `RestRoom` ·
 `ShopRoom` · `TreasureRoom` — six, plus a seventh "no room here" state for empty
-grid positions, giving the 8-wide one-hot in §5.1 block 12.
+grid positions, giving the 8-wide one-hot in §5.2 block 12.
 
-### Generation order
+#### Generation order
 
 1. **Carve `path_density` paths** bottom to top. Edges reach only columns
    `c−1, c, c+1`; first-floor edges sharing a destination are trimmed.
@@ -432,7 +466,7 @@ grid positions, giving the 8-wide one-hot in §5.1 block 12.
 4. **Assign to nodes** in row-major order, taking the first type from the quota
    list that passes all three rules.
 
-### The three placement rules (all must pass)
+#### The three placement rules (all must pass)
 
 | rule | constraint |
 |---|---|
@@ -446,10 +480,10 @@ four. Do not "tidy" that — it is the game's behaviour.
 Row 0 is the documented escape hatch: if no type passes, row 0 takes the first
 row-assignable type anyway.
 
-### The `?` resolution distribution
+#### The `?` resolution distribution
 
 Room types are fixed at generation **except `EventRoom`**, whose contents are
-rolled **on entry** (§5.6.1).
+rolled **on entry** (§5.10).
 
 **Event is the fallback, and it is the common outcome.** Monster, Shop and
 Treasure are rare rolls that drift upward until they hit. *(This is the reverse
@@ -566,15 +600,15 @@ both `sts_map_oracle` and `sts_lightspeed` chase bit-exact RNG including quirks.
 does not give. Read the linked analysis properly before implementing, and treat
 the 80% figure as approximate until the mechanism is understood.
 
-**Those exact numbers are not yet verified** and the parity test §5.6.1 mandates
+**Those exact numbers are not yet verified** and the parity test §5.10 mandates
 cannot be written without them. This is a remaining blocker.
 
-## 4.2 Run-content generation (ROB-106)
+### 4.2 Run-content generation
 
 From `sts_lightspeed` `src/game/GameContext.cpp`. This section was previously
 listed as "entirely unspecified"; it is now specified except where marked.
 
-### Gold
+#### Gold
 
 | source | amount |
 |---|---|
@@ -585,7 +619,7 @@ listed as "entirely unspecified"; it is now specified except where marked.
 Golden Idol adds `round(gold * 0.25)` in all three cases. (Ascension ≥13 scales
 boss gold to 75% — not reachable at our pinned A0, §3.0.)
 
-### Potion drops
+#### Potion drops
 
 ```
 chance = 40 + potionChance          // potionChance starts at 0
@@ -602,7 +636,7 @@ counter. And **a reward screen already holding 4 items suppresses potions
 entirely**, which couples potion drops to relic and card rewards rather than
 being independent.
 
-### Card reward rarity
+#### Card reward rarity
 
 ```
 roll = cardRng.random(99) + cardRarityFactor      // cardRarityFactor starts at 5
@@ -630,7 +664,7 @@ Drift, applied per card rolled:
 likely — it drifts from +5 down to −40. Uncommon leaving it untouched is easy to
 miss and would otherwise make rares far too common.
 
-### Elite relics
+#### Elite relics
 
 `returnRandomRelic(returnRandomRelicTierElite(relicRng))`, drawn from `relicRng`.
 Black Star adds a second. Burning elites set `emeraldKey` — not applicable to v2
@@ -688,7 +722,7 @@ than treat as independent.
 
 **One card slot of the first five is half price**:
 `saleIdx = merchantRng.random(4); prices[saleIdx] /= 2`. This is the discount
-slot §5.1 block 18 must expose.
+slot §5.2 block 19 must expose.
 
 **Card removal:**
 
@@ -703,7 +737,7 @@ expensive each time it is used. That is run state, and it belongs in `RunState`.
 **Discounts** are multiplicative on all prices: The Courier ×0.80,
 Membership Card ×0.50. (Ascension ≥16 ×0.80 — not reachable at A0.)
 
-### 4.4 Neow — and a spec contradiction it exposes
+### 4.4 Neow
 
 From `src/game/Neow.cpp`, **cross-checked against
 [wiki.gg — Neow](https://slaythespire.wiki.gg/wiki/Neow)**.
@@ -754,7 +788,7 @@ index ranges exactly: 6 / 5 / 7.
 | 3 (idx 11–17) | rare colorless · remove 2 · rare relic · choose a rare card · 250 gold · transform 2 · **+16 Max HP** |
 | drawbacks | **−8 Max HP** · `floor(hp/10)*3` damage · obtain a curse · lose all gold |
 
-#### ⚠️ Max HP changes are FLAT per character, not percentages
+#### Max HP changes are flat per character, not percentages
 
 `sts_lightspeed` names these `TEN_PERCENT_HP_BONUS`, `TWENTY_PERCENT_HP_BONUS`
 and `TEN_PERCENT_HP_LOSS`. The wiki gives per-character flat values:
@@ -816,17 +850,12 @@ that was never the only source.
 
 Consequences:
 
-1. **`RELICS` includes all 22 boss relics** — see §5.0.
+1. **`RELICS` includes all 22 boss relics** — see §5.1.
 2. **Burning Blood can be lost**, so the relic multi-hot must represent a run
    with no starter relic. Any code assuming Burning Blood is always present is
    wrong.
 3. **A boss relic on floor 0 is a large swing** — this is a real strategic
    decision the agent must be able to see and take, not an edge case.
-
-### Still open
-
-- **Per-event option counts** — needs the event logic, not the event list.
-- **Act 1 event-relic subset**.
 
 ## 5. Observation
 
@@ -834,11 +863,7 @@ Flat `Box(float32)`, one vector. **Unified** — combat and non-combat share one
 observation, so a researcher may split it but the environment does not prescribe
 one (`observation-space.md` §1; the environment ships the superset).
 
-### 5.1 Layout
-
-Planning vocabulary — see §5.0 for the scoping rules and current confidence.
-
-### 5.0 Vocabulary scoping (ROB-104)
+### 5.1 Vocabulary scoping
 
 **The counts are not "how many exist in Slay the Spire". They are "how many are
 reachable in v2.0.0's scope"**, and the scoping rules are the design decision —
@@ -855,7 +880,7 @@ Rules:
    Any colorless or curse count must be expanded the same way.
 5. **Act 1 reachability** where a pool is act-gated.
 
-#### Source: `sts_lightspeed`, not wiki prose
+#### Sourcing
 
 Counted from
 [`gamerpuppy/sts_lightspeed`](https://github.com/gamerpuppy/sts_lightspeed)
@@ -906,8 +931,37 @@ at Ascension 10+, and §3.0 pins us at 0. A concrete payoff from that decision.
 | Shop | 17 |
 | Boss | 22 |
 | **subtotal** | **131** |
-| Event / special | ⚠️ not in these pools; needs the Act 1 subset |
-| **RELICS** | **≈131 + event relics** |
+| Special / event-granted | **20** — see below |
+| **RELICS** | **151** |
+
+**Cross-check.** `Relics.h`'s `relicTiers[]` array holds **181** entries (180 + an
+`INVALID` sentinel) with tiers: 36 common, 36 uncommon, 34 rare, 30 boss, 20
+special, 20 shop, 4 starter. Subtracting other-class relics gives exactly the
+Ironclad pool sizes above (36→33, 36→30, 34→28, 30→22, 20→17, 4→1). **Two
+independently declared structures agree**, which is the strongest confirmation
+available short of enumerating the wiki.
+
+#### Special relics: all 20 included, deliberately
+
+`SPECIAL`-tier relics are granted by specific events rather than drawn from a
+pool, so there is no act gate to read — reachability is per-event.
+
+**We include all 20** even though some are Act 1-unreachable (N'loth's Gift comes
+from N'loth, an act-2 event). ⚠️ **This means a few dead indices**, and it is
+deliberately inconsistent with the `EVENT_OPTIONS = 58` decision, which excluded
+19 provably-unreachable ids.
+
+The asymmetry is about **cost of knowing**, not principle:
+
+| | how reachability is determined | cost |
+|---|---|---|
+| Event options | one function, `canAddOneTimeEvent`, gives every gate | cheap and definitive |
+| Special relics | no gate exists; needs all 25 Act 1 events read individually | expensive, low payoff |
+
+20 floats and 20 never-selected action indices is a smaller price than reading
+25 event implementations to save perhaps a dozen of them. **Recorded as a known
+imprecision** rather than presented as exact — if the per-event pass happens for
+another reason, tighten this then.
 
 Per-class pools differ (Ironclad rare is 28, Defect 26, Watcher 27), so the
 **Ironclad-specific arrays are the right source** — a generic total would be
@@ -941,49 +995,46 @@ the per-event table.
 
 **`EVENT_OPTIONS = 58`** — counted per event in §6.3, not estimated.
 
-#### Impact on §5.1
+#### Required engine change: `CardData` needs `rarity` and `color`
 
-`CARDS ≈ 269` against the planning figure of 250 widens blocks 3, 7, 10 and 18.
-**Do not update §5.1's sizes until the event-relic and event-option counts
-close** — a second recount is exactly what the layout-versioning decision exists
-to make survivable.
+**`CardData` has neither today.** Its fields are name, cost, damage, hits, block,
+target, debuffs, powers, `CardType`, exhaust, ethereal, unplayable.
 
-#### A gap found while counting
+v2 needs both: **rarity** drives card-reward rarity rolls (§4.2) and shop
+pricing, and **color** separates Ironclad from colorless in shop stock. Adding
+them touches all 189 rows of `CARD_DATABASE`, and is a prerequisite for
+run-content generation rather than only for counting.
 
-**`CardData` has no `rarity` and no `color` field.** Fields today are name, cost,
-damage, hits, block, target, debuffs, powers, type, exhaust, ethereal,
-unplayable — plus `CardType` (Attack/Skill/Power/Status/Curse).
-
-v2 needs both: **rarity** drives card-reward rarity rolls (§10 run-content
-generation) and shop pricing, and **color** separates Ironclad from colorless in
-shop stock. Adding them touches all 189 rows of `CARD_DATABASE`. This belongs in
-the vocabulary task, since it is the same pass over the same table.
+### 5.2 Layout
 
 | # | block | size | contents |
 |---|---|---:|---|
 | 1 | player | 34 | unchanged from v1.0.0 |
 | 2 | enemies | 220 | unchanged — 5 slots × 44 |
-| 3 | combat piles | 5 × CARDS | unchanged shape, wider vocabulary |
+| 3 | combat piles | 5 × 269 = **1,345** | unchanged shape, wider vocabulary |
 | 4 | turn | 1 | |
 | 5 | phase | 8 | one-hot over §4 |
 | 6 | run scalars | 6 | floor, gold, card-removal price, potions-held, potion-slots, removal-used-this-shop (**no ascension, no act — §3.0**) |
-| 7 | master deck | CARDS | count per card type |
-| 8 | relics held | RELICS | multi-hot |
-| 9 | relic counters | RELICS | the number drawn on the relic icon; 0 where none |
-| 10 | bottled cards | CARDS | see §5.3 |
-| 11 | potions | POTIONS | **count vector**, not slots — see §5.2 |
+| 6b | event phase | ⚠️ tbd | multi-phase events carry a phase counter (§6.3) — sizing not yet decided |
+| 7 | master deck | **269** | count per card type |
+| 8 | relics held | **151** | multi-hot |
+| 9 | relic counters | **151** | the number drawn on the relic icon; 0 where none |
+| 10 | bottled cards | **269** | see §5.7 |
+| 11 | potions | **33** | **count vector**, not slots — see §5.6 |
 | 12 | map node types | 840 | 105 × 8 (7 room types + "no room") |
 | 13 | map out-edges | 315 | 105 × 3 (edges reach columns c−1, c, c+1 only) |
 | 14 | map visited | 105 | path walked so far |
 | 15 | map column | 7 | current column; the floor is already in §6 |
 | 16 | boss identity | 3 | one-hot — Act 1 has exactly 3 bosses (Slime Boss, Hexaghost, The Guardian); visible from floor 1 |
-| 17 | current event | 60 ⚠️ | one-hot; zero outside `event` |
-| 18 | offer prices | CARDS+RELICS+POTIONS | see §5.5 |
+| 17 | current event | **25** | one-hot over reachable Act 1 events (§5.1); zero outside `event` |
+| 18 | pending purpose | **~6** | which card-selection purpose is live (§6.1) |
+| 19 | offer prices | 269+151+33 = **453** | see §5.9 |
 
-**Total ≈ 4,200 floats** ⚠️ (2.4× v1.0.0's 1,772), dominated by the pile planes
+**Total = 4,241 floats** (**2.39×** v1.0.0's 1,772), plus block 6b once the event
+phase counter is sized. Dominated by the pile planes
 and the map.
 
-### 5.1.1 How the map is encoded (Rob asked; it is not an adjacency matrix)
+### 5.3 How the map is encoded
 
 The map is three blocks over the same 105 grid positions (15 rows × 7 columns),
 plus the current column:
@@ -1004,7 +1055,7 @@ structurally impossible, not merely absent.
 So block 13 is a *local* edge mask: 315 floats, lossless, no wasted capacity. An
 off-grid neighbour (column 0 has no `c−1`) is a hard 0.
 
-### 5.1.3 Layout conventions — PROPOSED (ROB-105), for ratification
+### 5.4 Layout conventions
 
 `v2-spec.md` gave block sizes but no internal layout, which is enough for two
 implementers to produce incompatible buffers. Proposed conventions, each with its
@@ -1029,7 +1080,7 @@ enum between them** — they look interchangeable and are not.
 that writes it, mirroring how `kTurnObsIndex` is asserted against its writer
 today. That assertion is what turns a layout doc into an enforced contract.
 
-### 5.1.2 Do count vectors and multi-hots hurt learning? (Rob asked)
+### 5.5 Count vectors and multi-hots: the learning cost
 
 A fair question, and the honest answer is *not in the way people usually fear,
 but there is one real cost.*
@@ -1071,14 +1122,14 @@ So: correct default, real limitation, documented rather than designed around.
 This is worth a paragraph in the README when v2 ships — it is precisely the kind
 of thing a researcher picking up the env wants told up front.
 
-### 5.2 Potions are a count vector, not slots
+### 5.6 Potions are a count vector, not slots
 
 `POTIONS` wide, value = how many of that potion are held. **Not** `slots ×
 types`. Potion Belt (5 slots) and Ascension 11 (2 slots) then work with no shape
 change, and potions match the pile-plane pattern instead of being the one
 slot-indexed thing in the observation.
 
-### 5.3 Bottled cards fit in one plane
+### 5.7 Bottled cards fit in one plane
 
 Bottled Flame / Lightning / Tornado each bottle a specific card, which a human
 sees. Naively that is 3 × CARDS. It is not needed: **each bottle constrains a
@@ -1086,7 +1137,7 @@ different card type** (Flame→Attack, Lightning→Skill, Tornado→Power), so "
 card is bottled" (block 10) plus "which bottles I hold" (block 8) determines
 which bottle holds it. Lossless at one third the cost.
 
-### 5.4 Relic order
+### 5.8 Relic order
 
 Relic trigger order is acquisition order. Block 8 is unordered, so two states
 with the same relics acquired in different orders alias.
@@ -1095,7 +1146,7 @@ with the same relics acquired in different orders alias.
 `RELICS × RELICS` or an ordered index list. Revisit only if a real Act 1 relic
 pair is found whose order changes an outcome.
 
-### 5.5 Offer prices — and the aliasing trap
+### 5.9 Offer prices — and the aliasing trap
 
 One float per entity: **`cost + 1` if currently offered, `0` if not.**
 
@@ -1114,7 +1165,7 @@ to the policy distribution only. **The value head never sees the mask.**
 satisfying part of the design. Retained because the alternatives all reintroduce
 rank-indexing.
 
-### 5.6 Parity rules that are easy to get wrong
+### 5.10 Parity rules that are easy to get wrong
 
 1. **Unknown map rooms must stay Unknown.** Room type is rolled *on entry*, not
    at generation. A human sees `?`. Encoding the resolved type gives the agent
@@ -1132,21 +1183,25 @@ every state, forever — never "the *k*th option offered".
 
 | block | size | index means |
 |---|---:|---|
-| combat: card × target | CARDS × 5 | play card *c* at enemy slot *t* |
+| combat: card × target | 269 × 5 = **1,345** | play card *c* at enemy slot *t* |
 | end turn | 1 | |
 | map: choose node | 105 | move to grid position *p* |
-| card selection | CARDS | pick card *c* (reward / shop / removal — see §6.1) |
-| relic selection | RELICS | pick relic *r* |
-| potion: use × target | POTIONS × 5 | Fire/Fear/Weak/Poison potions target an enemy |
-| potion: discard | POTIONS | |
-| event option | 60 ⚠️ | `(event, option)` pair |
+| card selection | **269** | pick card *c* — purpose comes from the live phase (§6.1) |
+| relic selection | **151** | pick relic *r* — **shop only** (§6.4) |
+| potion: use × target | 33 × 5 = **165** | Fire/Fear/Weak/Poison potions target an enemy |
+| potion: discard | **33** | |
+| event option | **58** | globally-enumerated option id (§6.3) |
 | rest option | 6 | rest, smith, recall, lift, toke, dig |
+| purpose selection | **~6** | choose *why* a card list opens (§6.1) |
 | take Max HP instead | 1 | Singing Bowl |
 | decline / skip / leave | 1 | |
 
-**Total ≈ 1,900** ⚠️.
+**Total = 2,141** actions.
 
-### 6.1 The purpose collision — RESOLVED by parity
+Of that, **1,345 (63%) is the combat card×target block** — the same block v1.0.0
+already ships, just wider. Everything the run layer adds comes to **795**.
+
+### 6.1 The purpose collision
 
 **The problem.** Card selection serves five purposes — take a reward, buy at a
 shop, remove at a shop, transform (Neow/events), upgrade (Neow/smith). At a shop
@@ -1179,7 +1234,7 @@ This is better than the alternatives on every axis that matters:
 can tell *why* the card list is open. Without it, "choose a card to remove" and
 "choose a card to upgrade" alias — §1.1. This is cheap and mandatory.
 
-### 6.2 Consequence: the positional option-slot channel is superseded
+### 6.2 The positional option-slot channel is superseded
 
 Two-phase selection means the card-selection block is unambiguous, so **card
 choices are entity-indexed everywhere — in combat and out.**
@@ -1226,7 +1281,7 @@ That rule exists to *mitigate* rank-indexing — ordering slots by ascending
 shipped design docs in contradiction. The mitigation was sound for v1.0.0; it is
 obsoleted by removing the thing it mitigated.
 
-### 6.3 Event options: one global enumeration (Rob's proposal, adopted)
+### 6.3 Event options: one global enumeration
 
 Rob's framing, which is cleaner than the spec's earlier `(event, option)` pair:
 
@@ -1279,7 +1334,7 @@ The full-game enumeration is 77, but acts 2–3 would change far more than event
 ids (new enemies, new encounters, new relic pools), so that is a new layout
 version regardless. Reserving buys nothing and inflates every published number.
 
-⚠️ This also settles §5.0's open question in the *opposite* direction from the
+⚠️ This also settles §5.1's open question in the *opposite* direction from the
 safe guess: the earlier note said counting all one-time events in was the safe
 choice because a missing id costs a layout change. With the gates known, 6 events
 are simply unreachable — including them would reserve dead indices the agent can
@@ -1332,7 +1387,7 @@ holds the current event one-hot, the mask says which options are live, and the
 option ids carry their own meaning. The earlier worry about events needing
 individual carve-outs applies to their *effects*, not their encoding.
 
-### 6.4 Relic selection is shop-only (Rob asked)
+### 6.4 Relic selection is shop-only
 
 There is no relic *selection* block for treasure or elites. Both grant a relic
 automatically (§4), so the engine awards it — no decision, no action.
@@ -1354,7 +1409,7 @@ Potential-based, so the optimal policy is provably unchanged for any α, β
 (Ng, Harada & Russell 1999). **Two requirements are load-bearing:** `Φ` must be 0
 at terminal states, and the shaping `γ` must equal the learner's.
 
-### 7.1 The reward is configurable — required, not optional (Rob, 2026-08-13)
+### 7.1 The reward is configurable
 
 **Users must be able to fall back to plain terminal win/loss, or supply their own
 coefficients.** The env takes them as constructor parameters, following
@@ -1448,12 +1503,12 @@ for the starter relic (§4.4). No *post-boss* relic is ever awarded — the run 
 at the Act 1 boss — but Neow makes all 22 reachable before the first fight of
 every episode.
 
-Consequences: `RELICS` includes all 22 boss relics (§5.0); **Burning Blood is
+Consequences: `RELICS` includes all 22 boss relics (§5.1); **Burning Blood is
 losable**, so nothing may assume the starter relic is present; and the Neow
 boss-relic swap is a real strategic decision the agent must see and be able to
 take.
 
-### Multi-select: costed, and the answer is "defer" (Rob asked)
+### Multi-select: deferred
 
 The earlier claim was that multi-select "would be painful to retrofit", so the
 shape should be reserved now. **Rob asked for that to be tested rather than
@@ -1484,104 +1539,52 @@ whose cost has been enumerated is a different call, and the enumeration above is
 what makes it safe. If any row of that table turns out to be breaking, this
 decision should be revisited immediately.
 
-## 10. Open questions — settle before implementing
+## 10. Open questions
 
-Two independent reviews found that §10 as originally written "would let someone
-believe the design is one decision away from implementable; it is closer to
-four." Revised accordingly, blockers first.
+Everything that blocked implementation has been closed. What remains is one
+ratification, one enumeration, and a set of items that are deliberately open.
 
-### Blockers
+### 10.1 Blocking implementation
 
-**Resolved since the review** — kept here so the reasoning is findable:
+| # | item | why it blocks |
+|---|---|---|
+| 1 | **Per-relic counter lifetimes** (§3.3) | Which relic counters are per-combat and which per-run. Invisible to any test that plays one fight — which is every test in the repo today. |
+| 2 | **Layout conventions ratification** (§5.4) | Proposed, not yet ratified. Two implementers produce incompatible buffers until the offsets are published and asserted. |
+| 3 | **Event-phase block sizing** (§5.2 block 6b) | Multi-phase events (Golden Idol, Colosseum, Cursed Tome) carry a phase counter that belongs in the observation. Size not yet decided. |
 
-| was | resolution |
+### 10.2 Known imprecision, accepted
+
+| item | |
 |---|---|
-| Handoff contract | **§3.2** — field-by-field table. Surfaced a hard requirement: `Card` needs a **uid**, or a mid-combat Armaments upgrade cannot be told from a campfire smith on write-back. |
-| RNG stream partition | **§3.5** — one run seed, independent named streams, `combat[floor]` indexed by floor. Auto-resolve gets its own stream so a random shrine cannot shift later fights. |
-| Purpose collision | **§6.1** — selection is two-phase (purpose, then entity) because that is how the real UI works. Costs no extra actions. |
-| Option-slot channel conflict | **§6.2** — superseded. Card choices are entity-indexed everywhere; `decision-points.md` §5.3 must be amended. |
+| **Special relics** (§5.1) | All 20 included; some are Act 1-unreachable, so a few indices are dead. Determining the exact subset needs 25 event implementations read — more expensive than the 20 floats it saves. |
+| **`SHRINE_CHANCE = 0.25`** (§4.1) | No wiki source states the shrine-vs-event split. Derived-not-verified. |
+| **Juzu Bracelet reset ordering** (§4.1) | Simulator-only, and *unverifiable* — an internal counter invisible to a player except through long-run distribution. |
+| **Relic pool sizes** (§5.1) | From declared arrays, cross-checked against a second declared structure, but not independently enumerated from the wiki. |
+| **Shrine re-entry bug** (§4.1) | Decided: reproduce it. But *"under some circumstances"* is not a spec — the mechanism must be understood before implementing, and the 80% figure is approximate. |
 
-**Closed in Rob's review (2026-08-13):**
+### 10.3 Deliberately deferred
 
-| item | resolution |
+| item | |
 |---|---|
-| `?` distribution | **§4.1** — and it was *inverted*: Event is the fallback (~85%), Monster/Shop/Treasure are the drifting rolls at 10/3/2%. Two secondary sources; flagged as derived-not-verified. |
-| Ascension | **§3.0** — pinned at 0, not in `RunState` or the obs |
-| Act field | **§3.0** — omitted; Act 1 only |
-| Neow blessing count | **§8** — always 4; no cross-run state exists |
-| `treasure` phase | **§4** — deterministic pass-through, phase slot retained |
-| Boss identity size | **§5.1** — 3, not 10 |
-| Multi-select | **§9** — costed as additive, therefore deferred |
-| Evaluation protocol | **§13** — out of scope; post-v2 |
-| Episode length | **§2** — ~400–700, to be measured not estimated |
-| Reward configurability | **§7.1** — constructor parameters, sparse falls out at α=β=0 |
-| SB3 compatibility | **§10** — reported property, never a design constraint |
+| **Evaluation protocol** (§13) | Post-v2. This spec covers functional implementation. |
+| **Multi-select** (§9) | Costed as fully additive, so deferring costs nothing. |
+| **Raw-observation mode** | `normalize=False` would be principle-3 pure but nobody has asked; additive later. |
+| **§14 experiment** | Runs after v2.0.0, against the real run layer. M5 stays provisional until it does. |
 
-**Still blocking implementation:**
+### 10.4 Engineering requirements carried into implementation
 
-1. **Exact vocabularies** — `CARDS`, `RELICS`, `POTIONS`, event options. `CARDS`
-   scales six observation blocks *and* the action space, and every published
-   number is invalidated by a later change. Count, do not estimate.
-2. **Block-internal layout** (§10.11 below) — offsets, flattening order, edge-slot
-   order, normalisation convention. Two implementers currently produce
-   incompatible buffers.
-3. **Per-relic counter lifetimes** (§3.3) — per-combat vs per-run. **Rob: revisit
-   once the spec is otherwise final**, since it is enumeration against a relic
-   list that the vocabulary count (#1) produces anyway.
-4. **Run-content generation** — gold drops, potion drop rates and drift, card
-   reward rarity rolls, elite relic rewards. Still entirely unspecified, and
-   `?`-room work does not cover it.
-5. **Roll timing** (§3.5) — when each random offer is drawn, starting with
-   whether StS1 rolls potion card-choices at fight start as StS2 appears to.
+Not design questions — settled, but easy to lose between here and the code.
 
-### Substantive
+| requirement | why |
+|---|---|
+| **Version the obs/action layout**, and report the version with every published result | v1.0.0 froze a layout and published numbers against it. Any later recount invalidates them silently unless the layout is versioned. |
+| **`compute_obs` must update incrementally** | The observation is 2.39× v1.0.0's and ~1,267 floats of it (the map) are constant within a fight. v1.0.0 published 438k/259k steps/sec. |
+| **Publish per-block offsets as header constants, `static_assert`ed against their writers** | §5.4. `sts_lightspeed`'s own `getObservationMaximums` is misaligned against the observation it describes — the bug this prevents. |
+| **Add `legal_actions()`** | Additive; MCTS wants child enumeration, not a mask scan. |
+| **Add a no-observation step path** | The honest comparison against pure simulators, and what an MCTS rollout actually needs. |
+| **Publish the normalisation constants** | Makes normalisation auditable rather than implicit. |
 
-6. **Exact vocabularies.** `CARDS`, `RELICS`, `POTIONS` and the event/option
-   count are estimates; one reviewer believes "~60 event options" is low by 2–3×.
-   Count them — not for correctness but for **reproducibility**: v1.0.0 froze a
-   layout, and any post-hoc change invalidates every previously published number.
-   **Version the obs/action layout and report the version with every result.**
-7. **Ascension is undefined.** §5.1 has an `ascension` scalar and §5.2 cites
-   Ascension 11, but nothing says what the benchmark runs at or whether it is
-   pinned. It changes enemy HP, elite counts, starting HP and adds a curse — a
-   headline experimental parameter left unstated.
-8. **Neow is underspecified.** §8's "4 unless the previous run was poor" is
-   undefined in an environment where an episode *is* one run with no history.
-   The blessing set is not enumerated, and several blessings (remove / transform
-   / upgrade a card, swap the starting relic) are shape-breakers absent from §9.
-9. **Run-content generation is missing entirely**: gold drops, potion drops (40%
-   base, with drift), card-reward rarity rolls, elite relic rewards.
-10. **Reward parameters.** §7 never says the env takes α, β, γ as constructor
-    parameters, nor how v1.0.0's per-fight ±1 and `hp_reward_coeff` are
-    suppressed inside a run.
-
-### Smaller
-
-11. **Block-internal layout is unspecified** (§5.1 gives sizes, not offsets).
-    Map: floor-major or column-major? The 7 room types are never enumerated —
-    and are a *different* 7 from §4's phases. Out-edge ordering, and what fills a
-    nonexistent neighbour? Normalisation convention? **Two implementers will
-    produce incompatible buffers.** Publish per-block offset constants in a
-    header, as `combat_env.h` already does.
-12. **§6's arithmetic is wrong**: with CARDS=250 the listed blocks sum to
-    **~2,096**, not "≈1,900", and it is ambiguous whether the combat block is 189
-    or 250 wide.
-13. **Boss identity is sized 10; Act 1 has 3 bosses.**
-14. `treasure` phase (§4) — pass-through or real? If deleted, say whether the
-    one-hot slot is reserved.
-15. **Relic order** (§5.4) is a stated **parity defect**, not a "limitation" —
-    do not let its framing contradict §1.
-16. **§1 excludes "shrines as player decisions" but §9 auto-resolves Match and
-    Keep!, a shrine.** Inconsistent wording.
-17. **Throughput.** The observation roughly 2.4×'s, and the map (~1,270 floats)
-    is constant within a fight, so `compute_obs` must update incrementally.
-    Engineering, not design — but v1.0.0 published 438k/259k steps-per-second.
-18. **§5.5's justification reasons from `sb3-contrib` internals.** The conclusion
-    is right and algorithm-agnostic; restate it as an **aliasing** argument
-    (§1.1) with the SB3 verification as a footnote, or the environment looks
-    designed around one library.
-
-### The environment is not designed around SB3 (Rob, 2026-08-13)
+### 10.5 The environment is not designed around SB3
 
 A standing ruling, because it recurs:
 
@@ -1597,7 +1600,7 @@ documented.
 **Ship a compatibility table** in the README stating what works out of the box
 and what needs custom code — e.g. a flat `Discrete` action space with a mask
 works with `MaskablePPO` directly, while getting generalisation across cards
-(§5.1.2, §14) needs a custom feature extractor that no library provides.
+(§5.5, §14) needs a custom feature extractor that no library provides.
 
 That table is more useful to a researcher than silent compatibility would be: it
 says exactly where their work starts.
@@ -1620,7 +1623,7 @@ Each step ends somewhere testable.
 7. Events, then shops (most machinery).
 8. Bosses → **M5: an agent that completes a run**.
 
-## 12. Non-termination hazard — needs a fix, not a note
+## 12. Non-termination hazard
 
 §2 says "truncates: never", and `truncated()` is hardcoded `false`
 (`combat_env.h`). **Slay the Spire has no turn limit**, so a stalling policy
@@ -1646,7 +1649,7 @@ Two properties are required:
   a stall we did not predict — and either way we want to know rather than absorb
   it silently.
 
-## 13. Evaluation protocol — OUT OF SCOPE for this spec
+## 13. Evaluation protocol (out of scope)
 
 **Rob's ruling (2026-08-13): this spec is scoped to functional implementation.**
 Training and evaluation come after v2.0.0 ships, and specifying an eval protocol
@@ -1762,7 +1765,7 @@ implement the spec.
 | 10 | Boss relics structurally unreachable | **all 22 reachable** on floor 0 (§4.4, §9) | Neow's slot 3 is unconditionally a boss relic swap. The original reasoning only considered *post-boss* awards. Second "structurally unreachable" claim to have a second source — **distrust that phrase**. |
 | 11 | Neow damage drawback = 30% of HP | **`floor(currentHp / 10) * 3`** (§4.4) | `sts_lightspeed`'s *display string* says 30%; its arithmetic and the wiki agree on the floor form. At 75 HP: 21, not 22.5. |
 | 12 | Neow Max HP changes are 10% / 20% | **flat per-character**: +8 / +16 / −8 for the Ironclad (§4.4) | Their enum *names* say percent. Coincides only for the Ironclad (80 HP); the Silent's real values are +6/+12/−7. Latent defect that every Ironclad test would pass. |
-| 13 | `RELICS ≈ 104` | **≈131 + event relics** (§5.0) | The 104 came from a *summarising wiki fetch* reporting 26 common relics against the declared pool's 33. A fetch summary under-counts silently. |
+| 13 | `RELICS ≈ 104` | **151** (§5.1) | The 104 came from a *summarising wiki fetch* reporting 26 common relics against the declared pool's 33. A fetch summary under-counts silently. |
 | 14 | Φ normalised by `hp / max_hp` | **`hp / HP_REF`**, a constant (`run-reward.md` §4) | Dividing by *current* `max_hp` made Φ **fall** when Max HP was gained — a wrong-signed incentive on exactly the resource-vs-investment decisions the reward design exists to protect. |
 | 15 | PBRS "cannot bias playstyle" | **does not change the optimal policy** (`run-reward.md` §3) | Ng et al. preserve the optimum, not the learned policy — and under entropy-regularised objectives (PPO's bonus) invariance does not hold at all. |
 
