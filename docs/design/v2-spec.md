@@ -53,13 +53,16 @@ mechanics, not code.
 
 | | |
 |---|---:|
-| `CARDS` | 269 |
-| `RELICS` | 151 |
+| `CARDS` | 270 |
+| `RELICS` | 140 |
 | `POTIONS` | 33 |
 | `EVENTS` | 25 |
 | `EVENT_OPTIONS` | 58 |
-| **observation** | **4,241 floats** (2.39× v1.0.0) |
-| **action space** | **2,141** (63% of it the combat block v1.0.0 already ships) |
+| **observation** | **4,216 floats** (2.38× v1.0.0) |
+| **action space** | **2,136** (63% of it the combat block v1.0.0 already ships) |
+
+Every one of these is **Act 1-reachable content only** — no reserved indices for
+acts 2–3 (§5.1 rule 5).
 
 ---
 
@@ -139,20 +142,38 @@ Both are recorded because *omitting* them is the decision — a reader who knows
 Slay the Spire will otherwise assume they were forgotten. This also closes §10's
 "Ascension is undefined": it is now defined as pinned at 0.
 
-### 3.0.1 Keep the `CombatState` additions non-breaking
+### 3.0.1 Relics and potions are first-class `CombatState`, not run-layer hooks
 
-Relics, potions and the wider card vocabulary are additions to `CombatState`.
-**Make them additive wherever possible, so v1.x remains a usable standalone
-combat simulator** — with relics and potions — rather than becoming a fragment
-that only works inside a run.
+**Ruling (Rob, 2026-08-27): relics and potions live in `CombatState` as
+full members — observable in the combat observation and usable through the
+combat action space.** They are not `RunState` fields that reach into combat
+through hooks.
 
-That has research value on its own: a combat-only environment with relics and
-potions is a legitimate benchmark, cheaper to train against, and already
-published on PyPI with users. It also disciplines the design — anything that
-*cannot* be additive is a genuine coupling worth noticing rather than absorbing.
+The distinction is not cosmetic. Under the hook model, a relic's *effect* fires
+during combat but the relic itself belongs to the run, so a standalone combat
+env cannot show the agent which relics it holds or let it drink a potion — the
+combat env is a fragment that only makes sense inside a run. Under this ruling
+**the combat environment is complete on its own**:
 
-Concretely: relic and potion state lives in `CombatState` with empty defaults, so
-a `CombatEnv` constructed the v1.0.0 way behaves exactly as it does today.
+| in `CombatState` | consequence |
+|---|---|
+| `relics` — the held list | appears in the combat observation; a human sees their relic bar during a fight, so §1's parity rule requires it |
+| relic counters | likewise — the number drawn on the relic icon is visible |
+| `potions` — the held inventory | observable **and actionable**: potion use and discard are combat actions (§6) |
+
+**Why this is the right call beyond parity.** It keeps
+`minispire` a legitimate standalone benchmark: a combat-only environment *with
+relics and potions* is cheaper to train against than a full run, is already
+published on PyPI with users, and is a reasonable research artifact in its own
+right. The run layer then supplies these fields rather than owning them.
+
+`RunState` remains the owner of record **across** fights (§3.2 write-back), but
+within a fight `CombatState` holds them outright.
+
+**Keep the additions non-breaking.** Relic and potion state defaults to empty, so
+a `CombatEnv` constructed the v1.0.0 way behaves exactly as it does today. That
+also disciplines the design — anything that *cannot* be additive is a genuine
+coupling worth noticing rather than absorbing.
 
 ### 3.1 `CombatState` is modified
 
@@ -161,9 +182,9 @@ it is forced four independent ways:
 
 | # | what forces a change |
 |---|---|
-| 1 | **The card vocabulary widens 189 → ~250.** `kNumOptionSlots = kNumCardTypes` (`card.h`), and `kEndTurnAction` / `kFirstOptionSlot` / `kDeclineAction` / `kObsSize` all derive from it (`turn_loop.h`). So "combat's action space is unchanged" is **false**. |
-| 2 | **Relics hook into combat** (Vajra, Anchor, Kunai, Burning Blood) and need a relic list *and* per-combat counters inside `CombatState`. There is **zero relic code in `src/` today**. |
-| 3 | **Potions are used mid-combat**, with effects that must enter the action queue and an action index outside `decode_action`'s current range. |
+| 1 | **The card vocabulary widens 189 → 270.** `kNumOptionSlots = kNumCardTypes` (`card.h`), and `kEndTurnAction` / `kFirstOptionSlot` / `kDeclineAction` / `kObsSize` all derive from it (`turn_loop.h`). So "combat's action space is unchanged" is **false**. |
+| 2 | **Relics are combat state** (§3.0.1) — a held list plus per-combat counters, observable, with effects hooking the action queue (Vajra, Anchor, Kunai, Burning Blood). There is **zero relic code in `src/` today**. |
+| 3 | **Potions are combat state and combat actions** — observable inventory, used mid-combat, effects entering the action queue, and action indices outside `decode_action`'s current range. |
 | 4 | **Curses and colorless cards have in-combat behaviour**, and `CardId` has no curse enumerators. |
 
 **This is accepted, not a problem to argue away.** It is the cost of the v2
@@ -827,10 +848,19 @@ These differ. At 75 HP: `floor(7.5) * 3 = 21`, where a literal 30% would be 22.5
 **Implement the floor-based formula**, and treat the simulator's display string
 as a label rather than a spec — a case where the wiki is the better source.
 
-⚠️ **The Neow boss-relic pool excludes one relic.** wiki.gg: *"Cannot switch to
-the stronger version of your character's Base Relic."* For the Ironclad that
-means **Black Blood is not offered** by Neow (it is the upgraded Burning Blood).
-It remains in `RELICS` for the observation, but not in Neow's draw pool.
+#### Black Blood is unreachable in Act 1 and is cut from `RELICS`
+
+wiki.gg: *"Cannot switch to the stronger version of your character's Base
+Relic."* For the Ironclad that means **Black Blood is never offered by Neow** (it
+is the upgraded Burning Blood).
+
+Neow is the *only* boss-relic source in v2.0.0 — post-boss relic awards happen
+after the Act 1 boss, which is where the run ends — and **no Act 1 event grants a
+boss relic**. So Black Blood cannot enter an Act 1 run by any path.
+
+**It is therefore excluded from `RELICS` entirely** (Rob, 2026-08-27), leaving 21
+of 22 boss relics. Keeping it would reserve an index the agent can never observe
+set and can never select — see §5.1's no-dead-indices rule.
 
 Slot 2's bonus pool depends on its drawback (e.g. NO_GOLD excludes the
 250-gold bonus, CURSE excludes remove-two). `PERCENT_DAMAGE` draws from all of
@@ -844,13 +874,14 @@ means by treating the RNG stream as an interface.
 #### Boss relics reach the run through Neow
 
 Neow's slot 3 is *always* a boss relic, offered on floor 0 in exchange for the
-starter relic — so **all 22 are reachable in every run**, before the first fight.
+starter relic — so **21 of the 22 are reachable in every run**, before the first
+fight (all but Black Blood, below).
 No *post-boss* relic is ever awarded, since the run ends at the Act 1 boss, but
 that was never the only source.
 
 Consequences:
 
-1. **`RELICS` includes all 22 boss relics** — see §5.1.
+1. **`RELICS` includes 21 boss relics** — all but Black Blood; see §5.1.
 2. **Burning Blood can be lost**, so the relic multi-hot must represent a run
    with no starter relic. Any code assuming Burning Blood is always present is
    wrong.
@@ -878,7 +909,21 @@ Rules:
 4. **Upgraded variants count separately.** v1.0.0's 189 counts `Strike` and
    `Strike+` as distinct ids, and rung ladders add more (§ `observation-space.md` §5).
    Any colorless or curse count must be expanded the same way.
-5. **Act 1 reachability** where a pool is act-gated.
+5. **Act 1 reachability, strictly — no dead indices.** If an entity cannot enter
+   an Act 1 run by *any* path, it is excluded from the vocabulary.
+
+   **Rob's ruling (2026-08-27), and it governs the whole spec:**
+
+   > We should generally strive to not have dead indices, in the obs or action
+   > space. If it's not in Act 1, we can cut scope and not include them […] it
+   > doesn't actually help for Act 1 or research and we decided that was the
+   > scope. Let's not be building for Act 2 and beyond right now.
+
+   A reserved-but-unreachable index is not free. It is a slot the agent must
+   learn is always zero, a published number that overstates the problem size, and
+   a claim about scope the environment does not honour. Acts 2–3 will change far
+   more than vocabulary sizes, so they are a new layout version regardless —
+   reserving now buys nothing.
 
 #### Sourcing
 
@@ -904,19 +949,30 @@ same discipline CLAUDE.md records for grep. The numbers below replace that pass.
 | **= v1.0.0 today** | | | **189** ✅ |
 | **Colorless** | **35** | yes | **+70** |
 | **Curses** (random pool) | **10** | no | **+10** |
-| **CARDS** | | | **≈269** |
+| **Curse of the Bell** | 1 | no | **+1** |
+| **CARDS** | | | **270** |
 
 - Ironclad pool is `RarityCardPool::groupSize[0] = {20, 36, 16}` → 72, matching
   `cardPoolSize[0]`. Independently confirms our 189.
-- Colorless is `srcColorlessCardPoolSize = 35`, split `{0 common, 20 uncommon, 15 rare}`.
+- Colorless is `srcColorlessCardPoolSize = 35`, split `{0 common, 20 uncommon, 15
+  rare}`. Reachable via shop colorless slots and Neow's colorless blessings.
 - Curses are `curseCardPoolSize = 10`: Regret, Injury, Shame, Parasite,
   Normality, Doubt, Writhe, Pain, Decay, Clumsy. **Curses do not upgrade**, so
   the doubling rule does not apply to them.
 
-⚠️ **Special curses** — Curse of the Bell (Calling Bell), Necronomicurse
-(Necronomicon), Pride — are outside the random pool and need per-source
-reachability checks. **Ascender's Bane is excluded automatically**: it is granted
-at Ascension 10+, and §3.0 pins us at 0. A concrete payoff from that decision.
+**Special curses, resolved by source (rule 5):**
+
+| curse | source | Act 1? |
+|---|---|:--:|
+| **Curse of the Bell** | Calling Bell, a **boss** relic → Neow slot 4 | ✅ **included** |
+| Necronomicurse | Necronomicon, a special relic from **Cursed Tome (Act 2)** | ❌ cut |
+| Pride | not granted anywhere in `sts_lightspeed`; no Act 1 source | ❌ cut |
+| Ascender's Bane | granted at **Ascension 10+**; §3.0 pins us at 0 | ❌ cut |
+
+⚠️ **Not audited: v1.0.0's existing 189.** Rule 5 has been applied to everything
+v2 *adds*, but the inherited 189 has not been re-checked for Act 1 reachability —
+`Dazed` in particular may have no Act 1 source. Cutting it would change shipped
+v1.0.0 behaviour, so it is a separate question, not a silent inclusion.
 
 #### RELICS — Ironclad pools
 
@@ -929,10 +985,10 @@ at Ascension 10+, and §3.0 pins us at 0. A concrete payoff from that decision.
 | Uncommon | 30 |
 | Rare | 28 |
 | Shop | 17 |
-| Boss | 22 |
-| **subtotal** | **131** |
-| Special / event-granted | **20** — see below |
-| **RELICS** | **151** |
+| Boss | 22 − 1 = **21** — Black Blood unreachable (§4.4) |
+| **subtotal** | **130** |
+| Special / event-granted | **10** of 20 — see below |
+| **RELICS** | **140** |
 
 **Cross-check.** `Relics.h`'s `relicTiers[]` array holds **181** entries (180 + an
 `INVALID` sentinel) with tiers: 36 common, 36 uncommon, 34 rare, 30 boss, 20
@@ -941,27 +997,45 @@ Ironclad pool sizes above (36→33, 36→30, 34→28, 30→22, 20→17, 4→1). 
 independently declared structures agree**, which is the strongest confirmation
 available short of enumerating the wiki.
 
-#### Special relics: all 20 included, deliberately
+#### Special relics: 10 of 20 are Act 1-reachable
 
 `SPECIAL`-tier relics are granted by specific events rather than drawn from a
-pool, so there is no act gate to read — reachability is per-event.
+pool, so there is no act gate to read — reachability had to be traced per relic.
 
-**We include all 20** even though some are Act 1-unreachable (N'loth's Gift comes
-from N'loth, an act-2 event). ⚠️ **This means a few dead indices**, and it is
-deliberately inconsistent with the `EVENT_OPTIONS = 58` decision, which excluded
-19 provably-unreachable ids.
+**Included (10):**
 
-The asymmetry is about **cost of knowing**, not principle:
-
-| | how reachability is determined | cost |
+| relic | source | why Act 1 |
 |---|---|---|
-| Event options | one function, `canAddOneTimeEvent`, gives every gate | cheap and definitive |
-| Special relics | no gate exists; needs all 25 Act 1 events read individually | expensive, low payoff |
+| Neow's Lament | Neow blessing, tier 2 | floor 0 |
+| Golden Idol | **Golden Idol** event | `Act1::events` |
+| Odd Mushroom | **Hypnotizing Colored Mushrooms** | `Act1::events` |
+| Warped Tongs | **Ominous Forge** | one-time, ungated |
+| Spirit Poop | **Bonfire Spirits** | one-time, ungated |
+| Face of Cleric · Ssserpent Head · Gremlin Visage · N'loth's Hungry Face · Cultist Headpiece | **Face Trader** | one-time, gated `act == 1 \|\| act == 2` |
 
-20 floats and 20 never-selected action indices is a smaller price than reading
-25 event implementations to save perhaps a dozen of them. **Recorded as a known
-imprecision** rather than presented as exact — if the per-event pass happens for
-another reason, tighten this then.
+**Excluded (10):**
+
+| relic | source | act |
+|---|---|---|
+| Bloody Idol | Forgotten Altar | 2 |
+| Mutagenic Strength | Augmenter | 2 |
+| Necronomicon · Nilry's Codex · Enchiridion | Cursed Tome | 2 |
+| Red Mask | Masked Bandits | 2 |
+| N'loth's Gift | N'loth | 2 |
+| Mark of the Bloom | Mindbloom / The Moai Head | 3 |
+| Circlet · Red Circlet | awarded only when *every* relic is already collected | unreachable in 16 floors |
+
+**Two of these could not be resolved from `sts_lightspeed` at all.** Gremlin
+Visage and Cultist Headpiece appear only in its enum and name tables — the
+simulator never grants them. The wiki supplied the answer: all five "face"
+relics come from **Face Trader**, which is Act 1–2. Another case where the
+reimplementation is incomplete and the cross-check is what closed it.
+
+⚠️ **Residual uncertainty.** The common/uncommon/rare/shop pools are assumed
+fully Act 1-reachable. That holds for the ones checked, but individual relics can
+carry their own spawn conditions (Tiny Chest, for instance, only spawns below
+floor 36 — a *cap*, so Act 1 is fine). A per-relic sweep of those 108 has not
+been done.
 
 Per-class pools differ (Ironclad rare is 28, Defect 26, Watcher 27), so the
 **Ironclad-specific arrays are the right source** — a generic total would be
@@ -1011,15 +1085,15 @@ run-content generation rather than only for counting.
 |---|---|---:|---|
 | 1 | player | 34 | unchanged from v1.0.0 |
 | 2 | enemies | 220 | unchanged — 5 slots × 44 |
-| 3 | combat piles | 5 × 269 = **1,345** | unchanged shape, wider vocabulary |
+| 3 | combat piles | 5 × 270 = **1,350** | unchanged shape, wider vocabulary |
 | 4 | turn | 1 | |
 | 5 | phase | 8 | one-hot over §4 |
 | 6 | run scalars | 6 | floor, gold, card-removal price, potions-held, potion-slots, removal-used-this-shop (**no ascension, no act — §3.0**) |
 | 6b | event phase | ⚠️ tbd | multi-phase events carry a phase counter (§6.3) — sizing not yet decided |
-| 7 | master deck | **269** | count per card type |
-| 8 | relics held | **151** | multi-hot |
-| 9 | relic counters | **151** | the number drawn on the relic icon; 0 where none |
-| 10 | bottled cards | **269** | see §5.7 |
+| 7 | master deck | **270** | count per card type |
+| 8 | relics held | **140** | multi-hot — **in `CombatState`** (§3.0.1) |
+| 9 | relic counters | **140** | the number drawn on the relic icon; 0 where none |
+| 10 | bottled cards | **270** | see §5.7 |
 | 11 | potions | **33** | **count vector**, not slots — see §5.6 |
 | 12 | map node types | 840 | 105 × 8 (7 room types + "no room") |
 | 13 | map out-edges | 315 | 105 × 3 (edges reach columns c−1, c, c+1 only) |
@@ -1028,11 +1102,10 @@ run-content generation rather than only for counting.
 | 16 | boss identity | 3 | one-hot — Act 1 has exactly 3 bosses (Slime Boss, Hexaghost, The Guardian); visible from floor 1 |
 | 17 | current event | **25** | one-hot over reachable Act 1 events (§5.1); zero outside `event` |
 | 18 | pending purpose | **~6** | which card-selection purpose is live (§6.1) |
-| 19 | offer prices | 269+151+33 = **453** | see §5.9 |
+| 19 | offer prices | 270+140+33 = **443** | see §5.9 |
 
-**Total = 4,241 floats** (**2.39×** v1.0.0's 1,772), plus block 6b once the event
-phase counter is sized. Dominated by the pile planes
-and the map.
+**Total = 4,216 floats** (**2.38×** v1.0.0's 1,772), plus block 6b once the event
+phase counter is sized. Dominated by the pile planes and the map.
 
 ### 5.3 How the map is encoded
 
@@ -1183,11 +1256,11 @@ every state, forever — never "the *k*th option offered".
 
 | block | size | index means |
 |---|---:|---|
-| combat: card × target | 269 × 5 = **1,345** | play card *c* at enemy slot *t* |
+| combat: card × target | 270 × 5 = **1,350** | play card *c* at enemy slot *t* |
 | end turn | 1 | |
 | map: choose node | 105 | move to grid position *p* |
-| card selection | **269** | pick card *c* — purpose comes from the live phase (§6.1) |
-| relic selection | **151** | pick relic *r* — **shop only** (§6.4) |
+| card selection | **270** | pick card *c* — purpose comes from the live phase (§6.1) |
+| relic selection | **140** | pick relic *r* — **shop only** (§6.4) |
 | potion: use × target | 33 × 5 = **165** | Fire/Fear/Weak/Poison potions target an enemy |
 | potion: discard | **33** | |
 | event option | **58** | globally-enumerated option id (§6.3) |
@@ -1196,10 +1269,10 @@ every state, forever — never "the *k*th option offered".
 | take Max HP instead | 1 | Singing Bowl |
 | decline / skip / leave | 1 | |
 
-**Total = 2,141** actions.
+**Total = 2,136** actions.
 
-Of that, **1,345 (63%) is the combat card×target block** — the same block v1.0.0
-already ships, just wider. Everything the run layer adds comes to **795**.
+Of that, **1,350 (63%) is the combat card×target block** — the same block v1.0.0
+already ships, just wider. Everything the run layer adds comes to **786**.
 
 ### 6.1 The purpose collision
 
@@ -1500,10 +1573,10 @@ limitations.
 
 **Every run is offered a boss relic on floor 0**, as Neow's slot 3, in exchange
 for the starter relic (§4.4). No *post-boss* relic is ever awarded — the run ends
-at the Act 1 boss — but Neow makes all 22 reachable before the first fight of
-every episode.
+at the Act 1 boss — but Neow makes 21 of the 22 reachable before the first fight
+of every episode.
 
-Consequences: `RELICS` includes all 22 boss relics (§5.1); **Burning Blood is
+Consequences: `RELICS` includes 21 boss relics (§5.1); **Burning Blood is
 losable**, so nothing may assume the starter relic is present; and the Neow
 boss-relic swap is a real strategic decision the agent must see and be able to
 take.
@@ -1556,10 +1629,12 @@ ratification, one enumeration, and a set of items that are deliberately open.
 
 | item | |
 |---|---|
-| **Special relics** (§5.1) | All 20 included; some are Act 1-unreachable, so a few indices are dead. Determining the exact subset needs 25 event implementations read — more expensive than the 20 floats it saves. |
+| **Common/uncommon/rare/shop relic pools** (§5.1) | Assumed fully Act 1-reachable. Individual relics can carry spawn conditions; a per-relic sweep of those 108 has not been done. The special, boss and starter tiers *have* been traced. |
+| **v1.0.0's inherited 189 cards** (§5.1) | Rule 5 applied to everything v2 adds, but the existing vocabulary has not been re-audited — `Dazed` may lack an Act 1 source. Cutting it would change shipped behaviour, so it is a separate decision. |
 | **`SHRINE_CHANCE = 0.25`** (§4.1) | No wiki source states the shrine-vs-event split. Derived-not-verified. |
 | **Juzu Bracelet reset ordering** (§4.1) | Simulator-only, and *unverifiable* — an internal counter invisible to a player except through long-run distribution. |
 | **Relic pool sizes** (§5.1) | From declared arrays, cross-checked against a second declared structure, but not independently enumerated from the wiki. |
+| **`EVENT_OPTIONS = 58` counts bit positions** (§6.3) | Taken from each event's valid-option bitmask. Where an event's highest bit is conditional, the count is its maximum, which is the correct reservation but may exceed what any single run can select. |
 | **Shrine re-entry bug** (§4.1) | Decided: reproduce it. But *"under some circumstances"* is not a spec — the mechanism must be understood before implementing, and the 80% figure is approximate. |
 
 ### 10.3 Deliberately deferred
@@ -1762,12 +1837,15 @@ implement the spec.
 | # | was | is | source |
 |---|---|---|---|
 | 9 | `?` event chance starts 10% and drifts **up** | **Event is the fallback** (~85% on a first `?`); Monster 10/+10, Shop 3/+3, Treasure 2/+2 drift (§4.1) | Inverted. wiki.gg + Fandom + `sts_lightspeed` all agree on the corrected form. |
-| 10 | Boss relics structurally unreachable | **all 22 reachable** on floor 0 (§4.4, §9) | Neow's slot 3 is unconditionally a boss relic swap. The original reasoning only considered *post-boss* awards. Second "structurally unreachable" claim to have a second source — **distrust that phrase**. |
+| 10 | Boss relics structurally unreachable | **21 of 22 reachable** on floor 0 (§4.4, §9) | Neow's slot 3 is unconditionally a boss relic swap. The original reasoning only considered *post-boss* awards. Second "structurally unreachable" claim to have a second source — **distrust that phrase**. |
 | 11 | Neow damage drawback = 30% of HP | **`floor(currentHp / 10) * 3`** (§4.4) | `sts_lightspeed`'s *display string* says 30%; its arithmetic and the wiki agree on the floor form. At 75 HP: 21, not 22.5. |
 | 12 | Neow Max HP changes are 10% / 20% | **flat per-character**: +8 / +16 / −8 for the Ironclad (§4.4) | Their enum *names* say percent. Coincides only for the Ironclad (80 HP); the Silent's real values are +6/+12/−7. Latent defect that every Ironclad test would pass. |
-| 13 | `RELICS ≈ 104` | **151** (§5.1) | The 104 came from a *summarising wiki fetch* reporting 26 common relics against the declared pool's 33. A fetch summary under-counts silently. |
+| 13 | `RELICS ≈ 104` | **140** (§5.1) | The 104 came from a *summarising wiki fetch* reporting 26 common relics against the declared pool's 33. A fetch summary under-counts silently. |
 | 14 | Φ normalised by `hp / max_hp` | **`hp / HP_REF`**, a constant (`run-reward.md` §4) | Dividing by *current* `max_hp` made Φ **fall** when Max HP was gained — a wrong-signed incentive on exactly the resource-vs-investment decisions the reward design exists to protect. |
 | 15 | PBRS "cannot bias playstyle" | **does not change the optimal policy** (`run-reward.md` §3) | Ng et al. preserve the optimum, not the learned policy — and under entropy-regularised objectives (PPO's bonus) invariance does not hold at all. |
+| 16 | All 20 special relics included, on a "cost of knowing" argument | **10 of 20** (§5.1) | The exclusion was justified as too expensive to determine. Rob rejected the premise: dead indices are not free, and Act 1 is the scope. Tracing them took one pass — and *two* (Gremlin Visage, Cultist Headpiece) turned out to be ungrantable in `sts_lightspeed` at all, resolved only by the wiki (Face Trader). |
+| 17 | Black Blood in `RELICS` | **cut** (§4.4) | Neow never offers the upgraded base relic, and Neow is the only boss-relic source in an Act 1 run. Unreachable by any path. |
+| 18 | Relics/potions as run-layer hooks | **first-class `CombatState`** (§3.0.1) | A hook model leaves the standalone combat env unable to show held relics or use potions — a fragment that only works inside a run. |
 
 ### Standing traps
 
