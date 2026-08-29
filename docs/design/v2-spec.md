@@ -58,7 +58,7 @@ mechanics, not code.
 | `POTIONS` | 33 |
 | `EVENTS` | 25 |
 | `EVENT_OPTIONS` | 58 |
-| **observation** | **4,216 floats** (2.38× v1.0.0) |
+| **observation** | **4,220 floats** (2.38× v1.0.0) |
 | **action space** | **2,136** (63% of it the combat block v1.0.0 already ships) |
 
 Every one of these is **Act 1-reachable content only** — no reserved indices for
@@ -250,7 +250,7 @@ two implementers cannot disagree.
 | `block` | **reset** | block does not survive combat |
 | debuffs, powers | **reset** | combat-scoped by definition |
 | `free_this_turn`, `hp_loss_events`, `combust_casts` | **reset** | per-combat counters |
-| relic counters | **per relic** — see §3.5 | some are per-combat (Nunchaku), some per-run (Ink Bottle) |
+| relic counters | **written back, all of them** | one run-scoped int per relic; nothing resets at a fight boundary (§3.3) |
 | draw / discard / hand / exhaust piles | **discarded** | the master deck is the truth |
 | status cards generated in combat (Wound, Dazed, Slimed, Burn) | **discarded** | they exist only for that fight |
 | **permanent card changes** | **written back by uid** — see below | Feed, Ritual Dagger, a mid-fight Armaments |
@@ -290,19 +290,44 @@ Scope: this touches `clone()`, `Card` construction everywhere, and every test
 that builds a `Card` by hand. It is the single largest change to an existing
 type in v2.0.0.
 
-### 3.3 Relic counters: per-combat or per-run
+### 3.3 Relic counters are per-run, uniformly
 
-Block 9 of the observation exposes relic counters, but they do not all have the
-same lifetime and the spec must say which is which per relic.
+**RESOLVED 2026-08-29.** This section previously claimed the lifetime varied per
+relic and demanded a per-relic table before implementation. **It does not vary,
+and the earlier table had two of its four examples backwards.**
 
-| kind | examples | reset |
-|---|---|---|
-| per-combat | Nunchaku (attacks played), Pen Nib | at fight start |
-| per-run | Ink Bottle, Sundial (cards played across the run) | never |
+**The rule: every relic carries one integer that persists for the whole run.** It
+is loaded into combat at fight start and written back at fight end. Nothing
+resets at a fight boundary.
 
-⚠️ **Needs a per-relic table before implementation.** Getting this wrong is
-invisible in tests that only play one fight — which is every test that exists
-today.
+```
+RelicInstance { RelicId id; int data; }     // one int, run-scoped
+```
+
+`sts_lightspeed` implements exactly this: `BattleContext` reads `r.data` into a
+combat-local counter on entry and `updateRelicsOnExit` writes it back —
+Happy Flower, Incense Burner, Ink Bottle, Nunchaku, Pen Nib, Sundial, Lizard
+Tail, Neow's Lament.
+
+**Wiki cross-check** (both, verbatim): *"The counter that keeps track of how many
+Attacks have been played is not reset between turns or combats."* — the
+[Nunchaku](https://slaythespire.wiki.gg/wiki/Nunchaku) and
+[Pen Nib](https://slaythespire.wiki.gg/wiki/Pen_Nib) pages. Those are precisely
+the two this spec had listed as *per-combat*.
+
+**Not the same thing: per-turn combat trackers.** Kunai, Shuriken and Ornamental
+Fan count attacks *within a turn*. They are combat internals with no displayed
+counter, they are not part of block 9, and they do reset — but they were never
+what "relic counter" meant.
+
+`int data` is also general-purpose beyond visible counters: Omamori's remaining
+charges, Matryoshka's, Tiny Chest's 0→3 cycle, and which card a Bottled relic
+holds. One int per relic covers all of it, which is why block 9 is a flat
+`RELICS`-wide vector.
+
+**Consequence for §3.2:** relic counters are simply part of the write-back, with
+no per-relic special-casing — the handoff table's "per relic — see §3.3" row
+becomes "written back, all of them".
 
 ### 3.4 `clone()`
 
@@ -1089,7 +1114,7 @@ run-content generation rather than only for counting.
 | 4 | turn | 1 | |
 | 5 | phase | 8 | one-hot over §4 |
 | 6 | run scalars | 6 | floor, gold, card-removal price, potions-held, potion-slots, removal-used-this-shop (**no ascension, no act — §3.0**) |
-| 6b | event phase | ⚠️ tbd | multi-phase events carry a phase counter (§6.3) — sizing not yet decided |
+| 6b | event parameters | **4** | numeric stakes of the live event — see §5.2.1 |
 | 7 | master deck | **270** | count per card type |
 | 8 | relics held | **140** | multi-hot — **in `CombatState`** (§3.0.1) |
 | 9 | relic counters | **140** | the number drawn on the relic icon; 0 where none |
@@ -1104,8 +1129,39 @@ run-content generation rather than only for counting.
 | 18 | pending purpose | **~6** | which card-selection purpose is live (§6.1) |
 | 19 | offer prices | 270+140+33 = **443** | see §5.9 |
 
-**Total = 4,216 floats** (**2.38×** v1.0.0's 1,772), plus block 6b once the event
-phase counter is sized. Dominated by the pile planes and the map.
+**Total = 4,220 floats** (**2.38×** v1.0.0's 1,772). Dominated by the pile planes
+and the map.
+
+### 5.2.1 Event parameters (block 6b) = 4 floats
+
+**The event one-hot says *which* event is live; it does not say what is at
+stake.** "Lose 32 gold" and "lose 87 gold" are the same event and the same option
+id, and a human sees the number. Under §1's parity rule the agent must too.
+
+Entity-valued offers are **already covered** — an event offering a specific card,
+relic or potion marks it in block 19 at `cost + 1` (§5.9), and event rewards
+being free is exactly the case the `+1` exists for. What is left is purely
+numeric, and for Act 1 it is four values:
+
+| slot | meaning | events that write it |
+|---|---|---|
+| 0 | HP amount 0 | Big Fish, Face Trader, Golden Idol, Shining Light, The Cleric, The Woman in Blue |
+| 1 | HP amount 1 | Golden Idol |
+| 2 | phase / attempts remaining | Dead Adventurer |
+| 3 | gold at stake | World of Goop |
+
+Zero outside an event. Normalise each by a **fixed constant** (§5.4), never by a
+varying denominator.
+
+**Why generic slots rather than per-event fields:** block 17's event one-hot is
+always present and identifies the live event, so slot meanings are disambiguated
+by it — the same argument that lets §6.1 share one card-selection block across
+five purposes. Per-event fields would be wider and almost entirely zero.
+
+⚠️ `hpAmount2` exists in `sts_lightspeed` but **no Act 1 event writes it**, so it
+is not reserved (§5.1 rule 5). Dead Adventurer's phase also drives an escalating
+encounter chance (`phase * 25 + 25`); the phase is observable, the derived
+probability is not, which matches what a player can see.
 
 ### 5.3 How the map is encoded
 
@@ -1621,9 +1677,18 @@ ratification, one enumeration, and a set of items that are deliberately open.
 
 | # | item | why it blocks |
 |---|---|---|
-| 1 | **Per-relic counter lifetimes** (§3.3) | Which relic counters are per-combat and which per-run. Invisible to any test that plays one fight — which is every test in the repo today. |
-| 2 | **Layout conventions ratification** (§5.4) | Proposed, not yet ratified. Two implementers produce incompatible buffers until the offsets are published and asserted. |
-| 3 | **Event-phase block sizing** (§5.2 block 6b) | Multi-phase events (Golden Idol, Colosseum, Cursed Tome) carry a phase counter that belongs in the observation. Size not yet decided. |
+| 1 | **Layout conventions ratification** (§5.4) | Proposed, not yet ratified. Two implementers produce incompatible buffers until the offsets are published and asserted. **Needs Rob — the only item that does.** |
+
+**Closed 2026-08-29:**
+
+- ~~Per-relic counter lifetimes~~ (§3.3). There is no per-relic variation: every
+  relic carries one run-scoped int, loaded at fight start and written back at
+  fight end. The section's own examples had Nunchaku and Pen Nib backwards, and
+  the wiki says of both that the counter *"is not reset between turns or
+  combats."*
+- ~~Event-phase block sizing~~ (§5.2.1). Sized at **4 floats** by enumerating
+  which numeric fields Act 1 events actually write. Entity-valued offers turned
+  out to be already covered by block 19's `cost + 1`.
 
 ### 10.2 Known imprecision, accepted
 
