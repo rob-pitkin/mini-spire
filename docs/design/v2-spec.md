@@ -58,7 +58,7 @@ mechanics, not code.
 | `POTIONS` | 33 |
 | `EVENTS` | 25 |
 | `EVENT_OPTIONS` | 58 |
-| **observation** | **4,220 floats** (2.38× v1.0.0) |
+| **observation** | **4,115 floats** (2.32× v1.0.0) |
 | **action space** | **2,136** (63% of it the combat block v1.0.0 already ships) |
 
 Every one of these is **Act 1-reachable content only** — no reserved indices for
@@ -498,7 +498,12 @@ path_density = 6       // paths carved, NOT the width — a floor holds ≤6 roo
 
 `MonsterRoom` · `MonsterRoomElite` · `EventRoom` (`?`) · `RestRoom` ·
 `ShopRoom` · `TreasureRoom` — six, plus a seventh "no room here" state for empty
-grid positions, giving the 8-wide one-hot in §5.2 block 12.
+grid positions, giving the **7-wide** one-hot in §5.2 block 12.
+
+⚠️ **`EventRoom` is the `?` node — it is not "a room containing an event".** It is
+the node whose contents are unrolled until entered. The observation calls it
+**Unknown** for clarity, and there is deliberately **no separate value for a
+resolved event** — see §5.4.
 
 #### Generation order
 
@@ -1120,7 +1125,7 @@ run-content generation rather than only for counting.
 | 9 | relic counters | **140** | the number drawn on the relic icon; 0 where none |
 | 10 | bottled cards | **270** | see §5.7 |
 | 11 | potions | **33** | **count vector**, not slots — see §5.6 |
-| 12 | map node types | 840 | 105 × 8 (7 room types + "no room") |
+| 12 | map node types | **735** | 105 × 7 (6 generated types + "no room") — see §5.4 |
 | 13 | map out-edges | 315 | 105 × 3 (edges reach columns c−1, c, c+1 only) |
 | 14 | map visited | 105 | path walked so far |
 | 15 | map column | 7 | current column; the floor is already in §6 |
@@ -1129,7 +1134,7 @@ run-content generation rather than only for counting.
 | 18 | pending purpose | **~6** | which card-selection purpose is live (§6.1) |
 | 19 | offer prices | 270+140+33 = **443** | see §5.9 |
 
-**Total = 4,220 floats** (**2.38×** v1.0.0's 1,772). Dominated by the pile planes
+**Total = 4,115 floats** (**2.32×** v1.0.0's 1,772). Dominated by the pile planes
 and the map.
 
 ### 5.2.1 Event parameters (block 6b) = 4 floats
@@ -1170,7 +1175,7 @@ plus the current column:
 
 | block | shape | what it holds |
 |---|---|---|
-| 12 — node types | 105 × 8 | one-hot per position: 6 room types + Unknown + "no room here" |
+| 12 — node types | 105 × 7 | one-hot per position: 6 generated room types + "no room here" |
 | 13 — out-edges | **105 × 3** | for each position, does an edge run to column `c−1`, `c`, `c+1` on the row above |
 | 14 — visited | 105 × 1 | the path walked so far |
 | 15 — column | 7 | current column (the floor is already in block 6) |
@@ -1196,14 +1201,44 @@ reason:
 | **Floor ordering** | floor 0 at index 0, ascending | Matches `RunState::floor` directly; no arithmetic to get it wrong. |
 | **Edge slot order** | `[c−1, c, c+1]` ascending | Matches the generator's own ordering (`sts_map_oracle` edges reach `c−1, c, c+1`), so the port needs no remapping. |
 | **Nonexistent neighbour** | hard `0.0` | Column 0 has no `c−1`. Structurally impossible ≠ "absent"; both read as 0, and no third value is needed because the node-type block already marks empty positions. |
-| **Room type one-hot order** | `None, Monster, Elite, Event, Rest, Shop, Treasure, Unknown` | 8 wide. **`None` first at index 0** so a zeroed buffer means "no room", which is the correct default for an unallocated map. |
+| **Room type one-hot order** | `None, Monster, Elite, Unknown, Rest, Shop, Treasure` | **7 wide.** `None` first at index 0 so a zeroed buffer means "no room", the correct default for an unallocated map. |
 | **Normalisation** | per-block **fixed constants**, published beside the offsets | Never a varying denominator — `run-reward.md` records the `hp/max_hp` bug. |
 | **Offsets** | `constexpr` in a header, surfaced to Python | Exactly as `combat_env.h` does today. Re-deriving offsets caused the `TURN_NUMBER = OBS_SIZE − 1` bug. |
 
-⚠️ **The 8 room types are a *different* 8 from §4's phase enumeration.** Phases
-include `neow`, `card_reward` and `combat` which are not map positions; room
-types include `None` and `Unknown` which are not phases. **Do not share an
-enum between them** — they look interchangeable and are not.
+#### There is no separate "Event" room type (Rob, 2026-08-29)
+
+An earlier draft listed **both** `Event` and `Unknown`, making the one-hot 8 wide.
+That was a duplication of the same node, and §4.1 already contradicted it by
+counting "six types plus no-room" — seven.
+
+**`Unknown` *is* the `?` node.** Map generation calls it `EventRoom`, it is
+displayed `?`, and its contents are rolled **on entry** (§4.1). So:
+
+- Before entry it is `?` to the player, so it is `Unknown` in the observation.
+- On entry it becomes a monster fight, shop, treasure or event — and **that is
+  reported by the phase one-hot (block 5), not by the map block.**
+- Afterwards the node is behind you. **The StS map is strictly forward: there is
+  no path back to a visited node.** So a resolved type in the map block would be
+  information the agent can never act on.
+
+A resolved-`Event` value would therefore be a channel that is only ever set for
+rooms already spent — the definition of a dead index (§5.1 rule 5).
+
+⚠️ **The one thing this does hide, and it is correct that it does.** The `?`
+resolution drift (§4.1) is hidden state, inferable only from *which* outcomes
+previous `?` rooms produced. A human infers it by remembering. Under this
+encoding the agent observes each resolution transiently — through the phase
+one-hot at the moment of entry — and must likewise remember to infer the drift.
+
+That is the right parity: the information is observable when it happens, and
+retaining it is **memory, not observation**. Adding a resolution-history channel
+would hand the agent perfect recall a human does not have. This is precisely the
+partial observability M4 (memory architectures) exists to study.
+
+⚠️ **The 7 room types are a *different* 7 from §4's phase enumeration.** Phases
+include `neow`, `card_reward` and `combat`, which are not map positions; room
+types include `None`, which is not a phase. **Do not share an enum between
+them** — they look interchangeable and are not.
 
 **Required:** a `static_assert` tying each block's published offset to the code
 that writes it, mirroring how `kTurnObsIndex` is asserted against its writer
@@ -1718,7 +1753,7 @@ Not design questions — settled, but easy to lose between here and the code.
 | requirement | why |
 |---|---|
 | **Version the obs/action layout**, and report the version with every published result | v1.0.0 froze a layout and published numbers against it. Any later recount invalidates them silently unless the layout is versioned. |
-| **`compute_obs` must update incrementally** | The observation is 2.39× v1.0.0's and ~1,267 floats of it (the map) are constant within a fight. v1.0.0 published 438k/259k steps/sec. |
+| **`compute_obs` must update incrementally** | The observation is 2.32× v1.0.0's and ~1,162 floats of it (the map) are constant within a fight. v1.0.0 published 438k/259k steps/sec. |
 | **Publish per-block offsets as header constants, `static_assert`ed against their writers** | §5.4. `sts_lightspeed`'s own `getObservationMaximums` is misaligned against the observation it describes — the bug this prevents. |
 | **Add `legal_actions()`** | Additive; MCTS wants child enumeration, not a mask scan. |
 | **Add a no-observation step path** | The honest comparison against pure simulators, and what an MCTS rollout actually needs. |
@@ -1896,6 +1931,7 @@ implement the spec.
 | 6 | Evaluation protocol required in this spec | **out of scope** (§13) | This spec covers functional implementation; training and evaluation come after v2.0.0. The determinism test survives, because it is a determinism test, not an eval one. |
 | 7 | Multi-select must be designed now — "painful to retrofit" | **deferred** (§9) | Costed rather than asserted: a confirm action, a selected-cards plane, an accumulate flag. All additive, none moving an existing index. |
 | 8 | Ascension a live parameter | **pinned at 0** (§3.0) | Scope creep before all four acts exist. Also removes Ascender's Bane, shrinks the one-time event pool 14→13, and drops the boss-gold scaling branch. |
+| 19 | Room-type one-hot had **both** `Event` and `Unknown`, 8 wide | **7 wide**, `Unknown` only (§5.4) | They are the same node. `EventRoom` in generation *is* the `?`; its contents resolve on entry and are reported by the phase one-hot, and the map is strictly forward so a resolved type could never be acted on. §4.1 already contradicted the sizing by counting six types plus no-room. −105 floats. |
 
 ### Parity corrections — mechanics we had wrong
 
