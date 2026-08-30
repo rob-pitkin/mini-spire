@@ -51,6 +51,23 @@ mechanics, not code.
 | 14 | [The biggest research risk](#14-the-biggest-research-risk) | does drafting discriminate at A0? |
 | 15 | [Corrections log](#15-corrections-log) | history and standing traps |
 
+**Implementation status.** The spec describes the finished v2.0.0; only some of
+it exists. Sections not listed here have no code behind them yet.
+
+| § | | built |
+|---|---|---|
+| 3 | `RunState`, projection, write-back, episode boundary | ✅ `src/run_state.{h,cc}` |
+| 3.2 | `Card::uid` | ✅ `src/card.h` — write-back path has no callers yet, see §3.2 |
+| 3.5 | named RNG streams | ✅ `src/run_rng.h` |
+| 4 | phase enum | ✅ `Phase` in `run_state.h`; only `Neow`/`Combat`/`Reward` are reachable |
+| 4.1–4.4 | map, run content, shops, Neow | ❌ |
+| 5 | the v2 observation | ❌ — the env still emits v1.0.0's 1,772 floats |
+| 6 | entity-indexed actions | ❌ — the positional option-slot channel is still live |
+| 7 | run reward | ❌ |
+
+Nothing in the run layer is exposed to Python yet: `RunState` has no bindings and
+no Gymnasium surface, so it is exercised only by `ctest`.
+
 **Key figures**, all counted rather than estimated (§5.1):
 
 | | |
@@ -254,8 +271,8 @@ two implementers cannot disagree.
 | `free_this_turn`, `hp_loss_events`, `combust_casts` | **reset** | per-combat counters |
 | relic counters | **written back, all of them** | one run-scoped int per relic; nothing resets at a fight boundary (§3.3) |
 | draw / discard / hand / exhaust piles | **discarded** | the master deck is the truth |
-| status cards generated in combat (Wound, Dazed, Slimed, Burn) | **discarded** | they exist only for that fight |
-| **permanent card changes** | **written back by uid** — see below | Feed, Ritual Dagger, a mid-fight Armaments |
+| status cards generated in combat (Wound, Dazed, Slimed, Burn) | **discarded** | nothing identifies them for removal — *not carrying the piles forward* is what removes them |
+| **permanent card changes** | **written back by uid** — but see below, this has no callers yet | for Ritual Dagger, when it exists |
 
 #### Card instance identity: `Card` gains a uid
 
@@ -288,9 +305,33 @@ Implementation notes:
   grant) get a sentinel uid marking them combat-scoped, so write-back skips them
   without a special case per card.
 
-Scope: this touches `clone()`, `Card` construction everywhere, and every test
-that builds a `Card` by hand. It is the single largest change to an existing
-type in v2.0.0.
+**Scope, as built (2026-08-30): additive and non-breaking.** Declaring `uid`
+**last** with the sentinel as its default means every existing
+`Card{id}` / `Card{id, bonus, upgrades}` aggregate initialisation stays valid
+and picks up the sentinel — all 310 of them across `src/` and `tests/`, plus
+`action_types.h`'s three-argument form. The 447-test suite passed unchanged
+before a single new test was written.
+
+> An earlier draft of this section predicted the opposite: "touches every test
+> that builds a `Card` by hand… the single largest change to an existing type."
+> That was wrong, and the field order is why.
+
+#### What write-back actually applies today: nothing
+
+The "written back by uid" row above is **currently vacuous**, and an implementer
+should know that before going looking for the code path:
+
+| change | why it does not reach write-back |
+|---|---|
+| Rampage's accumulated damage | combat-scoped by design; and it walks a rung ladder (`CardId::Rampage5`…) rather than persisting `bonus_damage` |
+| A mid-combat Armaments upgrade | combat-scoped by design |
+| A campfire smith | mutates the master deck **directly**; never passes through a fight |
+| Feed | raises `max_hp`, which is `Character` state and already carried |
+
+**Ritual Dagger — the one Ironclad card whose card state is genuinely run-scoped
+— is not implemented.** So `end_combat` discards the piles and the master deck is
+untouched. The uid exists so that when Ritual Dagger lands there is something to
+match on; until then the honest statement is that the mechanism has no callers.
 
 ### 3.3 Relic counters are per-run, uniformly
 
@@ -1794,11 +1835,12 @@ says exactly where their work starts.
 
 ## 11. Suggested implementation order
 
-Each step ends somewhere testable.
+Each step ends somewhere testable. **This is the authority on ordering** — where
+a Linear board disagrees with it, the spec wins.
 
-1. `RunState` + episode boundary; `reset()` starts at Neow. No map — a linear
+1. ✅ `RunState` + episode boundary; `reset()` starts at Neow. No map — a linear
    floor counter.
-2. Sequential fights with HP and deck carrying across them.
+2. ✅ Sequential fights with HP and deck carrying across them.
 3. Card rewards (simplest decision point; proves the loop).
 4. **Walking skeleton complete** — 3 fights, card reward between each, terminates
    after N floors. No map, shop, events, or boss.
@@ -1957,6 +1999,8 @@ implement the spec.
 | 16 | All 20 special relics included, on a "cost of knowing" argument | **10 of 20** (§5.1) | The exclusion was justified as too expensive to determine. Rob rejected the premise: dead indices are not free, and Act 1 is the scope. Tracing them took one pass — and *two* (Gremlin Visage, Cultist Headpiece) turned out to be ungrantable in `sts_lightspeed` at all, resolved only by the wiki (Face Trader). |
 | 17 | Black Blood in `RELICS` | **cut** (§4.4) | Neow never offers the upgraded base relic, and Neow is the only boss-relic source in an Act 1 run. Unreachable by any path. |
 | 18 | Relics/potions as run-layer hooks | **first-class `CombatState`** (§3.0.1) | A hook model leaves the standalone combat env unable to show held relics or use potions — a fragment that only works inside a run. |
+| 20 | `Card::uid` "touches every test that builds a `Card` by hand… the single largest change to an existing type" | **additive; zero call sites changed** (§3.2) | Declaring `uid` last with a default sentinel keeps all 310 aggregate initialisations valid. The 447-test suite passed unchanged. A prediction about blast radius, made without checking the field order that determines it. |
+| 21 | "permanent card changes written back by uid", stated as live behaviour | **the path has no callers** (§3.2) | Every per-instance change the engine can currently produce is combat-scoped, happens outside combat, or is `max_hp`. Ritual Dagger is not implemented. Found by trying to write the write-back and having nothing to put in it. |
 
 ### Standing traps
 
