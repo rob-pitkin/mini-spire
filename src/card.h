@@ -340,6 +340,11 @@ enum class DamageRule {
 // block so a buffed Rampage is visible.
 //
 // Kept a small POD so piles stay plain vectors and clone() stays a deep copy.
+// A card that exists only for the duration of one combat: statuses the enemy
+// adds (Wound, Dazed, Slimed, Burn) and cards conjured mid-fight (Infernal
+// Blade). Write-back skips these, so they need no per-card special case.
+inline constexpr int kCombatScopedCardUid = -1;
+
 struct Card {
   CardId card_id;
   // Extra damage accumulated this combat (Rampage). Combat-scoped.
@@ -347,14 +352,30 @@ struct Card {
   // Times this specific card has been upgraded (Searing Blow). Run-scoped in
   // v2; today it only changes if something upgrades the card mid-combat.
   int upgrades = 0;
+  // Stable identity of this instance within a run, so run-scoped changes can be
+  // written back to the right card in the master deck. Assigned from
+  // RunState::next_card_uid when a card enters the master deck; anything created
+  // during a fight keeps the sentinel.
+  //
+  // Declared LAST deliberately: every existing `Card{id}` / `Card{id, bonus,
+  // upgrades}` aggregate initialisation stays valid and picks up the sentinel.
+  //
+  // Never enters the observation — it is bookkeeping, not something a human
+  // perceives, and a raw id in a float slot would assert a false ordinal.
+  int uid = kCombatScopedCardUid;
 
   // Do these two instances play identically? Used to decide whether they
   // collapse into one option in a choice.
+  //
+  // uid is deliberately NOT compared. Two Strikes play the same whichever copy
+  // they are; including uid would make every card unique, stop duplicate options
+  // collapsing, and change shipped v1.0.0 choice behaviour.
   bool same_as(const Card& other) const {
     return card_id == other.card_id && bonus_damage == other.bonus_damage &&
            upgrades == other.upgrades;
   }
-  // Does this instance carry any state beyond its id?
+  // Does this instance carry any state beyond its id? Same reasoning as
+  // same_as: uid is not "state" in this sense.
   bool has_instance_state() const { return bonus_damage != 0 || upgrades != 0; }
 };
 
