@@ -12,6 +12,27 @@
 
 namespace minispire {
 
+// A mode that persists across steps, with a varying legal-action set — exactly
+// how combat already works. Not one decision. See docs/design/v2-spec.md §4.
+//
+// The declaration order IS the observation's phase one-hot (block 5), so these
+// values are an interface: renumbering them silently changes the observation.
+//
+// NOTE: these are NOT the map's room types, which are a different 7 and look
+// interchangeable (§5.4). Do not share an enum between them.
+enum class Phase {
+  Neow = 0,   // run start; exits when a blessing is chosen
+  Map,        // after any room resolves; exits when a path node is chosen
+  Combat,     // monster/elite/boss node; exits when all enemies die or you do
+  Reward,     // combat won; exits when rewards are taken or skipped
+  Shop,       // merchant node; exits when the player leaves
+  Rest,       // rest node; exits when an option is taken
+  Event,      // event node; exits when the event resolves
+  Treasure,   // chest — a deterministic pass-through, no agent decision (§4)
+};
+
+inline constexpr int kNumPhases = 8;
+
 // The run above the fight. See docs/design/v2-spec.md §3.
 //
 // RunState is the owner of record ACROSS fights. A fight is a projection of run
@@ -47,6 +68,15 @@ struct RunState {
   CombatState combat;
   bool in_combat = false;
 
+  Phase phase = Phase::Neow;
+
+  // Run-level result, reusing combat's Outcome rather than defining a parallel
+  // enum. InProgress until the player dies; Won needs a boss to kill, which is
+  // Phase 7 work (§1, roadmap).
+  Outcome outcome = Outcome::InProgress;
+
+  bool is_terminal() const { return outcome != Outcome::InProgress; }
+
   // relics / potions live here once RelicId and PotionId exist. They are part
   // of CombatState too (§3.0.1); RunState owns them across fights.
 
@@ -65,7 +95,13 @@ struct RunState {
 
   // Writes the fight's results back (§3.2 "On fight end"). HP and Max HP carry;
   // the piles are discarded because the master deck is the truth.
+  //
+  // Sets outcome to Lost if the player died, otherwise moves to Reward.
   void end_combat();
+
+  // Steps onto the next floor and starts its fight. Until the map lands this is
+  // a linear counter (§11 step 1) — floor + 1, no path to choose.
+  void advance_to_next_floor(EncounterPool pool);
 };
 
 }  // namespace minispire

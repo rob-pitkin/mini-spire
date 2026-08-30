@@ -168,6 +168,86 @@ TEST(RunState, SameSeedReplaysIdentically) {
   EXPECT_NE(play(2024), play(2025));
 }
 
+// ------------------------------------------------------------ episode boundary
+
+TEST(RunState, StartsAtNeowOnFloorZero) {
+  RunState run = RunState::start(1);
+  EXPECT_EQ(run.phase, Phase::Neow);
+  EXPECT_EQ(run.floor, 0);
+  EXPECT_EQ(run.outcome, Outcome::InProgress);
+  EXPECT_FALSE(run.is_terminal());
+}
+
+// The phase enum IS the observation's one-hot, so its numbering is an
+// interface. This pins it against a silent renumbering.
+TEST(RunState, PhaseNumberingMatchesTheSpec) {
+  EXPECT_EQ(static_cast<int>(Phase::Neow), 0);
+  EXPECT_EQ(static_cast<int>(Phase::Map), 1);
+  EXPECT_EQ(static_cast<int>(Phase::Combat), 2);
+  EXPECT_EQ(static_cast<int>(Phase::Reward), 3);
+  EXPECT_EQ(static_cast<int>(Phase::Shop), 4);
+  EXPECT_EQ(static_cast<int>(Phase::Rest), 5);
+  EXPECT_EQ(static_cast<int>(Phase::Event), 6);
+  EXPECT_EQ(static_cast<int>(Phase::Treasure), 7);
+  EXPECT_EQ(static_cast<int>(Phase::Treasure) + 1, kNumPhases);
+}
+
+TEST(RunState, WinningAFightMovesToReward) {
+  RunState run = RunState::start(42);
+  run.begin_combat(EncounterPool::Weak);
+  EXPECT_EQ(run.phase, Phase::Combat);
+
+  run.end_combat();
+  EXPECT_EQ(run.phase, Phase::Reward);
+  EXPECT_FALSE(run.is_terminal());
+}
+
+TEST(RunState, DyingEndsTheRun) {
+  RunState run = RunState::start(42);
+  run.begin_combat(EncounterPool::Weak);
+  run.combat.character.hp = 0;
+  run.end_combat();
+
+  EXPECT_EQ(run.outcome, Outcome::Lost);
+  EXPECT_TRUE(run.is_terminal());
+}
+
+TEST(RunState, AdvancingStepsTheFloorAndStartsTheNextFight) {
+  RunState run = RunState::start(42);
+  run.begin_combat(EncounterPool::Weak);
+  run.end_combat();
+
+  run.advance_to_next_floor(EncounterPool::Weak);
+  EXPECT_EQ(run.floor, 1);
+  EXPECT_EQ(run.phase, Phase::Combat);
+  EXPECT_TRUE(run.in_combat);
+}
+
+TEST(RunState, ADeadRunDoesNotAdvance) {
+  RunState run = RunState::start(42);
+  run.begin_combat(EncounterPool::Weak);
+  run.combat.character.hp = 0;
+  run.end_combat();
+
+  run.advance_to_next_floor(EncounterPool::Weak);
+  EXPECT_EQ(run.floor, 0) << "a terminal run stepped onto another floor";
+  EXPECT_FALSE(run.in_combat);
+}
+
+// Sequential fights with HP carrying across them — §11 step 2, and the thing a
+// run actually is.
+TEST(RunState, HpCarriesAcrossSequentialFights) {
+  RunState run = RunState::start(42);
+  run.begin_combat(EncounterPool::Weak);
+  run.combat.character.hp = 55;
+  run.end_combat();
+  ASSERT_EQ(run.hp, 55);
+
+  run.advance_to_next_floor(EncounterPool::Weak);
+  EXPECT_EQ(run.combat.character.hp, 55)
+      << "the next fight did not start from the HP the last one ended on";
+}
+
 // clone() must preserve uids: an MCTS rollout that minted fresh ones would
 // write back to the wrong cards.
 TEST(RunState, ClonePreservesCardIdentity) {

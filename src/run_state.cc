@@ -31,6 +31,7 @@ void RunState::begin_combat(EncounterPool pool) {
   combat.character.max_hp = max_hp;
 
   in_combat = true;
+  phase = Phase::Combat;
 }
 
 void RunState::end_combat() {
@@ -52,6 +53,20 @@ void RunState::end_combat() {
   // that when it lands, the write-back has something to match on.
 
   in_combat = false;
+
+  if (hp <= 0) {
+    // Losing is terminal for the run, and it is the only terminal condition
+    // that exists today: winning needs an Act 1 boss to kill (Phase 7).
+    outcome = Outcome::Lost;
+  } else {
+    phase = Phase::Reward;
+  }
+}
+
+void RunState::advance_to_next_floor(EncounterPool pool) {
+  if (is_terminal()) return;
+  ++floor;
+  begin_combat(pool);
 }
 
 }  // namespace minispire
