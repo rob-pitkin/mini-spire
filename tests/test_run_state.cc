@@ -437,6 +437,101 @@ TEST(CardReward, IsDeterministicPerFloor) {
   EXPECT_NE(offered(5, 2), offered(5, 3));
 }
 
+// ----------------------------------------------------------- walking skeleton
+
+// §11 step 4: three fights, a card reward between each, terminating after N
+// floors. The whole loop end to end — which is the point of the slice, since it
+// proves the architecture before four more features are built on it.
+TEST(WalkingSkeleton, ThreeFightsWithRewardsCompletesARun) {
+  RunState run = RunState::start(2024);
+  run.final_floor = 3;
+
+  int fights = 0;
+  int rewards_taken = 0;
+  const size_t deck_at_start = run.master_deck.size();
+
+  while (!run.is_terminal()) {
+    run.advance_to_next_floor(EncounterPool::Weak);
+    ASSERT_EQ(run.phase, Phase::Combat);
+    ++fights;
+
+    // Stand in for winning the fight.
+    run.combat.character.hp = std::max(1, run.combat.character.hp - 5);
+    run.end_combat();
+
+    if (run.is_terminal()) break;
+    ASSERT_EQ(run.phase, Phase::Reward);
+    ASSERT_EQ(run.card_reward.size(), static_cast<size_t>(kCardRewardSize));
+    run.take_card_reward(0);
+    ++rewards_taken;
+  }
+
+  EXPECT_EQ(run.outcome, Outcome::Won);
+  EXPECT_EQ(fights, 3);
+  EXPECT_EQ(rewards_taken, 3) << "the last floor's reward is still offered";
+  EXPECT_EQ(run.master_deck.size(), deck_at_start + 3);
+  EXPECT_EQ(run.floor, 3);
+}
+
+TEST(WalkingSkeleton, DyingMidRunEndsItWithoutAReward) {
+  RunState run = RunState::start(2024);
+  run.final_floor = 3;
+
+  run.advance_to_next_floor(EncounterPool::Weak);
+  run.combat.character.hp = 0;
+  run.end_combat();
+
+  EXPECT_EQ(run.outcome, Outcome::Lost);
+  EXPECT_TRUE(run.card_reward.empty()) << "a dead run was offered a reward";
+  EXPECT_NE(run.phase, Phase::Reward);
+}
+
+// Every card taken is a distinct instance, even when the same card is offered
+// on different floors — the uid is what makes that true.
+TEST(WalkingSkeleton, EveryDraftedCardGetsItsOwnIdentity) {
+  RunState run = RunState::start(7);
+  run.final_floor = 3;
+
+  while (!run.is_terminal()) {
+    run.advance_to_next_floor(EncounterPool::Weak);
+    run.combat.character.hp = std::max(1, run.combat.character.hp - 5);
+    run.end_combat();
+    if (run.is_terminal()) break;
+    run.take_card_reward(0);
+  }
+
+  std::set<int> uids;
+  for (const Card& c : run.master_deck) uids.insert(c.uid);
+  EXPECT_EQ(uids.size(), run.master_deck.size());
+}
+
+// The property the whole run layer exists to provide, asserted over a full run
+// rather than a single fight.
+TEST(WalkingSkeleton, AWholeRunIsReproducibleFromItsSeed) {
+  auto play = [](uint64_t seed) {
+    RunState run = RunState::start(seed);
+    run.final_floor = 3;
+    std::vector<int> trace;
+    while (!run.is_terminal()) {
+      run.advance_to_next_floor(EncounterPool::Weak);
+      for (const Card& c : run.combat.draw_pile)
+        trace.push_back(static_cast<int>(c.card_id));
+      run.combat.character.hp = std::max(1, run.combat.character.hp - 5);
+      run.end_combat();
+      if (run.is_terminal()) break;
+      for (const Card& c : run.card_reward)
+        trace.push_back(static_cast<int>(c.card_id));
+      run.take_card_reward(0);
+      trace.push_back(run.hp);
+    }
+    trace.push_back(static_cast<int>(run.outcome));
+    return trace;
+  };
+
+  EXPECT_EQ(play(31337), play(31337));
+  EXPECT_NE(play(31337), play(31338));
+}
+
 // clone() must preserve uids: an MCTS rollout that minted fresh ones would
 // write back to the wrong cards.
 TEST(RunState, ClonePreservesCardIdentity) {

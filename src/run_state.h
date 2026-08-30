@@ -64,6 +64,11 @@ struct RunState {
   // 0 is Neow. A linear counter until the map lands (§11 step 1).
   int floor = 0;
 
+  // The walking skeleton terminates after clearing this many floors (§11 step
+  // 4). It stands in for the Act 1 boss, which is Phase 7 — a real run ends
+  // when the boss dies, not on a floor count.
+  int final_floor = 3;
+
   int hp = IRONCLAD_MAX_HP;
   int max_hp = IRONCLAD_MAX_HP;
   int gold = 0;
@@ -128,8 +133,13 @@ struct RunState {
   // Sets outcome to Lost if the player died, otherwise moves to Reward.
   void end_combat();
 
-  // Steps onto the next floor and starts its fight. Until the map lands this is
-  // a linear counter (§11 step 1) — floor + 1, no path to choose.
+  // Leaves Phase::Map onto the next floor's fight.
+  //
+  // STUB until §11 step 5. A real map offers 2–4 nodes and the agent picks one;
+  // here there is nothing to choose, so the caller names the encounter and the
+  // floor simply advances. Kept as a distinct phase rather than skipped, so the
+  // map's arrival is a matter of giving Map real options rather than splicing a
+  // new phase into the sequence.
   void advance_to_next_floor(EncounterPool pool);
 
   // Rolls one card's rarity and advances the pity counter (§4.2).

@@ -158,7 +158,16 @@ void RunState::take_card_reward(int index) {
 
 void RunState::skip_card_reward() {
   card_reward.clear();
-  if (!is_terminal()) phase = Phase::Map;
+  if (is_terminal()) return;
+
+  if (floor >= final_floor) {
+    // The skeleton's stand-in for killing the Act 1 boss. Replaced in Phase 7
+    // by the boss actually dying; a floor count is not a win condition in Slay
+    // the Spire.
+    outcome = Outcome::Won;
+    return;
+  }
+  phase = Phase::Map;
 }
 
 }  // namespace minispire

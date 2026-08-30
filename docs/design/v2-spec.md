@@ -59,8 +59,11 @@ it exists. Sections not listed here have no code behind them yet.
 | 3 | `RunState`, projection, write-back, episode boundary | ✅ `src/run_state.{h,cc}` |
 | 3.2 | `Card::uid` | ✅ `src/card.h` — write-back path has no callers yet, see §3.2 |
 | 3.5 | named RNG streams | ✅ `src/run_rng.h` |
-| 4 | phase enum | ✅ `Phase` in `run_state.h`; only `Neow`/`Combat`/`Reward` are reachable |
-| 4.1–4.4 | map, run content, shops, Neow | ❌ |
+| 4 | phase enum | ✅ `Phase` in `run_state.h`; `Combat`/`Reward`/`Map` reachable, `Map` a stub |
+| 4.1 | map generation | ❌ — `Phase::Map` exists and auto-advances |
+| 4.2 | card-reward rarity roll + pity counter | ✅ `run_state.cc`; pools in `card.h` |
+| 4.2 | gold, potion drops, elite relics | ❌ |
+| 4.3–4.4 | shops, Neow | ❌ |
 | 5 | the v2 observation | ❌ — the env still emits v1.0.0's 1,772 floats |
 | 6 | entity-indexed actions | ❌ — the positional option-slot channel is still live |
 | 7 | run reward | ❌ |
@@ -1841,9 +1844,13 @@ a Linear board disagrees with it, the spec wins.
 1. ✅ `RunState` + episode boundary; `reset()` starts at Neow. No map — a linear
    floor counter.
 2. ✅ Sequential fights with HP and deck carrying across them.
-3. Card rewards (simplest decision point; proves the loop).
-4. **Walking skeleton complete** — 3 fights, card reward between each, terminates
-   after N floors. No map, shop, events, or boss.
+3. ✅ Card rewards (simplest decision point; proves the loop).
+4. ✅ **Walking skeleton complete** — 3 fights, card reward between each,
+   terminates after N floors. No map, shop, events, or boss.
+   ⚠️ Terminating on a floor count is the skeleton's stand-in for killing the
+   Act 1 boss (`RunState::final_floor`), replaced in step 8. And §12's step cap
+   is **not** implemented: it needs a `step()` to count, which arrives with the
+   env surface.
 5. The map (generation, path choice, the Unknown-stays-Unknown test).
 6. Rest sites (first resource-vs-investment tradeoff; the case the reward design
    was built around).
