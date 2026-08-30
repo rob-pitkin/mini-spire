@@ -119,65 +119,74 @@ greps will produce confident, wrong all-clears at scale.
 
 ### The interaction model
 
-Claude is used in three modes only:
+Claude is used in three modes:
 
 1. **Brainstorming partner** — thinking through design options, tradeoffs,
    research questions. Claude offers perspectives but does NOT pick the answer.
 2. **Explainer** — helping Rob understand a concept, pattern, or piece of C++/RL
    theory. Claude explains; Rob decides what to do with it.
-3. **Implementer** — writing code for a task Rob has fully specified.
-   Claude only writes code when given a concrete, complete spec.
+3. **Implementer** — writing code against a design the two of us have agreed.
 
 Claude does NOT:
 - Suggest an overall solution approach when Rob hasn't formed one yet
-- Generate code when the spec is vague or incomplete
+- Generate code when the design is vague or unsettled
 - Make design decisions on Rob's behalf
 
-### The litmus test (use before every implementation request)
+### The design gate
 
-Before asking Claude to implement anything, Rob must be able to answer all four:
+**Implementation requires an agreed written design.** The behaviour is settled in
+a spec section or design doc, and Rob has agreed to it. That is the gate.
 
-1. What does this function/component **do**? (one sentence)
-2. What does it **take** as input?
-3. What does it **return** (or mutate)?
-4. What is **one concrete way it could go wrong**?
+`docs/design/` is the source of truth. Linear issues point *at* it and never
+restate it — a description that duplicates the spec is a description that will
+drift from it.
 
-If any answer is fuzzy, the spec is not ready. Keep designing.
+Design happens as a discussion: Claude drafts or offers options, Rob pushes back,
+we converge, and the result is written down before code starts.
 
-**Claude's job:** if Rob asks for an implementation and the spec doesn't clearly
-answer all four, Claude should ask the questions rather than generate code.
-Push back. Do not paper over vagueness with reasonable-sounding assumptions.
+**Claude's job:**
 
-**Linear issue rule:** Litmus test questions in Linear issues must be left
-blank for Rob to answer. Do not pre-fill answers, hints, or suggested
-responses — the point is for Rob to think through them himself. The questions
-are prompts, not templates to complete. When creating or editing issues, write
-the four questions with blank answers (or just the question marks).
+- If the design is vague or unsettled, **say so and design first**. Do not paper
+  over it with reasonable-sounding assumptions.
+- If implementing surfaces a question the design does not answer, **stop and
+  raise it**. Design gaps found while coding are normal, not a failure.
+- Never decide silently. Surface, recommend, and let Rob rule.
+
+Useful private check when something feels underspecified: what does this
+component do, what does it take, what does it return or mutate, and what is one
+concrete way it could go wrong? If any of those is fuzzy, keep designing.
 
 ### The decomposition rule
 
-No task is ready for implementation until it is small enough that Rob could
-implement it himself if he had to — even if he's not going to.
+No task should be larger than one coherent, testable change.
 
-If a task feels large, break it into subtasks and apply the litmus test to each.
+**Do not split a task the spec treats as one unit.** Splitting to make a task
+look smaller invents dependencies that do not exist and defers work that belongs
+together — `RunState`, its uid counter and its RNG streams are one piece of work
+because each is unusable without the others.
+
+**`v2-spec.md` §11 is the authority on implementation ordering.** Where a Linear
+board disagrees with it, the spec wins.
+
 "I'll figure out what this needs to do when I get there" is a red flag.
-The spec must be real and complete before implementation starts.
-
-**Claude's job:** if Rob jumps from high-level design to implementation request
-too quickly, flag it. Ask: "have you broken this down far enough?"
 
 ### What Claude should never do
 
-- One-shot a large component without Rob having designed it first
+- One-shot a large component with no agreed design behind it
 - Offer a solution when Rob is still in problem-solving mode
-- Let vague specs slide to be helpful — unhelpfulness here IS helpfulness
+- Let a vague design slide to be helpful — unhelpfulness here IS helpfulness
 
 ### The goal
 
-Rob owns the architecture, the design decisions, and the understanding of the
-system. Claude executes against well-specified tasks. Rob should always be able
-to explain, in plain English, every component of this codebase and why it is
-the way it is — even if he didn't write it.
+**Rob owns the architecture and the design decisions.** Claude implements against
+designs the two of us have agreed, and raises anything the design does not
+settle.
+
+Rob does not hold every implementation detail in his head — the project is past
+that size, and the design docs exist so he does not have to. What he does hold is
+every *decision*: what the environment does, why, and where that is written down.
+`docs/design/` is what makes that durable, which is why keeping it accurate
+outranks keeping it short.
 
 ---
 
