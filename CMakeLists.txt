@@ -18,6 +18,7 @@ add_library(minispire
   src/enemy.cc
   src/encounter.cc
   src/query.cc
+  src/run_state.cc
   src/turn_loop.cc
 )
 
@@ -63,6 +64,7 @@ if(MINISPIRE_BUILD_TESTS AND NOT SKBUILD)
     tests/test_encounter.cc
     tests/test_mask_oracle.cc
     tests/test_run_rng.cc
+    tests/test_run_state.cc
   )
   target_link_libraries(minispire_tests PRIVATE minispire GTest::gtest_main)
   target_include_directories(minispire_tests PRIVATE tests)
