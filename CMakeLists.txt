@@ -17,6 +17,7 @@ add_library(minispire
   src/combat_env.cc
   src/enemy.cc
   src/encounter.cc
+  src/map.cc
   src/query.cc
   src/run_state.cc
   src/turn_loop.cc
@@ -63,6 +64,7 @@ if(MINISPIRE_BUILD_TESTS AND NOT SKBUILD)
     tests/test_combat_env.cc
     tests/test_encounter.cc
     tests/test_mask_oracle.cc
+    tests/test_map.cc
     tests/test_run_rng.cc
     tests/test_run_state.cc
   )
