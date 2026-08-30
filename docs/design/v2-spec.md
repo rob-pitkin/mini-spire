@@ -1,7 +1,9 @@
 # v2.0.0 — full Act 1 run: implementable spec
 
-**Status: DRAFT**, pending human review. Scope is settled
-(`v2-obs-notes.md` § SCOPE DECIDED). Remaining open items are in §10.
+**Status: ACCEPTED** (2026-08-29). Scope is settled (`v2-obs-notes.md` § SCOPE
+DECIDED), human review is complete, and **nothing blocks implementation**.
+Remaining known imprecision and deferred work are catalogued in §10 — read it
+before starting, but none of it gates a start.
 
 **Audience: an implementer with no prior context.** Everything needed to build
 this should be here or linked.
@@ -1189,11 +1191,12 @@ structurally impossible, not merely absent.
 So block 13 is a *local* edge mask: 315 floats, lossless, no wasted capacity. An
 off-grid neighbour (column 0 has no `c−1`) is a hard 0.
 
-### 5.4 Layout conventions
+### 5.4 Layout conventions — RATIFIED (Rob, 2026-08-29)
 
-`v2-spec.md` gave block sizes but no internal layout, which is enough for two
-implementers to produce incompatible buffers. Proposed conventions, each with its
-reason:
+Block sizes alone are enough for two implementers to produce incompatible
+buffers. These conventions close that, and are **ratified** — they go into a
+header as `constexpr` constants with `static_assert`s against the code that
+writes them, and everything downstream reads them rather than re-deriving.
 
 | convention | choice | why |
 |---|---|---|
@@ -1708,13 +1711,20 @@ decision should be revisited immediately.
 Everything that blocked implementation has been closed. What remains is one
 ratification, one enumeration, and a set of items that are deliberately open.
 
-### 10.1 Blocking implementation
+### 10.1 Blocking implementation — none
 
-| # | item | why it blocks |
-|---|---|---|
-| 1 | **Layout conventions ratification** (§5.4) | Proposed, not yet ratified. Two implementers produce incompatible buffers until the offsets are published and asserted. **Needs Rob — the only item that does.** |
+**The design gate is closed (2026-08-29).** Every blocker has been settled;
+what remains in §10.2 and §10.3 is imprecision we have chosen to accept and work
+we have chosen to defer, neither of which gates a start.
+
+The standing expectation, in Rob's words: *"any issues we have with it at this
+point we'll discover during implementation."* That is the right posture now —
+the design has been pushed as far as reading and cross-checking can push it, and
+the next class of defect is the kind only a running engine surfaces.
 
 **Closed 2026-08-29:**
+
+- ~~Layout conventions ratification~~ (§5.4). Ratified.
 
 - ~~Per-relic counter lifetimes~~ (§3.3). There is no per-relic variation: every
   relic carries one run-scoped int, loaded at fight start and written back at

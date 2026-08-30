@@ -75,9 +75,23 @@ second major version.
 - [x] Reward — `docs/design/run-reward.md`
 - [x] **Adversarial pass** — four agent reviews. Shops *were* the failure point,
       as predicted: the purpose collision (§6.1). Events came second (§9).
-- [ ] **Human review** — Rob's pass over the spec
-- [ ] Remaining blockers: `?` roll distribution, relic counter lifetimes,
-      exact vocabularies (`v2-spec.md` §10)
+- [x] **Human review** — Rob's passes over the spec (2026-08-14 → 08-29)
+- [x] Blockers closed: `?` roll distribution, relic counter lifetimes, exact
+      vocabularies, run-content generation, roll timing, layout conventions
+
+**Phase 4.5 is complete. `docs/design/v2-spec.md` is ACCEPTED (2026-08-29).**
+
+What the design pass actually produced, beyond the spec itself:
+
+- **Counted vocabularies**, not estimates: `CARDS` 270, `RELICS` 140,
+  `POTIONS` 33, `EVENTS` 25, `EVENT_OPTIONS` 58 → a **4,115**-float observation
+  and a **2,136**-action space.
+- **A sourcing discipline** (CLAUDE.md, `prior-art-sts-lightspeed.md` §7.5):
+  mechanics come from two MIT reimplementations and are **wiki-cross-checked
+  before entering the spec**. That check caught four defects, three of them
+  mislabelled-but-correct code.
+- **Act 1 scope enforced as a rule** — no dead indices anywhere in the obs or
+  action space (`v2-spec.md` §5.1 rule 5).
 
 **Exit criterion:** every one of the five decision types has a worked example
 showing how it encodes, *including* the ones that needed the channel extended.
