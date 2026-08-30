@@ -60,7 +60,8 @@ it exists. Sections not listed here have no code behind them yet.
 | 3.2 | `Card::uid` | ✅ `src/card.h` — write-back path has no callers yet, see §3.2 |
 | 3.5 | named RNG streams | ✅ `src/run_rng.h` |
 | 4 | phase enum | ✅ `Phase` in `run_state.h`; `Combat`/`Reward`/`Map` reachable, `Map` a stub |
-| 4.1 | map generation | ❌ — `Phase::Map` exists and auto-advances |
+| 4.1 | map **generation** | ✅ `src/map.{h,cc}` — incl. StS's own RNG, so seeds are comparable with `sts_map_oracle` |
+| 4.1 | map **path choice** | ❌ — `RunState` does not hold a `Map` yet; `Phase::Map` still auto-advances |
 | 4.2 | card-reward rarity roll + pity counter | ✅ `run_state.cc`; pools in `card.h` |
 | 4.2 | gold, potion drops, elite relics | ❌ |
 | 4.3–4.4 | shops, Neow | ❌ |
@@ -1851,7 +1852,8 @@ a Linear board disagrees with it, the spec wins.
    Act 1 boss (`RunState::final_floor`), replaced in step 8. And §12's step cap
    is **not** implemented: it needs a `step()` to count, which arrives with the
    env surface.
-5. The map (generation, path choice, the Unknown-stays-Unknown test).
+5. The map — ✅ generation, ❌ path choice. `RunState` does not hold a `Map`
+   yet, so `Phase::Map` still auto-advances.
 6. Rest sites (first resource-vs-investment tradeoff; the case the reward design
    was built around).
 7. Events, then shops (most machinery).
