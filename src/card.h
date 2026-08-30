@@ -590,6 +590,55 @@ inline int searing_blow_rung(CardId id) {
   }
 }
 
+// The Ironclad's obtainable card pools, by rarity. See v2-spec.md §4.2.
+//
+// These are what a card reward, a shop and a transform draw FROM — you sample a
+// pool, you do not scan every card filtering on a rarity field. Kept as pools
+// rather than a `rarity` member on CardData for that reason, and because it
+// leaves CARD_DATABASE's 189 rows untouched.
+//
+// Only BASE cards appear: rewards never offer an upgraded card, so `Anger` is
+// here and `AngerPlus` is not. 20 + 36 + 16 = 72, which is the pool size that
+// reproduces our 189 card types (72x2 upgrades + 3 starters x2 + rungs +
+// statuses) — see §5.1.
+//
+// Source: sts_lightspeed `RarityCardPool::cardBlob` (Ironclad slice), with the
+// membership cross-checked against wiki.gg's Ironclad card list. Note the wiki
+// page's *stated* totals (21/31/10) disagree with its own name lists, which are
+// what agree with the pools below — a summary that states a total is not a
+// count (CLAUDE.md).
+inline const std::vector<CardId> IRONCLAD_COMMON_POOL = {
+    CardId::Anger,        CardId::Cleave,          CardId::Warcry,
+    CardId::Flex,         CardId::IronWave,        CardId::BodySlam,
+    CardId::TrueGrit,     CardId::ShrugItOff,      CardId::Clash,
+    CardId::Thunderclap,  CardId::PommelStrike,    CardId::TwinStrike,
+    CardId::Clothesline,  CardId::Armaments,       CardId::Havoc,
+    CardId::Headbutt,     CardId::WildStrike,      CardId::HeavyBlade,
+    CardId::PerfectedStrike, CardId::SwordBoomerang,
+};
+
+inline const std::vector<CardId> IRONCLAD_UNCOMMON_POOL = {
+    CardId::SpotWeakness,  CardId::Inflame,       CardId::PowerThrough,
+    CardId::DualWield,     CardId::InfernalBlade, CardId::RecklessCharge,
+    CardId::Hemokinesis,   CardId::Intimidate,    CardId::BloodForBlood,
+    CardId::FlameBarrier,  CardId::Pummel,        CardId::BurningPact,
+    CardId::Metallicize,   CardId::Shockwave,     CardId::Rampage,
+    CardId::SeverSoul,     CardId::Whirlwind,     CardId::Combust,
+    CardId::DarkEmbrace,   CardId::SeeingRed,     CardId::Disarm,
+    CardId::FeelNoPain,    CardId::Rage,          CardId::Entrench,
+    CardId::Sentinel,      CardId::BattleTrance,  CardId::SearingBlow,
+    CardId::SecondWind,    CardId::Rupture,       CardId::Bloodletting,
+    CardId::Carnage,       CardId::Dropkick,      CardId::FireBreathing,
+    CardId::GhostlyArmor,  CardId::Uppercut,      CardId::Evolve,
+};
+
+inline const std::vector<CardId> IRONCLAD_RARE_POOL = {
+    CardId::Immolate,   CardId::Offering,  CardId::Exhume,     CardId::Reaper,
+    CardId::Brutality,  CardId::Juggernaut, CardId::Impervious, CardId::Berserk,
+    CardId::FiendFire,  CardId::Barricade, CardId::Corruption, CardId::LimitBreak,
+    CardId::Feed,       CardId::Bludgeon,  CardId::DemonForm,  CardId::DoubleTap,
+};
+
 // What a card BECOMES after being played, for cards that grow (ROB-87). Growth
 // is an ID swap, the same mechanism as an upgrade — Rampage's "+5 this combat"
 // moves it one rung up its ladder rather than mutating a hidden counter.

@@ -248,6 +248,195 @@ TEST(RunState, HpCarriesAcrossSequentialFights) {
       << "the next fight did not start from the HP the last one ended on";
 }
 
+// --------------------------------------------------------------- card rewards
+
+TEST(CardReward, WinningAFightOffersThreeDistinctCards) {
+  RunState run = RunState::start(42);
+  run.begin_combat(EncounterPool::Weak);
+  run.end_combat();
+
+  ASSERT_EQ(run.card_reward.size(), static_cast<size_t>(kCardRewardSize));
+  std::set<CardId> ids;
+  for (const Card& c : run.card_reward) ids.insert(c.card_id);
+  EXPECT_EQ(ids.size(), run.card_reward.size()) << "a reward offered a duplicate";
+}
+
+// An offer is not a possession: uid is minted on acquisition, not on display.
+TEST(CardReward, OfferedCardsHaveNoIdentityUntilTaken) {
+  RunState run = RunState::start(42);
+  run.begin_combat(EncounterPool::Weak);
+  run.end_combat();
+
+  for (const Card& c : run.card_reward) {
+    EXPECT_EQ(c.uid, kCombatScopedCardUid);
+  }
+
+  const CardId taking = run.card_reward[1].card_id;
+  const size_t before = run.master_deck.size();
+  run.take_card_reward(1);
+
+  ASSERT_EQ(run.master_deck.size(), before + 1);
+  EXPECT_EQ(run.master_deck.back().card_id, taking);
+  EXPECT_NE(run.master_deck.back().uid, kCombatScopedCardUid);
+}
+
+TEST(CardReward, TakingClosesTheScreen) {
+  RunState run = RunState::start(42);
+  run.begin_combat(EncounterPool::Weak);
+  run.end_combat();
+  run.take_card_reward(0);
+
+  EXPECT_TRUE(run.card_reward.empty());
+  EXPECT_EQ(run.phase, Phase::Map);
+}
+
+TEST(CardReward, SkippingTakesNothing) {
+  RunState run = RunState::start(42);
+  run.begin_combat(EncounterPool::Weak);
+  run.end_combat();
+  const size_t before = run.master_deck.size();
+  run.skip_card_reward();
+
+  EXPECT_EQ(run.master_deck.size(), before);
+  EXPECT_TRUE(run.card_reward.empty());
+  EXPECT_EQ(run.phase, Phase::Map);
+}
+
+// The mask should stop this; the engine should not corrupt state if it doesn't.
+TEST(CardReward, OutOfRangeIndexTakesNothing) {
+  RunState run = RunState::start(42);
+  run.begin_combat(EncounterPool::Weak);
+  run.end_combat();
+  const size_t before = run.master_deck.size();
+
+  run.take_card_reward(99);
+  run.take_card_reward(-1);
+  EXPECT_EQ(run.master_deck.size(), before);
+  EXPECT_EQ(run.card_reward.size(), static_cast<size_t>(kCardRewardSize));
+}
+
+TEST(CardReward, RewardsComeFromTheIroncladPools) {
+  std::set<CardId> pool;
+  for (CardId id : IRONCLAD_COMMON_POOL) pool.insert(id);
+  for (CardId id : IRONCLAD_UNCOMMON_POOL) pool.insert(id);
+  for (CardId id : IRONCLAD_RARE_POOL) pool.insert(id);
+
+  for (uint64_t seed = 0; seed < 25; ++seed) {
+    RunState run = RunState::start(seed);
+    run.begin_combat(EncounterPool::Weak);
+    run.end_combat();
+    for (const Card& c : run.card_reward) {
+      EXPECT_EQ(pool.count(c.card_id), 1u)
+          << "reward offered a card outside the obtainable pools";
+    }
+  }
+}
+
+TEST(CardReward, PoolsAreTheCountedSizes) {
+  EXPECT_EQ(IRONCLAD_COMMON_POOL.size(), 20u);
+  EXPECT_EQ(IRONCLAD_UNCOMMON_POOL.size(), 36u);
+  EXPECT_EQ(IRONCLAD_RARE_POOL.size(), 16u);
+}
+
+// ------------------------------------------------------------- rarity drift
+
+// Uncommon must leave the pity counter ALONE. Decrementing on uncommon would
+// make rares far too frequent, and nothing else in the system would notice.
+TEST(CardRarity, OnlyCommonsWalkThePityCounterDown) {
+  RunState run = RunState::start(1);
+  std::mt19937 rng(7);
+
+  const int before = run.card_rarity_factor;
+  int commons = 0;
+  for (int i = 0; i < 200; ++i) {
+    const int prior = run.card_rarity_factor;
+    const CardRarity r = run.roll_card_rarity(rng, RewardSource::Monster);
+    if (r == CardRarity::Common) {
+      EXPECT_LE(run.card_rarity_factor, prior);
+      ++commons;
+    } else if (r == CardRarity::Uncommon) {
+      EXPECT_EQ(run.card_rarity_factor, prior) << "uncommon moved the counter";
+    } else {
+      EXPECT_EQ(run.card_rarity_factor, 5) << "rare did not reset the counter";
+    }
+  }
+  EXPECT_GT(commons, 0);
+  EXPECT_LE(run.card_rarity_factor, before);
+}
+
+// Falls out of the arithmetic and is worth pinning because it looks like a bug:
+// at the starting factor of +5, `roll = random(0,99) + 5` is at least 5, and the
+// rare threshold is 3 — so a rare is UNREACHABLE until commons have walked the
+// counter down. The wiki states the same thing with the opposite sign: the
+// offset starts at -5, which takes the 3% rare chance negative.
+TEST(CardRarity, AFreshRunCannotRollARareYet) {
+  RunState run = RunState::start(1);
+  std::mt19937 rng(123);
+  run.card_rarity_factor = 5;
+  EXPECT_NE(run.roll_card_rarity(rng, RewardSource::Monster), CardRarity::Rare);
+}
+
+TEST(CardRarity, RaresBecomeReachableOnceTheCounterHasDrifted) {
+  RunState run = RunState::start(1);
+  std::mt19937 rng(5);
+  run.card_rarity_factor = -40;
+
+  bool saw_rare = false;
+  for (int i = 0; i < 200 && !saw_rare; ++i) {
+    run.card_rarity_factor = -40;  // hold it at the floor
+    saw_rare = run.roll_card_rarity(rng, RewardSource::Monster) == CardRarity::Rare;
+  }
+  EXPECT_TRUE(saw_rare) << "rares never became reachable at the pity floor";
+}
+
+TEST(CardRarity, PityCounterFloorsAtMinus40) {
+  RunState run = RunState::start(1);
+  std::mt19937 rng(3);
+  for (int i = 0; i < 5000; ++i) run.roll_card_rarity(rng, RewardSource::Monster);
+  EXPECT_GE(run.card_rarity_factor, -40);
+}
+
+// A boss reward bypasses the roll but still resets the counter — easy to miss,
+// and both halves matter.
+TEST(CardRarity, BossRewardsAreAlwaysRareAndResetTheCounter) {
+  RunState run = RunState::start(1);
+  std::mt19937 rng(11);
+  run.card_rarity_factor = -30;
+
+  EXPECT_EQ(run.roll_card_rarity(rng, RewardSource::Boss), CardRarity::Rare);
+  EXPECT_EQ(run.card_rarity_factor, 5);
+}
+
+// Elites roll better. Compared over many samples from the same stream so the
+// difference is the chances, not the seed.
+TEST(CardRarity, ElitesRollBetterThanNormalFights) {
+  auto count_rares = [](RewardSource source) {
+    RunState run = RunState::start(1);
+    std::mt19937 rng(99);
+    int rares = 0;
+    for (int i = 0; i < 3000; ++i) {
+      if (run.roll_card_rarity(rng, source) == CardRarity::Rare) ++rares;
+    }
+    return rares;
+  };
+  EXPECT_GT(count_rares(RewardSource::Elite), count_rares(RewardSource::Monster));
+}
+
+TEST(CardReward, IsDeterministicPerFloor) {
+  auto offered = [](uint64_t seed, int floor) {
+    RunState run = RunState::start(seed);
+    run.floor = floor;
+    run.begin_combat(EncounterPool::Weak);
+    run.end_combat();
+    std::vector<int> ids;
+    for (const Card& c : run.card_reward) ids.push_back(static_cast<int>(c.card_id));
+    return ids;
+  };
+
+  EXPECT_EQ(offered(5, 2), offered(5, 2));
+  EXPECT_NE(offered(5, 2), offered(5, 3));
+}
+
 // clone() must preserve uids: an MCTS rollout that minted fresh ones would
 // write back to the wrong cards.
 TEST(RunState, ClonePreservesCardIdentity) {

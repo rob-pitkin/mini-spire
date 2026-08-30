@@ -33,6 +33,18 @@ enum class Phase {
 
 inline constexpr int kNumPhases = 8;
 
+// Rarity of an obtainable card. Only the three a reward can roll — Basic and
+// Special are not drawn from (§4.2).
+enum class CardRarity { Common, Uncommon, Rare };
+
+// How many cards a normal reward offers. Question Card makes it 4 (§8); that
+// relic does not exist yet.
+inline constexpr int kCardRewardSize = 3;
+
+// The room a reward came from. Elites roll better, and a boss reward is always
+// rare (§4.2).
+enum class RewardSource { Monster, Elite, Boss };
+
 // The run above the fight. See docs/design/v2-spec.md §3.
 //
 // RunState is the owner of record ACROSS fights. A fight is a projection of run
@@ -63,6 +75,23 @@ struct RunState {
   // it depends only on the order cards are acquired, which is itself seeded —
   // deliberately not a hash or a global (§3.2).
   int next_card_uid = 0;
+
+  // The pity counter behind card-reward rarity (§4.2). Starts at +5 and is
+  // ADDED to the roll, so a LOWER value makes rares more likely; commons walk
+  // it down to a floor of -40 and a rare resets it.
+  //
+  // The wiki describes the same system with the opposite sign (an offset from
+  // -5 rising to +40, applied to the rare chance). Both are the same mechanic:
+  // offset_wiki == -card_rarity_factor. Do not "fix" one into the other — see
+  // §15's standing traps.
+  int card_rarity_factor = 5;
+
+  // What the current reward screen is offering. Empty outside Phase::Reward.
+  std::vector<Card> card_reward;
+
+  // Which kind of fight is in progress, so the reward it pays out can be rolled
+  // correctly. Set by begin_combat from the encounter pool.
+  RewardSource combat_source = RewardSource::Monster;
 
   // Owned, not inherited (§3). Populated by begin_combat.
   CombatState combat;
@@ -102,6 +131,21 @@ struct RunState {
   // Steps onto the next floor and starts its fight. Until the map lands this is
   // a linear counter (§11 step 1) — floor + 1, no path to choose.
   void advance_to_next_floor(EncounterPool pool);
+
+  // Rolls one card's rarity and advances the pity counter (§4.2).
+  CardRarity roll_card_rarity(std::mt19937& rng, RewardSource source);
+
+  // Fills `card_reward` with kCardRewardSize distinct cards for the current
+  // floor. Called on entering Phase::Reward.
+  void generate_card_reward(RewardSource source);
+
+  // Takes the card at `index` from the reward into the master deck, then closes
+  // the screen. Out-of-range is ignored rather than fatal — the action mask is
+  // what should have prevented it.
+  void take_card_reward(int index);
+
+  // Closes the reward screen without taking anything.
+  void skip_card_reward();
 };
 
 }  // namespace minispire
