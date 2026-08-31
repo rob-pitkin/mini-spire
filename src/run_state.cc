@@ -16,7 +16,131 @@ RunState RunState::start(uint64_t run_seed) {
   run.hp = IRONCLAD_MAX_HP;
   run.max_hp = IRONCLAD_MAX_HP;
   for (const Card& card : starter_deck()) run.add_card(card);
+  run.map = generate_map(derive_stream_seed(run_seed, RngStream::Map));
   return run;
+}
+
+std::vector<int> RunState::available_paths() const {
+  std::vector<int> columns;
+  if (is_terminal()) return columns;
+
+  if (floor == 0) {
+    // Standing before the map: any room on the first row is an opening.
+    for (int x = 0; x < kMapWidth; ++x) {
+      if (map[0][x].is_room()) columns.push_back(x);
+    }
+    return columns;
+  }
+
+  const int row = floor - 1;
+  if (row < 0 || row >= kMapHeight) return columns;
+  for (const MapEdge& edge : map[row][column].edges) {
+    columns.push_back(edge.dst_x);
+  }
+  return columns;
+}
+
+RoomType RunState::resolve_unknown_room() {
+  std::mt19937 rng =
+      make_stream(run_seed, RngStream::Event, static_cast<uint32_t>(floor));
+  const int roll =
+      static_cast<int>(std::uniform_real_distribution<float>(0.0f, 1.0f)(rng) *
+                       100.0f);
+
+  // Bands are cumulative, and the shop band collapses to nothing when the last
+  // room was a shop — its probability falls through to treasure and event
+  // rather than being redistributed.
+  const int monster_size = static_cast<int>(monster_chance * 100);
+  const int shop_size =
+      (last_room_was_shop ? 0 : static_cast<int>(shop_chance * 100)) +
+      monster_size;
+  const int treasure_size =
+      static_cast<int>(treasure_chance * 100) + shop_size;
+
+  RoomType choice;
+  if (roll < monster_size) {
+    choice = RoomType::Monster;
+  } else if (roll < shop_size) {
+    choice = RoomType::Shop;
+  } else if (roll < treasure_size) {
+    choice = RoomType::Treasure;
+  } else {
+    // Event is the FALLBACK, and therefore the common outcome — roughly 85% of
+    // a first `?`. It is not a low-probability roll that drifts upward.
+    choice = RoomType::Unknown;
+  }
+
+  // Drift applies to the final choice. Note the counter still increments when
+  // an outcome did not happen even though its band was suppressed — a shop
+  // skipped because the last room was a shop still makes shops likelier next
+  // time.
+  if (choice == RoomType::Monster) {
+    monster_chance = 0.10f;
+  } else {
+    monster_chance += 0.10f;
+  }
+  if (choice == RoomType::Shop) {
+    shop_chance = 0.03f;
+  } else {
+    shop_chance += 0.03f;
+  }
+  if (choice == RoomType::Treasure) {
+    treasure_chance = 0.02f;
+  } else {
+    treasure_chance += 0.02f;
+  }
+  return choice;
+}
+
+void RunState::enter_room(RoomType room) {
+  current_room = room;
+  last_room_was_shop = room == RoomType::Shop;
+
+  switch (room) {
+    case RoomType::Monster:
+      begin_combat(EncounterPool::Weak);
+      break;
+    case RoomType::Elite:
+      begin_combat(EncounterPool::Elite);
+      break;
+    case RoomType::Rest:
+      phase = Phase::Rest;
+      break;
+    case RoomType::Shop:
+      phase = Phase::Shop;
+      break;
+    case RoomType::Treasure:
+      // A deterministic pass-through: one relic, no choice (§4). Relics do not
+      // exist yet, so entering is all that happens.
+      phase = Phase::Treasure;
+      break;
+    case RoomType::Unknown:
+      // A `?` that stayed a `?` — an actual event. Events are §11 step 7.
+      phase = Phase::Event;
+      break;
+    case RoomType::None:
+      phase = Phase::Map;
+      break;
+  }
+}
+
+void RunState::choose_path(int chosen_column) {
+  if (is_terminal()) return;
+
+  const std::vector<int> options = available_paths();
+  if (std::find(options.begin(), options.end(), chosen_column) == options.end()) {
+    return;
+  }
+
+  ++floor;
+  column = chosen_column;
+
+  RoomType room = map[floor - 1][column].room;
+  // The map records a `?`; what it becomes is decided now, on entry, and is
+  // never written back into the map (§5.4).
+  if (room == RoomType::Unknown) room = resolve_unknown_room();
+
+  enter_room(room);
 }
 
 void RunState::begin_combat(EncounterPool pool) {
@@ -161,9 +285,8 @@ void RunState::skip_card_reward() {
   if (is_terminal()) return;
 
   if (floor >= final_floor) {
-    // The skeleton's stand-in for killing the Act 1 boss. Replaced in Phase 7
-    // by the boss actually dying; a floor count is not a win condition in Slay
-    // the Spire.
+    // Stands in for killing the Act 1 boss. Replaced in Phase 7 by the boss
+    // actually dying; a floor count is not a win condition in Slay the Spire.
     outcome = Outcome::Won;
     return;
   }

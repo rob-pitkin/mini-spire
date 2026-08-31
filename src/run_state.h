@@ -7,6 +7,7 @@
 #include "card.h"
 #include "combat_state.h"
 #include "encounter.h"
+#include "map.h"
 #include "run_rng.h"
 #include "turn_loop.h"  // IRONCLAD_MAX_HP, start_combat, starter_deck
 
@@ -61,13 +62,19 @@ struct RunState {
   // from this (§3.5) — never from a single shared generator.
   uint64_t run_seed = 0;
 
-  // 0 is Neow. A linear counter until the map lands (§11 step 1).
+  // 0 is Neow, before the map. Floor N is map row N-1, so floor 15 is the top
+  // row and floor 16 would be the boss.
   int floor = 0;
 
-  // The walking skeleton terminates after clearing this many floors (§11 step
-  // 4). It stands in for the Act 1 boss, which is Phase 7 — a real run ends
-  // when the boss dies, not on a floor count.
-  int final_floor = 3;
+  // Where on the current row the player is standing. Meaningless at floor 0.
+  int column = 0;
+
+  // Terminates after clearing this many floors. Stands in for the Act 1 boss,
+  // which is Phase 7 — a real run ends when the boss dies, not on a count.
+  int final_floor = kMapHeight;
+
+  // The act's map, generated at run start and fixed thereafter.
+  Map map;
 
   int hp = IRONCLAD_MAX_HP;
   int max_hp = IRONCLAD_MAX_HP;
@@ -97,6 +104,22 @@ struct RunState {
   // Which kind of fight is in progress, so the reward it pays out can be rolled
   // correctly. Set by begin_combat from the encounter pool.
   RewardSource combat_source = RewardSource::Monster;
+
+  // The `?` room pity counters (§4.1). Each rises when its outcome does NOT
+  // happen and resets when it does; Event is the fallback taken when none hit,
+  // which is why it has no counter and is the common result.
+  float monster_chance = 0.10f;
+  float shop_chance = 0.03f;
+  float treasure_chance = 0.02f;
+
+  // A `?` cannot become a shop if the previous room was one — and this is set
+  // whether that shop was a Shop room or a `?` that resolved into one.
+  bool last_room_was_shop = false;
+
+  // What the `?` on the current floor turned into. Equals the map's room type
+  // for every other room. The map itself never records this: a `?` stays `?`
+  // (§5.4), and this is what the phase is derived from.
+  RoomType current_room = RoomType::None;
 
   // Owned, not inherited (§3). Populated by begin_combat.
   CombatState combat;
@@ -133,13 +156,21 @@ struct RunState {
   // Sets outcome to Lost if the player died, otherwise moves to Reward.
   void end_combat();
 
-  // Leaves Phase::Map onto the next floor's fight.
+  // Columns the player may move to from where they stand. From floor 0 this is
+  // every room on the map's first row; otherwise it is the current node's
+  // out-edges. Empty once there is nowhere left to go.
+  std::vector<int> available_paths() const;
+
+  // Moves to `column` on the next floor and enters whatever is there. A `?` is
+  // resolved here, on entry (§4.1) — which is the only moment its contents are
+  // decided.
   //
-  // STUB until §11 step 5. A real map offers 2–4 nodes and the agent picks one;
-  // here there is nothing to choose, so the caller names the encounter and the
-  // floor simply advances. Kept as a distinct phase rather than skipped, so the
-  // map's arrival is a matter of giving Map real options rather than splicing a
-  // new phase into the sequence.
+  // Ignores a column that is not in available_paths(); the action mask is what
+  // should have prevented it.
+  void choose_path(int column);
+
+  // Directly starts a fight on the current floor. Used by choose_path, and by
+  // tests that want a fight without walking a map.
   void advance_to_next_floor(EncounterPool pool);
 
   // Rolls one card's rarity and advances the pity counter (§4.2).
@@ -156,6 +187,15 @@ struct RunState {
 
   // Closes the reward screen without taking anything.
   void skip_card_reward();
+
+  // Rolls what a `?` becomes, and advances the pity counters (§4.1). Public
+  // because the distribution is worth testing directly — it is the piece most
+  // likely to be implemented with the sign inverted.
+  RoomType resolve_unknown_room();
+
+  // Enters `room` on the current floor, setting the phase and doing whatever
+  // the room does on arrival.
+  void enter_room(RoomType room);
 };
 
 }  // namespace minispire
