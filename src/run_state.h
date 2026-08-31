@@ -68,6 +68,34 @@ inline constexpr int kNumRestOptions = 5;
 // Fraction of max HP a campfire restores. Truncated, as the game does.
 inline constexpr float kRestHealFraction = 0.30f;
 
+// --- shops (§4.3) ---
+
+// Base prices by card rarity: common, uncommon, rare.
+inline constexpr int kCardRarityPrices[] = {50, 75, 150};
+
+// Card removal starts here and gets permanently dearer each time it is used —
+// the counter is per RUN, not per shop, which makes removal a resource the
+// whole run competes for rather than a per-shop choice.
+inline constexpr int kBaseRemovePrice = 75;
+inline constexpr int kRemovePriceIncrease = 25;
+
+// A shop's five class-card slots. Two attacks, two skills, one power, and the
+// power slot promotes a COMMON roll to UNCOMMON.
+inline constexpr int kShopCardSlots = 5;
+
+// One item on offer.
+struct ShopItem {
+  Card card;
+  // Visible to a player as the card's border colour, and what sets the price.
+  CardRarity rarity = CardRarity::Common;
+  int price = 0;
+  bool sold = false;
+  // The shop marks one card as discounted, and a player sees that tag. It is
+  // not inferable from the price — a halved rare still costs more than a
+  // full-price common — so under §1's parity rule it has to be state.
+  bool on_sale = false;
+};
+
 // The run above the fight. See docs/design/v2-spec.md §3.
 //
 // RunState is the owner of record ACROSS fights. A fight is a projection of run
@@ -209,6 +237,33 @@ struct RunState {
 
   // Closes the reward screen without taking anything.
   void skip_card_reward();
+
+  // Pays out a fight's gold (§4.2): 10–20 normal, 25–35 elite, 100±5 boss.
+  void award_combat_gold(RewardSource source);
+
+  // --- shops (§4.3) ---
+
+  // What the current shop is selling. Empty outside Phase::Shop.
+  std::vector<ShopItem> shop_cards;
+
+  // Price of removing a card here, or -1 once removal has been used.
+  int shop_remove_price = 0;
+
+  // How many times removal has been bought THIS RUN. Removal gets permanently
+  // dearer, so this is run state rather than shop state.
+  int shop_remove_count = 0;
+
+  // Stocks the shop on arrival.
+  void generate_shop();
+
+  // Buys `shop_cards[index]` if it is affordable and unsold.
+  void buy_card(int index);
+
+  // Pays for a removal and takes `master_deck[deck_index]` out of the deck.
+  void buy_card_removal(int deck_index);
+
+  // Leaves the shop.
+  void leave_shop();
 
   // --- campfire (§8) ---
 

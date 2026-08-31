@@ -63,9 +63,11 @@ it exists. Sections not listed here have no code behind them yet.
 | 4.1 | map **generation** | ✅ `src/map.{h,cc}` — incl. StS's own RNG, so seeds are comparable with `sts_map_oracle` |
 | 4.1 | map **path choice** + `?` resolution | ✅ `run_state.cc` — `RunState` holds the map, `Phase::Map` offers real options |
 | 4.2 | card-reward rarity roll + pity counter | ✅ `run_state.cc`; pools in `card.h` |
-| 4.2 | gold, potion drops, elite relics | ❌ |
+| 4.2 | combat gold (10–20 / 25–35 / 100±5) | ✅ `run_state.cc` |
+| 4.2 | potion drops, elite relics | ❌ — need potions / relics |
+| 4.3 | shops: 5 class cards, pricing, sale slot, removal | ✅ **partial** — the 2 colorless, 3 relic and 3 potion slots need content that does not exist |
+| 4.4 | Neow | ❌ |
 | 8 | rest sites (rest / smith) | ✅ `run_state.cc` |
-| 4.3–4.4 | shops, Neow | ❌ |
 | 5 | the v2 observation | ❌ — the env still emits v1.0.0's 1,772 floats |
 | 6 | entity-indexed actions | ❌ — the positional option-slot channel is still live |
 | 7 | run reward | ❌ |
@@ -1858,7 +1860,8 @@ a Linear board disagrees with it, the spec wins.
    do not exist yet.
 6. ✅ Rest sites (first resource-vs-investment tradeoff; the case the reward
    design was built around). ⚠️ Lift/Toke/Dig need relics.
-7. Events, then shops (most machinery).
+7. Shops ✅ partial (class cards, pricing, sale slot, removal — the colorless,
+   relic and potion slots need content that does not exist). Events ❌.
 8. Bosses → **M5: an agent that completes a run**.
 
 ## 12. Non-termination hazard

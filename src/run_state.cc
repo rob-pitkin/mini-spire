@@ -40,6 +40,27 @@ std::vector<int> RunState::available_paths() const {
   return columns;
 }
 
+void RunState::award_combat_gold(RewardSource source) {
+  std::mt19937 rng =
+      make_stream(run_seed, RngStream::Treasure, static_cast<uint32_t>(floor));
+
+  int amount;
+  switch (source) {
+    case RewardSource::Elite:
+      amount = std::uniform_int_distribution<int>(25, 35)(rng);
+      break;
+    case RewardSource::Boss:
+      amount = 100 + std::uniform_int_distribution<int>(-5, 5)(rng);
+      break;
+    case RewardSource::Monster:
+    default:
+      amount = std::uniform_int_distribution<int>(10, 20)(rng);
+      break;
+  }
+  // Golden Idol would add 25% here; it is a relic and does not exist yet.
+  gold += amount;
+}
+
 std::vector<int> RunState::smithable_cards() const {
   std::vector<int> indices;
   for (size_t i = 0; i < master_deck.size(); ++i) {
@@ -79,6 +100,141 @@ void RunState::rest_smith(int index) {
   // Mutates the master deck directly: a campfire smith is permanent and never
   // passes through a fight, which is why it needs no write-back machinery.
   if (!upgrade_card_in_place(master_deck[index])) return;
+  leave_room();
+}
+
+namespace {
+
+// The Ironclad pool of one rarity, filtered to one card type. A shop's slots
+// are typed — two attacks, two skills, one power — so it draws from these
+// rather than from a rarity pool wholesale.
+std::vector<CardId> pool_of(CardRarity rarity, CardType type) {
+  const std::vector<CardId>& pool = rarity == CardRarity::Rare
+                                        ? IRONCLAD_RARE_POOL
+                                        : rarity == CardRarity::Uncommon
+                                              ? IRONCLAD_UNCOMMON_POOL
+                                              : IRONCLAD_COMMON_POOL;
+  std::vector<CardId> out;
+  for (CardId id : pool) {
+    if (CARD_DATABASE.at(id).type == type) out.push_back(id);
+  }
+  return out;
+}
+
+}  // namespace
+
+void RunState::generate_shop() {
+  shop_cards.clear();
+
+  std::mt19937 rng =
+      make_stream(run_seed, RngStream::Shop, static_cast<uint32_t>(floor));
+
+  // Shop rarity uses a DIFFERENT base rare chance from a combat reward — 9
+  // against 3 — but shares card_rarity_factor with it. So buying at a shop and
+  // taking card rewards drift each other's odds; they are not independent.
+  auto roll_shop_rarity = [&]() {
+    constexpr int kBaseRare = 9;
+    constexpr int kBaseUncommon = 37;
+    const int roll =
+        std::uniform_int_distribution<int>(0, 99)(rng) + card_rarity_factor;
+    if (roll < kBaseRare) return CardRarity::Rare;
+    if (roll >= kBaseRare + kBaseUncommon) return CardRarity::Common;
+    return CardRarity::Uncommon;
+  };
+
+  // Draw without replacement: remove what is already on the shelf from the
+  // candidate list, then take ONE draw. No retry loop — a retry loop consumes a
+  // variable number of draws (so the same seed can diverge on an unrelated
+  // change) and has to give up eventually, at which point it returns a
+  // duplicate anyway.
+  auto draw_distinct = [&](CardType type, CardRarity rarity) {
+    std::vector<CardId> candidates;
+    for (CardId id : pool_of(rarity, type)) {
+      bool already_stocked = false;
+      for (const ShopItem& item : shop_cards) {
+        if (item.card.card_id == id) already_stocked = true;
+      }
+      if (!already_stocked) candidates.push_back(id);
+    }
+    // A rarity band can in principle be exhausted by earlier slots; widen to
+    // the whole type rather than fail.
+    if (candidates.empty()) {
+      for (CardRarity r : {CardRarity::Common, CardRarity::Uncommon,
+                           CardRarity::Rare}) {
+        for (CardId id : pool_of(r, type)) {
+          bool already_stocked = false;
+          for (const ShopItem& item : shop_cards) {
+            if (item.card.card_id == id) already_stocked = true;
+          }
+          if (!already_stocked) candidates.push_back(id);
+        }
+      }
+    }
+    return candidates[std::uniform_int_distribution<size_t>(
+        0, candidates.size() - 1)(rng)];
+  };
+
+  const CardType slot_types[kShopCardSlots] = {
+      CardType::Attack, CardType::Attack, CardType::Skill, CardType::Skill,
+      CardType::Power};
+
+  for (int i = 0; i < kShopCardSlots; ++i) {
+    CardRarity rarity = roll_shop_rarity();
+    // The power slot never sells a common. A COMMON roll is promoted rather
+    // than re-rolled, so it does not consume another draw.
+    if (slot_types[i] == CardType::Power && rarity == CardRarity::Common) {
+      rarity = CardRarity::Uncommon;
+    }
+    ShopItem item;
+    item.card = Card{draw_distinct(slot_types[i], rarity)};
+    item.rarity = rarity;
+    const float jitter = std::uniform_real_distribution<float>(0.9f, 1.1f)(rng);
+    item.price = static_cast<int>(
+        static_cast<float>(kCardRarityPrices[static_cast<int>(rarity)]) * jitter);
+    shop_cards.push_back(item);
+  }
+
+  // Exactly one of the five is half price.
+  const int sale = std::uniform_int_distribution<int>(0, kShopCardSlots - 1)(rng);
+  shop_cards[sale].price /= 2;
+  shop_cards[sale].on_sale = true;
+
+  shop_remove_price = kBaseRemovePrice + kRemovePriceIncrease * shop_remove_count;
+
+  // Not stocked yet, and each is blocked on content that does not exist:
+  // 2 colorless card slots, 3 relics, 3 potions.
+}
+
+void RunState::buy_card(int index) {
+  if (phase != Phase::Shop) return;
+  if (index < 0 || index >= static_cast<int>(shop_cards.size())) return;
+  ShopItem& item = shop_cards[index];
+  if (item.sold || gold < item.price) return;
+
+  gold -= item.price;
+  item.sold = true;
+  // add_card mints the uid: the card acquires identity when bought, not when
+  // it was put on the shelf.
+  add_card(item.card);
+}
+
+void RunState::buy_card_removal(int deck_index) {
+  if (phase != Phase::Shop) return;
+  if (shop_remove_price < 0 || gold < shop_remove_price) return;
+  if (deck_index < 0 || deck_index >= static_cast<int>(master_deck.size())) {
+    return;
+  }
+
+  gold -= shop_remove_price;
+  master_deck.erase(master_deck.begin() + deck_index);
+  ++shop_remove_count;
+  // One removal per shop; the next one costs more, for the rest of the run.
+  shop_remove_price = -1;
+}
+
+void RunState::leave_shop() {
+  if (phase != Phase::Shop) return;
+  shop_cards.clear();
   leave_room();
 }
 
@@ -150,6 +306,10 @@ void RunState::enter_room(RoomType room) {
       break;
     case RoomType::Shop:
       phase = Phase::Shop;
+      // Stock is rolled on ENTERING the shop, not at map generation — a player
+      // who reloads before walking in would otherwise see different goods
+      // (§3.5 roll timing).
+      generate_shop();
       break;
     case RoomType::Treasure:
       // A deterministic pass-through: one relic, no choice (§4). Relics do not
@@ -233,6 +393,7 @@ void RunState::end_combat() {
     outcome = Outcome::Lost;
   } else {
     phase = Phase::Reward;
+    award_combat_gold(combat_source);
     generate_card_reward(combat_source);
   }
 }
@@ -294,20 +455,20 @@ void RunState::generate_card_reward(RewardSource source) {
                                                 ? IRONCLAD_UNCOMMON_POOL
                                                 : IRONCLAD_COMMON_POOL;
 
-    // One reward never offers the same card twice. Re-draw until distinct; the
-    // pools are far larger than the reward, so this terminates quickly.
-    CardId chosen;
-    bool duplicate;
-    do {
-      chosen = pool[std::uniform_int_distribution<size_t>(0, pool.size() - 1)(rng)];
-      duplicate = false;
-      for (const Card& already : card_reward) {
-        if (already.card_id == chosen) {
-          duplicate = true;
-          break;
-        }
+    // One reward never offers the same card twice. Drawn WITHOUT REPLACEMENT —
+    // build the candidate list, take one draw — rather than re-rolling until
+    // distinct. A retry loop consumes a variable number of draws, so an
+    // unrelated change to the pools would shift every later roll in the run.
+    std::vector<CardId> candidates;
+    for (CardId id : pool) {
+      bool already_offered = false;
+      for (const Card& offered : card_reward) {
+        if (offered.card_id == id) already_offered = true;
       }
-    } while (duplicate);
+      if (!already_offered) candidates.push_back(id);
+    }
+    const CardId chosen = candidates[std::uniform_int_distribution<size_t>(
+        0, candidates.size() - 1)(rng)];
 
     // Not in the master deck yet, so no uid: it is an offer, not a possession.
     card_reward.push_back(Card{chosen});

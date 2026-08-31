@@ -28,6 +28,10 @@ enum class RngStream : uint32_t {
   Relic,          // which relic a chest or elite grants
   AutoResolve,    // engine-side policies for shape-breakers (§9)
   CardRandom,     // in-combat card generation: Discovery potions, Infernal Blade
+  Treasure,       // gold drops and chest contents
+
+  // APPEND ONLY. A stream's position is baked into every seed derived from it,
+  // so inserting a value in the middle silently changes every run.
 };
 
 // splitmix64 — a strong finalising mix. Cheap, and good enough that adjacent
