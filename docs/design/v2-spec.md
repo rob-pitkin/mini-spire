@@ -64,6 +64,7 @@ it exists. Sections not listed here have no code behind them yet.
 | 4.1 | map **path choice** + `?` resolution | ✅ `run_state.cc` — `RunState` holds the map, `Phase::Map` offers real options |
 | 4.2 | card-reward rarity roll + pity counter | ✅ `run_state.cc`; pools in `card.h` |
 | 4.2 | gold, potion drops, elite relics | ❌ |
+| 8 | rest sites (rest / smith) | ✅ `run_state.cc` |
 | 4.3–4.4 | shops, Neow | ❌ |
 | 5 | the v2 observation | ❌ — the env still emits v1.0.0's 1,772 floats |
 | 6 | entity-indexed actions | ❌ — the positional option-slot channel is still live |
@@ -82,7 +83,7 @@ no Gymnasium surface, so it is exercised only by `ctest`.
 | `EVENTS` | 25 |
 | `EVENT_OPTIONS` | 58 |
 | **observation** | **4,115 floats** (2.32× v1.0.0) |
-| **action space** | **2,136** (63% of it the combat block v1.0.0 already ships) |
+| **action space** | **2,135** (63% of it the combat block v1.0.0 already ships) |
 
 Every one of these is **Act 1-reachable content only** — no reserved indices for
 acts 2–3 (§5.1 rule 5).
@@ -1403,12 +1404,12 @@ every state, forever — never "the *k*th option offered".
 | potion: use × target | 33 × 5 = **165** | Fire/Fear/Weak/Poison potions target an enemy |
 | potion: discard | **33** | |
 | event option | **58** | globally-enumerated option id (§6.3) |
-| rest option | 6 | rest, smith, recall, lift, toke, dig |
+| rest option | **5** | rest, smith, lift, toke, dig — **no recall**, it is Act 4 content and would be a dead index (§5.1 rule 5) |
 | purpose selection | **~6** | choose *why* a card list opens (§6.1) |
 | take Max HP instead | 1 | Singing Bowl |
 | decline / skip / leave | 1 | |
 
-**Total = 2,136** actions.
+**Total = 2,135** actions.
 
 Of that, **1,350 (63%) is the combat card×target block** — the same block v1.0.0
 already ships, just wider. Everything the run layer adds comes to **786**.
@@ -1660,7 +1661,7 @@ the shaped one, so shaping never touches a reported metric.
 | map | 2–4 next nodes | Wing Boots may allow ignoring edges — obs shows edges, mask shows legality |
 | card reward | 3 cards (**4** with Question Card), or skip | Singing Bowl adds "+2 Max HP instead" |
 | shop | 14 slots: 5 coloured cards, 2 colorless, 3 potions, 3 relics, 1 removal | multiple purchases; Courier restocks; prices are computed like `effective_cost` |
-| rest | up to 6 | rest, smith, + Recall/Lift/Toke/Dig from relics |
+| rest | up to **5** | rest, smith, + Lift/Toke/Dig from Girya/Peace Pipe/Shovel. **Recall is excluded** — Act 4 only. Act 1 at A0 offers exactly rest and smith until relics land. |
 | event | 2–4 | globally-enumerated option ids — see §6.3 |
 | combat | v1.0.0's action space | entity-indexed (§6.2) |
 
@@ -1855,8 +1856,8 @@ a Linear board disagrees with it, the spec wins.
 5. ✅ The map (generation, path choice, the Unknown-stays-Unknown test).
    ⚠️ Juzu Bracelet and Tiny Chest modify the `?` roll and need relics, which
    do not exist yet.
-6. Rest sites (first resource-vs-investment tradeoff; the case the reward design
-   was built around).
+6. ✅ Rest sites (first resource-vs-investment tradeoff; the case the reward
+   design was built around). ⚠️ Lift/Toke/Dig need relics.
 7. Events, then shops (most machinery).
 8. Bosses → **M5: an agent that completes a run**.
 

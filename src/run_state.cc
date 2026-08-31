@@ -40,6 +40,48 @@ std::vector<int> RunState::available_paths() const {
   return columns;
 }
 
+std::vector<int> RunState::smithable_cards() const {
+  std::vector<int> indices;
+  for (size_t i = 0; i < master_deck.size(); ++i) {
+    // is_upgradable covers both the ordinary "+" edge and a rung ladder's top,
+    // where Searing Blow stays upgradable forever.
+    Card probe = master_deck[i];
+    if (upgrade_card_in_place(probe)) indices.push_back(static_cast<int>(i));
+  }
+  return indices;
+}
+
+std::vector<RestOption> RunState::rest_options() const {
+  std::vector<RestOption> options;
+  if (phase != Phase::Rest) return options;
+
+  options.push_back(RestOption::Rest);
+  // Smith drops out when there is nothing left to upgrade — the one condition
+  // that can actually remove it in Act 1 without relics.
+  if (!smithable_cards().empty()) options.push_back(RestOption::Smith);
+
+  // Lift / Toke / Dig need Girya / Peace Pipe / Shovel. Reachable in Act 1, but
+  // relics do not exist yet, so they are never offered.
+  return options;
+}
+
+void RunState::rest_heal() {
+  if (phase != Phase::Rest) return;
+  const int healed =
+      static_cast<int>(static_cast<float>(max_hp) * kRestHealFraction);
+  hp = std::min(max_hp, hp + healed);
+  leave_room();
+}
+
+void RunState::rest_smith(int index) {
+  if (phase != Phase::Rest) return;
+  if (index < 0 || index >= static_cast<int>(master_deck.size())) return;
+  // Mutates the master deck directly: a campfire smith is permanent and never
+  // passes through a fight, which is why it needs no write-back machinery.
+  if (!upgrade_card_in_place(master_deck[index])) return;
+  leave_room();
+}
+
 RoomType RunState::resolve_unknown_room() {
   std::mt19937 rng =
       make_stream(run_seed, RngStream::Event, static_cast<uint32_t>(floor));
@@ -282,6 +324,10 @@ void RunState::take_card_reward(int index) {
 
 void RunState::skip_card_reward() {
   card_reward.clear();
+  leave_room();
+}
+
+void RunState::leave_room() {
   if (is_terminal()) return;
 
   if (floor >= final_floor) {

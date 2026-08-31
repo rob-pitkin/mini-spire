@@ -46,6 +46,28 @@ inline constexpr int kCardRewardSize = 3;
 // rare (§4.2).
 enum class RewardSource { Monster, Elite, Boss };
 
+// What you can do at a campfire (§8).
+//
+// Five, not six: Recall obtains the Ruby Key and is Act 4 content, so it can
+// never occur in v2.0.0 and reserving a slot for it would be a dead index
+// (§5.1 rule 5).
+//
+// Lift, Toke and Dig each need a relic — Girya, Peace Pipe, Shovel — all of
+// which ARE reachable in Act 1, so they keep their slots even though relics do
+// not exist yet.
+enum class RestOption {
+  Rest = 0,   // heal 30% of max HP
+  Smith,      // upgrade a card in the master deck
+  Lift,       // Girya
+  Toke,       // Peace Pipe
+  Dig,        // Shovel
+};
+
+inline constexpr int kNumRestOptions = 5;
+
+// Fraction of max HP a campfire restores. Truncated, as the game does.
+inline constexpr float kRestHealFraction = 0.30f;
+
 // The run above the fight. See docs/design/v2-spec.md §3.
 //
 // RunState is the owner of record ACROSS fights. A fight is a projection of run
@@ -188,6 +210,24 @@ struct RunState {
   // Closes the reward screen without taking anything.
   void skip_card_reward();
 
+  // --- campfire (§8) ---
+
+  // Which campfire options are currently legal. Smith drops out when nothing
+  // in the deck can be upgraded.
+  std::vector<RestOption> rest_options() const;
+
+  // Heals 30% of max HP, truncated, and leaves the campfire.
+  void rest_heal();
+
+  // Upgrades `master_deck[index]` and leaves the campfire. A campfire smith is
+  // permanent — it mutates the master deck DIRECTLY rather than going through
+  // a fight's write-back, which is why a mid-combat Armaments upgrade and this
+  // do not need telling apart at the handoff (§3.2).
+  void rest_smith(int index);
+
+  // Which master-deck indices Smith may target.
+  std::vector<int> smithable_cards() const;
+
   // Rolls what a `?` becomes, and advances the pity counters (§4.1). Public
   // because the distribution is worth testing directly — it is the piece most
   // likely to be implemented with the sign inverted.
@@ -196,6 +236,11 @@ struct RunState {
   // Enters `room` on the current floor, setting the phase and doing whatever
   // the room does on arrival.
   void enter_room(RoomType room);
+
+  // Finishes with the current room: back to the map, or the run is won if this
+  // was the last floor. Every room's exit goes through here so the win check
+  // lives in exactly one place.
+  void leave_room();
 };
 
 }  // namespace minispire

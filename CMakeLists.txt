@@ -66,6 +66,7 @@ if(MINISPIRE_BUILD_TESTS AND NOT SKBUILD)
     tests/test_mask_oracle.cc
     tests/test_map.cc
     tests/test_path_choice.cc
+    tests/test_rest_site.cc
     tests/test_run_rng.cc
     tests/test_run_state.cc
   )
