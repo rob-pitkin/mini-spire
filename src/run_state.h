@@ -2,6 +2,7 @@
 #define MINISPIRE_RUN_STATE_H
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "card.h"
@@ -68,6 +69,35 @@ inline constexpr int kNumRestOptions = 5;
 // Fraction of max HP a campfire restores. Truncated, as the game does.
 inline constexpr float kRestHealFraction = 0.30f;
 
+// Which tier a relic reward comes from for MOST sources, elites included:
+// 50% common, 33% uncommon, 17% rare (wiki-confirmed).
+//
+// Deliberately its own constant even though it currently matches
+// kChestSizeChances digit for digit. They are unrelated mechanics that happen to
+// share three numbers, and sharing the array would mean a correction to chest
+// sizes silently reassigned every elite relic.
+inline constexpr int kRelicTierChances[] = {50, 33, 17};
+RelicTier relic_tier_standard(std::mt19937& rng);
+
+// Treasure chests do NOT use the standard distribution. A chest first rolls a
+// size — 50% small, 33% medium, 17% large — and the size sets the tier odds:
+//
+//   small   75 / 25 /  0
+//   medium  35 / 50 / 15
+//   large    0 / 75 / 25
+//
+// So a large chest can never give a common, and a small can never give a rare.
+// Cross-checked against the wiki's published aggregate of 49 / 42 / 9, which
+// these reconstruct once weighted by size: .50(75)+.33(35)+.17(0) = 49.05,
+// .50(25)+.33(50)+.17(75) = 41.75, .50(0)+.33(15)+.17(25) = 9.2.
+enum class ChestSize { Small, Medium, Large };
+
+inline constexpr int kChestSizeChances[] = {50, 33, 17};
+// {common, uncommon} per size; rare is the remainder.
+inline constexpr int kChestTierChances[3][2] = {{75, 25}, {35, 50}, {0, 75}};
+inline constexpr int kChestGoldChances[] = {50, 35, 50};
+inline constexpr int kChestGoldAmounts[] = {25, 50, 75};
+
 // --- shops (§4.3) ---
 
 // Base prices by card rarity: common, uncommon, rare.
@@ -94,6 +124,18 @@ struct ShopItem {
   // not inferable from the price — a halved rare still costs more than a
   // full-price common — so under §1's parity rule it has to be state.
   bool on_sale = false;
+};
+
+struct ShopRelic {
+  RelicId id = RelicId::BurningBlood;
+  int price = 0;
+  bool sold = false;
+};
+
+struct ShopPotion {
+  PotionId id = PotionId::BloodPotion;
+  int price = 0;
+  bool sold = false;
 };
 
 // The run above the fight. See docs/design/v2-spec.md §3.
@@ -184,8 +226,20 @@ struct RunState {
 
   bool is_terminal() const { return outcome != Outcome::InProgress; }
 
-  // relics / potions live here once RelicId and PotionId exist. They are part
-  // of CombatState too (§3.0.1); RunState owns them across fights.
+  // Owned ACROSS fights; projected into CombatState for the duration of one
+  // (§3.0.1). Relic order is acquisition order, which is a stated parity defect
+  // rather than a limitation (§5.8) — the real game's ordering affects trigger
+  // resolution.
+  std::vector<HeldRelic> relics;
+  std::vector<PotionId> potions;
+
+  // Potion Belt raises this by 2; Sozu takes potions away entirely.
+  int potion_slots = kBasePotionSlots;
+
+  // Potion drop chance drifts by ±10 around a 40% base (§4.2). Note it goes
+  // DOWN after a drop — it is not a one-way pity counter, and modelling it as
+  // one would make potions far too common.
+  int potion_chance_bonus = 0;
 
   // Puts a card into the master deck, giving it a fresh identity. This is the
   // ONLY place a run-scoped uid is minted.
@@ -241,10 +295,51 @@ struct RunState {
   // Pays out a fight's gold (§4.2): 10–20 normal, 25–35 elite, 100±5 boss.
   void award_combat_gold(RewardSource source);
 
+  // --- relics and potions ---
+
+  bool has_relic(RelicId id) const;
+
+  // Takes a relic. Duplicates are ignored: you cannot hold two of the same.
+  // False when nothing was gained — the relic is already held. Callers that
+  // charge for it MUST check, or the payment buys nothing.
+  bool obtain_relic(RelicId id);
+
+  // Takes a potion if a slot is free. Returns false when the belt is full,
+  // which is a real decision point in the game rather than an error.
+  bool obtain_potion(PotionId id);
+
+  // Discards the potion at `index`.
+  void discard_potion(int index);
+
+  // Rolls a post-combat potion drop and its drift (§4.2). Takes how many
+  // rewards are already on the screen, because four suppresses the drop —
+  // potions are coupled to the other rewards, not independent of them.
+  void roll_potion_drop(int rewards_already_on_screen);
+
+  // Draws a relic of `tier`, excluding any already held so a run never sees a
+  // duplicate offered.
+  // Empty when the tier is exhausted — every relic in it is already held. That
+  // is reachable late in a long run, and returning a held relic instead would
+  // make the award silently evaporate inside obtain_relic.
+  //
+  // `exclude` keeps a single shop's shelf from stocking one relic twice: the
+  // draw is without replacement against held relics AND against this list.
+  std::optional<RelicId> random_relic(
+      RelicTier tier, std::mt19937& rng,
+      const std::vector<RelicId>& exclude = {}) const;
+
+  // Opens a treasure chest: rolls its size, then gold and the relic tier from
+  // a SINGLE shared roll (§4).
+  void open_chest();
+
   // --- shops (§4.3) ---
 
   // What the current shop is selling. Empty outside Phase::Shop.
+  //
+  // Still missing the 2 colorless card slots, which need colorless cards.
   std::vector<ShopItem> shop_cards;
+  std::vector<ShopRelic> shop_relics;
+  std::vector<ShopPotion> shop_potions;
 
   // Price of removing a card here, or -1 once removal has been used.
   int shop_remove_price = 0;
@@ -258,6 +353,11 @@ struct RunState {
 
   // Buys `shop_cards[index]` if it is affordable and unsold.
   void buy_card(int index);
+
+  void buy_relic(int index);
+
+  // Refuses when the belt is full, rather than taking the gold for nothing.
+  void buy_potion(int index);
 
   // Pays for a removal and takes `master_deck[deck_index]` out of the deck.
   void buy_card_removal(int deck_index);

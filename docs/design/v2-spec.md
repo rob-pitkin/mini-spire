@@ -64,8 +64,10 @@ it exists. Sections not listed here have no code behind them yet.
 | 4.1 | map **path choice** + `?` resolution | ✅ `run_state.cc` — `RunState` holds the map, `Phase::Map` offers real options |
 | 4.2 | card-reward rarity roll + pity counter | ✅ `run_state.cc`; pools in `card.h` |
 | 4.2 | combat gold (10–20 / 25–35 / 100±5) | ✅ `run_state.cc` |
-| 4.2 | potion drops, elite relics | ❌ — need potions / relics |
-| 4.3 | shops: 5 class cards, pricing, sale slot, removal | ✅ **partial** — the 2 colorless, 3 relic and 3 potion slots need content that does not exist |
+| 4.2 | potion drops, elite relics, treasure chests | ✅ `run_state.cc` |
+| 4.3 | shops: 5 class cards + 3 relics + 3 potions, pricing, sale slot, removal | ✅ **partial** — only the 2 colorless slots remain, and they need colorless cards |
+| 5.1 | `RelicId` (140) and `PotionId` (33) vocabularies | ✅ `relic.{h,cc}`, `potion.{h,cc}` — data only, **no effects yet** |
+| 3.0.1 | relics/potions as first-class `CombatState` | ✅ held and projected; **effects are the next step** |
 | 4.4 | Neow | ❌ |
 | 8 | rest sites (rest / smith) | ✅ `run_state.cc` |
 | 5 | the v2 observation | ❌ — the env still emits v1.0.0's 1,772 floats |
@@ -520,7 +522,49 @@ the engine awards it and advances. No agent decision, no action-space slot.
 
 The phase one-hot slot is **retained** — the agent should still see that it is
 on a treasure floor, and collapsing the enumerator would renumber the others for
-no benefit. Which relic the chest grants is drawn from the `relic` stream (§3.5).
+no benefit. Which relic the chest grants is drawn from the `relic` stream (§3.5)
+— the same stream the elite reward uses, so both relic sources agree.
+
+Being a pass-through, entering the room opens the chest **and leaves it**: the
+phase is set, the chest resolves, and the run returns to `map` in one step. It
+never waits for an action, because there is none to wait for.
+
+#### 4.0.1 What a chest contains
+
+A chest rolls a **size** first, and the size — not the standard relic
+distribution — sets everything else.
+
+| Size | chance | relic C/U/R | gold chance | gold |
+|------|--------|-------------|-------------|------|
+| Small | 50% | 75 / 25 / 0 | 50% | 25 |
+| Medium | 33% | 35 / 50 / 15 | 35% | 50 |
+| Large | 17% | 0 / 75 / 25 | 50% | 75 |
+
+So a large chest can never give a common and a small can never give a rare.
+
+**This is NOT the 50/33/17 used by elites** (§4.2). The two are easy to conflate
+— they share the numbers 50/33/17, but there they are *sizes*, not tiers. The
+constants are kept separate in code for that reason.
+
+*Wiki cross-check.* The published aggregate rarity for chests is **49 / 42 / 9**,
+which these per-size rows reconstruct once weighted by size:
+
+```
+common   = .50(75) + .33(35) + .17(0)  = 49.05
+uncommon = .50(25) + .33(50) + .17(75) = 41.75
+rare     = .50(0)  + .33(15) + .17(25) =  9.20
+```
+
+**Gold and relic tier come from ONE roll, and the correlation is the mechanic.**
+The wiki states the rule directly: *a chest gives gold only if it also rolled the
+lowest rarity available to that chest size.* A single roll reproduces this
+exactly, because each size's gold band sits inside its lowest-tier band — small
+50 within common 75, medium 35 within common 35, large 50 within uncommon 75.
+
+For a large chest this is a hard exclusion rather than a tendency: **a rare from
+a large chest never comes with gold.** Two independent rolls would leave both
+marginals looking correct and silently break the joint distribution — which is
+why this is written down rather than left as a code comment.
 
 ### 4.1 Map generation
 
@@ -2015,6 +2059,10 @@ implement the spec.
 | 18 | Relics/potions as run-layer hooks | **first-class `CombatState`** (§3.0.1) | A hook model leaves the standalone combat env unable to show held relics or use potions — a fragment that only works inside a run. |
 | 20 | `Card::uid` "touches every test that builds a `Card` by hand… the single largest change to an existing type" | **additive; zero call sites changed** (§3.2) | Declaring `uid` last with a default sentinel keeps all 310 aggregate initialisations valid. The 447-test suite passed unchanged. A prediction about blast radius, made without checking the field order that determines it. |
 | 21 | "permanent card changes written back by uid", stated as live behaviour | **the path has no callers** (§3.2) | Every per-instance change the engine can currently produce is combat-scoped, happens outside combat, or is `max_hp`. Ritual Dagger is not implemented. Found by trying to write the write-back and having nothing to put in it. |
+| 22 | A run starts holding no relics | **Burning Blood from floor 0** (§4) | Not a spec claim — an *omission* in the implementation, which no test could catch because nothing thought to assert it. It also undercut correction #17: Black Blood is excluded precisely because `relicCanSpawn(BLACK_BLOOD)` tests `has(BURNING_BLOOD)` and finds it true. A run without the starter made that exclusion unjustified. |
+| 23 | Chest gold and relic tier described only in code, with the correlation asserted as "the game's" and no source | **§4.0.1**, wiki-confirmed: gold only accompanies the **lowest rarity available to that chest size** | Taken from `sts_lightspeed` without the wiki cross-check the corollary requires — the one place in this phase where the standing rule was skipped. The mechanic turned out correct; the *comment* was wrong (it said "more likely to hold a common", which is impossible for a large chest), and there was no spec section to check either against. |
+| 24 | Elite relic granted *before* the same screen's potion and card rolls | **all reward contents rolled, then granted** (§4.2) | An elite dropping White Beast Statue had `roll_potion_drop` see it already held and force that very fight's drop chance to 100. Question Card and Prayer Wheel are the same shape against the card reward. A screen in StS is rolled as a unit and then collected. |
+| 25 | Potion drop suppressed by a full reward screen returned early | **chance set to 0, roll still taken** (§4.2) | The miss branch drifts `potionChance` up by 10. Returning early skipped the drift, so any run hitting several full screens ended with a materially lower cumulative drop rate. The spec had it right; the implementation shortcut it. |
 
 ### Standing traps
 
@@ -2027,5 +2075,8 @@ source, would "correct" the spec into being wrong.
 | **Juzu Bracelet reset** | Converting MONSTER→EVENT still resets `monsterChance` to 0.10, because the conversion happens *inside* the `choice == MONSTER` branch. Checking room type after the swap increments instead. Invisible in any single-room test. |
 | **Neow's no-op draw** | `getOptions` ends with `r.random(0, 0)` — consumes a draw, changes nothing. Skip it and every later Neow-stream draw desynchronises. |
 | **Read arithmetic, not names** | Three of four defects found by cross-checking `sts_lightspeed` were mislabelled-but-correct code (#11, #12, and the rarity sign). Treat every identifier and display string there as a comment. |
+| **Chest 50/33/17 ≠ elite 50/33/17** | The same three numbers mean *sizes* for a chest and *tiers* for an elite. Sharing one constant makes a correction to either silently reassign the other. Kept separate on purpose (§4.0.1). |
+| **Chest gold is not independent of tier** | One roll decides both, and for a large chest that is a hard exclusion — a rare never comes with gold. Both marginals look correct under two independent rolls, so nothing short of a joint-distribution check catches the "fix". |
+| **A test harness that patches state is reporting a bug** | The treasure-room defect survived a green suite because the path-walking helper forced `Phase::Map` for every non-combat room, making a room that never exits look identical to one that does. Where a walk needs to reach past the engine, assert instead — `exit_current_room` in `test_path_choice.cc` pins its one remaining patch to the one room that has no exit yet. |
 | **Room types ≠ phases** | The 8 map room types and the 8 phases are *different* 8s that look interchangeable. Do not share an enum. |
 | **`kEndTurnAction` ≠ `size − 1`** | v1.0.0 precedent (CLAUDE.md): the option-slot channel sits after the combat block. Re-deriving offsets instead of reading published constants broke the TUI and 13 tests. |

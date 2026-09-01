@@ -149,7 +149,10 @@ CombatEnv::CombatEnv(CombatState state, float hp_reward_coeff)
 }
 
 void CombatEnv::reset(uint32_t seed) {
-  // Copy the deck — start_combat consumes it, and reset() may be called again.
+  // Passing deck_ as an lvalue copies it exactly once, into start_combat's
+  // by-value parameter; from there it is moved through to the draw pile. The
+  // copy is deliberate — start_combat consumes what it is given and reset() may
+  // be called again — but it is one copy, and this is the reset-latency path.
   state_ = start_combat(seed, pool_, deck_);
   reward_ = 0.0f;
   compute_obs();

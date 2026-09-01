@@ -293,5 +293,149 @@ TEST(Shop, LeavingClearsTheStock) {
   EXPECT_EQ(run.phase, Phase::Map);
 }
 
+// ------------------------------------------------- the relic and potion shelves
+
+TEST(Shop, StocksThreeRelicsAndThreePotions) {
+  RunState run = at_a_shop();
+  EXPECT_EQ(run.shop_relics.size(), 3u);
+  EXPECT_EQ(run.shop_potions.size(), 3u);
+}
+
+// The third slot is always Shop tier, which is the only way shop-exclusive
+// relics enter a run at all.
+TEST(Shop, TheThirdRelicSlotIsAlwaysShopTier) {
+  for (uint64_t s = 0; s < 40; ++s) {
+    RunState run = at_a_shop(s);
+    ASSERT_EQ(run.shop_relics.size(), 3u) << "seed " << s;
+    EXPECT_EQ(relic_tier(run.shop_relics[2].id), RelicTier::Shop) << "seed " << s;
+  }
+}
+
+// A shelf must never offer the same relic twice. Two slots can roll the same
+// tier, and a draw that excluded only HELD relics would let both land on the
+// same id — the player then pays full price for the second and receives
+// nothing, because obtain_relic refuses a duplicate.
+TEST(Shop, NeverStocksTheSameRelicTwice) {
+  for (uint64_t s = 0; s < 500; ++s) {
+    RunState run = at_a_shop(s);
+    std::set<RelicId> seen;
+    for (const ShopRelic& offer : run.shop_relics) {
+      EXPECT_TRUE(seen.insert(offer.id).second)
+          << "seed " << s << ": the same relic was stocked in two slots";
+    }
+  }
+}
+
+TEST(Shop, AShelfNeverOffersARelicAlreadyHeld) {
+  for (uint64_t s = 0; s < 200; ++s) {
+    RunState run = RunState::start(s);
+    run.floor = 5;
+    run.gold = 500;
+    run.phase = Phase::Shop;
+    // Hold every common, so a common slot must draw from elsewhere.
+    for (RelicId id : relic_pool(RelicTier::Common)) run.obtain_relic(id);
+    run.generate_shop();
+    for (const ShopRelic& offer : run.shop_relics) {
+      EXPECT_FALSE(run.has_relic(offer.id))
+          << "seed " << s << ": stocked a relic the run already holds";
+    }
+  }
+}
+
+// ------------------------------------------------------------- buying them
+
+TEST(Shop, BuyingARelicTakesTheGoldAndGivesTheRelic) {
+  RunState run = at_a_shop();
+  const RelicId id = run.shop_relics[0].id;
+  const int price = run.shop_relics[0].price;
+  const int gold_before = run.gold;
+
+  run.buy_relic(0);
+
+  EXPECT_TRUE(run.has_relic(id));
+  EXPECT_EQ(run.gold, gold_before - price);
+  EXPECT_TRUE(run.shop_relics[0].sold);
+}
+
+TEST(Shop, BuyingARelicYouAlreadyHoldCostsNothing) {
+  RunState run = at_a_shop();
+  const RelicId id = run.shop_relics[0].id;
+  run.obtain_relic(id);
+  const int gold_before = run.gold;
+
+  run.buy_relic(0);
+
+  EXPECT_EQ(run.gold, gold_before) << "gold was taken for a relic already held";
+  EXPECT_FALSE(run.shop_relics[0].sold);
+}
+
+TEST(Shop, CannotBuyARelicYouCannotAfford) {
+  RunState run = at_a_shop(1, /*gold=*/0);
+  const RelicId id = run.shop_relics[0].id;
+  run.buy_relic(0);
+  EXPECT_FALSE(run.has_relic(id));
+  EXPECT_EQ(run.gold, 0);
+}
+
+TEST(Shop, BuyingAPotionTakesTheGoldAndGivesThePotion) {
+  RunState run = at_a_shop();
+  const PotionId id = run.shop_potions[0].id;
+  const int price = run.shop_potions[0].price;
+  const int gold_before = run.gold;
+
+  run.buy_potion(0);
+
+  ASSERT_EQ(run.potions.size(), 1u);
+  EXPECT_EQ(run.potions[0], id);
+  EXPECT_EQ(run.gold, gold_before - price);
+  EXPECT_TRUE(run.shop_potions[0].sold);
+}
+
+// Sozu is the case an inline full-belt check misses: the belt has room, but the
+// relic refuses potions outright. Paying before asking would take the gold and
+// the slot in exchange for nothing.
+TEST(Shop, SozuMeansAPotionPurchaseIsRefusedRatherThanWasted) {
+  RunState run = at_a_shop();
+  run.obtain_relic(RelicId::Sozu);
+  const int gold_before = run.gold;
+
+  run.buy_potion(0);
+
+  EXPECT_EQ(run.gold, gold_before) << "gold was taken for a potion Sozu refuses";
+  EXPECT_TRUE(run.potions.empty());
+  EXPECT_FALSE(run.shop_potions[0].sold);
+}
+
+TEST(Shop, AFullBeltRefusesThePurchaseRatherThanWastingTheGold) {
+  RunState run = at_a_shop();
+  while (static_cast<int>(run.potions.size()) < run.potion_slots) {
+    run.obtain_potion(PotionId::FirePotion);
+  }
+  const int gold_before = run.gold;
+  const size_t held = run.potions.size();
+
+  run.buy_potion(0);
+
+  EXPECT_EQ(run.gold, gold_before);
+  EXPECT_EQ(run.potions.size(), held);
+  EXPECT_FALSE(run.shop_potions[0].sold);
+}
+
+// The header documents the whole shop block as empty outside Phase::Shop.
+// Clearing only the cards left stale relic and potion offers visible to anything
+// reading the block later — the v2 observation's shop slots, a serializer, the
+// renderer.
+TEST(Shop, LeavingClearsEveryShelfNotJustTheCards) {
+  RunState run = at_a_shop();
+  ASSERT_FALSE(run.shop_relics.empty());
+  ASSERT_FALSE(run.shop_potions.empty());
+
+  run.leave_shop();
+
+  EXPECT_TRUE(run.shop_cards.empty());
+  EXPECT_TRUE(run.shop_relics.empty()) << "stale relic offers survived the shop";
+  EXPECT_TRUE(run.shop_potions.empty()) << "stale potion offers survived the shop";
+}
+
 }  // namespace
 }  // namespace minispire

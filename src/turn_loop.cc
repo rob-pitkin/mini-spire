@@ -838,33 +838,52 @@ std::vector<Card> starter_deck() {
   return deck;
 }
 
-CombatState start_combat(uint32_t seed, EncounterPool pool,
-                         std::vector<Card> deck) {
+CombatState start_combat(CombatSetup setup) {
   CombatState state;
-  state.seed = seed;
-  state.rng = std::mt19937(seed);
+  state.seed = setup.seed;
+  state.rng = std::mt19937(setup.seed);
 
-  state.character.max_hp = IRONCLAD_MAX_HP;
-  state.character.hp = IRONCLAD_MAX_HP;
+  state.character.max_hp = setup.max_hp;
+  state.character.hp = setup.hp;
   state.character.energy_per_turn = IRONCLAD_ENERGY_PER_TURN;
   state.character.energy = IRONCLAD_ENERGY_PER_TURN;
   state.character.current_block = 0;
 
+  // Present before anything reads them. A start-of-combat relic effect works
+  // off the character's real HP, and one that changes the opening draw has to
+  // be here before the hand is dealt below.
+  state.relics = std::move(setup.relics);
+  state.potions = std::move(setup.potions);
+
   // Sample the encounter (each enemy primed with its turn-1 intent).
-  state.enemies = sample_encounter(pool, state.rng);
+  state.enemies = sample_encounter(setup.pool, state.rng);
 
   // Shuffle the given deck into the draw pile.
-  state.draw_pile = std::move(deck);
+  state.draw_pile = std::move(setup.deck);
   std::shuffle(state.draw_pile.begin(), state.draw_pile.end(), state.rng);
 
   state.turn_number = 1;
   state.character_turn = true;
   state.outcome = Outcome::InProgress;
 
+  // Start-of-combat relic triggers belong HERE, before the opening hand — Bag
+  // of Marbles resolves before you see your cards, and Bag of Preparation
+  // changes how many you see. Effects land in a later step; the ordering slot
+  // exists now so they cannot be bolted on in the wrong place.
+
   // Draw the opening hand (Innate cards come first and count toward it).
   draw_opening_hand(state);
 
   return state;
+}
+
+CombatState start_combat(uint32_t seed, EncounterPool pool,
+                         std::vector<Card> deck) {
+  CombatSetup setup;
+  setup.seed = seed;
+  setup.pool = pool;
+  setup.deck = std::move(deck);
+  return start_combat(std::move(setup));
 }
 
 CombatState start_v1_combat(uint32_t seed) {

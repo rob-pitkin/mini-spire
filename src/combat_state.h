@@ -8,6 +8,8 @@
 #include "action_types.h"  // ActionQueue (the suspended mid-card queue)
 #include "card.h"
 #include "enemy.h"
+#include "potion.h"
+#include "relic.h"
 #include "status_effect.h"
 
 namespace minispire {
@@ -98,6 +100,27 @@ struct CombatState {
   // buffer rather than reusing ActionQueue.
   PendingChoice pending_choice;
   ActionQueue suspended_queue;
+
+  // Relics and potions are FIRST-CLASS combat state, not run-layer hooks
+  // reaching in (v2-spec.md §3.0.1). A player sees their relic bar and potion
+  // belt during a fight and can drink mid-combat, so §1's parity rule puts both
+  // here — and it keeps a standalone CombatEnv complete rather than a fragment
+  // that only makes sense inside a run.
+  //
+  // Both default empty, so a CombatEnv built the v1.0.0 way is unchanged.
+  //
+  // RunState owns these ACROSS fights and projects them in; within a fight this
+  // is where they live. Relic counters are one run-scoped int each, written
+  // back on exit with nothing resetting at the boundary (§3.3).
+  std::vector<HeldRelic> relics;
+  std::vector<PotionId> potions;
+
+  bool has_relic(RelicId id) const {
+    for (const HeldRelic& r : relics) {
+      if (r.id == id) return true;
+    }
+    return false;
+  }
 
   CombatState clone() const;
 };

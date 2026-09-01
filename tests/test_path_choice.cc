@@ -12,6 +12,68 @@
 namespace minispire {
 namespace {
 
+// Steps the run out of whatever room it just entered, using each room's REAL
+// exit. Returns false if the run ended.
+//
+// The single place these walks are allowed to touch `phase` directly, and it is
+// deliberately narrow. An earlier version forced Phase::Map for every non-combat
+// room, which made a room that never exits indistinguishable from one that does
+// — and that hid a real bug: treasure rooms stranded the run on floor 9, while
+// the suite stayed green because the harness stepped over it every time.
+//
+// A test that needs to reach past the system under test is reporting a defect,
+// not asking for a workaround. So each room here goes out the way the engine
+// takes it out, and the one remaining patch is pinned to the one room that has
+// no exit yet.
+bool exit_current_room(RunState& run) {
+  switch (run.phase) {
+    case Phase::Combat:
+      run.combat.character.hp = std::max(1, run.combat.character.hp - 2);
+      run.end_combat();
+      if (run.is_terminal()) return false;
+      run.skip_card_reward();
+      return true;
+
+    case Phase::Rest:
+      run.rest_heal();
+      return true;
+
+    case Phase::Shop:
+      run.leave_shop();
+      return true;
+
+    case Phase::Treasure:
+      // Unreachable: a chest opens and leaves in one step.
+      ADD_FAILURE() << "a treasure room did not exit on its own (floor "
+                    << run.floor << ")";
+      run.phase = Phase::Map;
+      return true;
+
+    case Phase::Map:
+      // Already back on the map: the room exited on its own. A treasure chest
+      // takes this path, which is precisely the behaviour the Treasure case
+      // above asserts can no longer be needed.
+      return true;
+
+    case Phase::Event:
+      // The one room with no exit path yet (§11 step 7). Pinned to Event
+      // specifically so it disappears when events land, rather than quietly
+      // covering the next room that forgets to leave.
+      run.phase = Phase::Map;
+      return true;
+
+    default:
+      if (run.floor >= run.final_floor) {
+        run.skip_card_reward();  // reuses the "floor cleared" transition
+        return true;
+      }
+      ADD_FAILURE() << "phase " << static_cast<int>(run.phase)
+                    << " has no exit path (floor " << run.floor << ")";
+      run.phase = Phase::Map;
+      return true;
+  }
+}
+
 // Walks a run to the top of the map, resolving whatever each room needs.
 // Returns the floors visited.
 int walk_to_the_top(RunState& run) {
@@ -21,20 +83,7 @@ int walk_to_the_top(RunState& run) {
     if (options.empty()) break;
     run.choose_path(options[0]);
     ++floors;
-
-    if (run.phase == Phase::Combat) {
-      run.combat.character.hp = std::max(1, run.combat.character.hp - 2);
-      run.end_combat();
-      if (run.is_terminal()) break;
-      run.skip_card_reward();
-    } else {
-      // Non-combat rooms have no interaction yet; step straight back to the map.
-      if (run.floor >= run.final_floor) {
-        run.skip_card_reward();  // reuses the "floor cleared" transition
-      } else {
-        run.phase = Phase::Map;
-      }
-    }
+    if (!exit_current_room(run)) break;
   }
   return floors;
 }
@@ -128,14 +177,7 @@ TEST(PathChoice, EliteRoomsUseTheElitePool) {
         checked = true;
         break;
       }
-      if (run.phase == Phase::Combat) {
-        run.combat.character.hp = std::max(1, run.combat.character.hp - 2);
-        run.end_combat();
-        if (run.is_terminal()) break;
-        run.skip_card_reward();
-      } else {
-        run.phase = Phase::Map;
-      }
+      if (!exit_current_room(run)) break;
     }
   }
   EXPECT_TRUE(checked) << "never reached an elite in 60 seeds";
@@ -163,14 +205,7 @@ TEST(UnknownRooms, TheMapIsNeverRewrittenWhenAQuestionResolves) {
         EXPECT_EQ(run.map[run.floor - 1][run.column].room, RoomType::Unknown)
             << "the map recorded what a ? resolved into";
       }
-      if (run.phase == Phase::Combat) {
-        run.combat.character.hp = std::max(1, run.combat.character.hp - 2);
-        run.end_combat();
-        if (run.is_terminal()) break;
-        run.skip_card_reward();
-      } else {
-        run.phase = Phase::Map;
-      }
+      if (!exit_current_room(run)) break;
     }
   }
 }
@@ -253,16 +288,7 @@ TEST(PathChoice, EveryStepOfAWalkedRunWasOnARealEdge) {
     previous_floor = run.floor;
     previous_column = run.column;
 
-    if (run.phase == Phase::Combat) {
-      run.combat.character.hp = std::max(1, run.combat.character.hp - 2);
-      run.end_combat();
-      if (run.is_terminal()) break;
-      run.skip_card_reward();
-    } else if (run.floor >= run.final_floor) {
-      run.skip_card_reward();
-    } else {
-      run.phase = Phase::Map;
-    }
+    if (!exit_current_room(run)) break;
   }
 }
 
@@ -276,16 +302,7 @@ TEST(PathChoice, AWalkedRunIsReproducible) {
       run.choose_path(options[0]);
       trace.push_back(run.column);
       trace.push_back(static_cast<int>(run.current_room));
-      if (run.phase == Phase::Combat) {
-        run.combat.character.hp = std::max(1, run.combat.character.hp - 2);
-        run.end_combat();
-        if (run.is_terminal()) break;
-        run.skip_card_reward();
-      } else if (run.floor >= run.final_floor) {
-        run.skip_card_reward();
-      } else {
-        run.phase = Phase::Map;
-      }
+      if (!exit_current_room(run)) break;
     }
     return trace;
   };

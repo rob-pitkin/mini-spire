@@ -33,10 +33,44 @@ int compute_attack_damage(
 // The Ironclad starter deck: 5 Strike + 4 Defend + 1 Bash (unshuffled).
 std::vector<Card> starter_deck();
 
-// Constructs an initial CombatState (ROB-66): seeded RNG, Ironclad starter
-// character (80 HP / 3 energy), an encounter sampled from `pool`, and `deck`
-// shuffled into the draw pile. Draws the opening hand; enemy intents are primed
-// by their factories.
+// Everything a fight needs to exist. See docs/design/v2-spec.md §3.2.
+//
+// A parameter struct rather than a widening argument list, because the fight's
+// inputs keep growing — hp, relics and potions now, curses and ascension later
+// — and each addition would otherwise churn every call site and make the order
+// of seven positional arguments load-bearing.
+//
+// More importantly, everything here must be present BEFORE the fight is built,
+// not patched in afterwards. Setup reads this state: a start-of-combat heal
+// works off `hp`, and a relic that changes the opening draw has to act before
+// the hand is dealt. Assigning after construction means those read a fight that
+// never existed.
+struct CombatSetup {
+  uint32_t seed = 0;
+  EncounterPool pool = EncounterPool::Weak;
+  std::vector<Card> deck;
+
+  // The run's HP, not a fresh Ironclad's.
+  int hp = IRONCLAD_MAX_HP;
+  int max_hp = IRONCLAD_MAX_HP;
+
+  // First-class combat state (§3.0.1), so the fight can show and use them.
+  std::vector<HeldRelic> relics;
+  std::vector<PotionId> potions;
+};
+
+// Constructs an initial CombatState (ROB-66): seeded RNG, the character at the
+// given HP, an encounter sampled from `pool`, and `deck` shuffled into the draw
+// pile. Draws the opening hand; enemy intents are primed by their factories.
+//
+// Takes the setup BY VALUE and moves out of it. Deck, relics and potions all go
+// straight into the state, so a by-const-ref signature would copy the deck on
+// every call — and CombatEnv::reset is on the reset-latency path this project
+// benchmarks. Callers with a deck to spare should std::move into the setup.
+CombatState start_combat(CombatSetup setup);
+
+// v1.0.0's shape: a fresh 80/80 Ironclad with no relics or potions. Kept so a
+// CombatEnv built the v1.0.0 way behaves exactly as it did (§3.0.1).
 CombatState start_combat(uint32_t seed, EncounterPool pool,
                          std::vector<Card> deck);
 

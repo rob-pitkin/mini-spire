@@ -15,6 +15,14 @@ RunState RunState::start(uint64_t run_seed) {
   run.floor = 0;
   run.hp = IRONCLAD_MAX_HP;
   run.max_hp = IRONCLAD_MAX_HP;
+
+  // The starter relic. Every Ironclad run begins holding Burning Blood, and the
+  // relic vocabulary's count depends on it: Black Blood is excluded from the 141
+  // precisely because relicCanSpawn(BLACK_BLOOD) tests has(BURNING_BLOOD) and
+  // that is true (relic.h). A run that did not hold it would make the exclusion
+  // unjustified and quietly cost ~6 HP a fight once effects land.
+  run.obtain_relic(RelicId::BurningBlood);
+
   for (const Card& card : starter_deck()) run.add_card(card);
   run.map = generate_map(derive_stream_seed(run_seed, RngStream::Map));
   return run;
@@ -38,6 +46,155 @@ std::vector<int> RunState::available_paths() const {
     columns.push_back(edge.dst_x);
   }
   return columns;
+}
+
+bool RunState::has_relic(RelicId id) const {
+  for (const HeldRelic& r : relics) {
+    if (r.id == id) return true;
+  }
+  return false;
+}
+
+bool RunState::obtain_relic(RelicId id) {
+  if (has_relic(id)) return false;
+  relics.push_back(HeldRelic{id, 0});
+
+  // Potion Belt widens the belt the moment it is picked up, so a potion that
+  // would not have fit a second ago now does.
+  if (id == RelicId::PotionBelt) potion_slots += 2;
+  return true;
+}
+
+bool RunState::obtain_potion(PotionId id) {
+  // Sozu means no potions at all; the belt being full is an ordinary and
+  // deliberate part of play rather than a failure.
+  if (has_relic(RelicId::Sozu)) return false;
+  if (static_cast<int>(potions.size()) >= potion_slots) return false;
+  potions.push_back(id);
+  return true;
+}
+
+void RunState::discard_potion(int index) {
+  if (index < 0 || index >= static_cast<int>(potions.size())) return;
+  potions.erase(potions.begin() + index);
+}
+
+RelicTier relic_tier_standard(std::mt19937& rng) {
+  const int roll = std::uniform_int_distribution<int>(0, 99)(rng);
+  if (roll < kRelicTierChances[0]) return RelicTier::Common;
+  if (roll < kRelicTierChances[0] + kRelicTierChances[1]) {
+    return RelicTier::Uncommon;
+  }
+  return RelicTier::Rare;
+}
+
+std::optional<RelicId> RunState::random_relic(
+    RelicTier tier, std::mt19937& rng,
+    const std::vector<RelicId>& exclude) const {
+  const std::vector<RelicId>& pool = relic_pool(tier);
+  // Drawn WITHOUT REPLACEMENT against what is already held, rather than
+  // re-rolling until new: a retry loop consumes a variable number of draws, so
+  // an unrelated change would shift every later roll in the run.
+  std::vector<RelicId> candidates;
+  for (RelicId id : pool) {
+    if (has_relic(id)) continue;
+    if (std::find(exclude.begin(), exclude.end(), id) != exclude.end()) continue;
+    candidates.push_back(id);
+  }
+  // A tier CAN be exhausted late in a long run. Signalling it is the point:
+  // returning a held relic here would have obtain_relic reject it, and the
+  // award would vanish with no caller able to tell.
+  if (candidates.empty()) return std::nullopt;
+  return candidates[std::uniform_int_distribution<size_t>(
+      0, candidates.size() - 1)(rng)];
+}
+
+void RunState::roll_potion_drop(int rewards_already_on_screen) {
+  std::mt19937 rng =
+      make_stream(run_seed, RngStream::Potion, static_cast<uint32_t>(floor));
+
+  // Elite and normal fights drop potions at the same rate — the fight's kind
+  // does not enter into it, which is why this takes no RewardSource.
+  int chance = 40 + potion_chance_bonus;
+  if (has_relic(RelicId::WhiteBeastStatue)) chance = 100;
+
+  // A reward screen already holding four things drops no potion (§4.2). This
+  // couples potions to gold, relic and card rewards rather than leaving them
+  // independent.
+  //
+  // Note this sets the chance to zero rather than returning: the roll still
+  // happens and still MISSES, so the +10 drift applies. A suppressed screen
+  // makes the next fight likelier to drop, exactly as the spec has it. Bailing
+  // out early would quietly lower the cumulative drop rate of any run that hit
+  // several full screens.
+  if (rewards_already_on_screen >= 4) chance = 0;
+
+  const int roll = std::uniform_int_distribution<int>(0, 99)(rng);
+  if (roll >= chance) {
+    // Missed: the next fight is likelier to drop one.
+    potion_chance_bonus += 10;
+    return;
+  }
+
+  // Hit: the chance goes DOWN. Symmetric drift, not a one-way pity counter.
+  potion_chance_bonus -= 10;
+
+  // Rarity roll, then draw. Common 65 / uncommon 25 / rare 10.
+  const int rarity_roll = std::uniform_int_distribution<int>(0, 99)(rng);
+  const PotionRarity rarity = rarity_roll < 65    ? PotionRarity::Common
+                              : rarity_roll < 90  ? PotionRarity::Uncommon
+                                                  : PotionRarity::Rare;
+  const std::vector<PotionId>& pool = potion_pool(rarity);
+  const PotionId drop =
+      pool[std::uniform_int_distribution<size_t>(0, pool.size() - 1)(rng)];
+
+  // A full belt simply means the drop is lost, which is what happens in game.
+  obtain_potion(drop);
+}
+
+void RunState::open_chest() {
+  // The RELIC stream, not the treasure stream — §4 and RngStream's own comment
+  // both assign a chest's relic here, and it is the stream the elite reward
+  // already uses. The two relic sources agreeing matters more than the name:
+  // drawing from Treasure needed a magic floor offset to dodge a collision with
+  // award_combat_gold, which is a sign of using the wrong stream, not a fix.
+  std::mt19937 rng =
+      make_stream(run_seed, RngStream::Relic, static_cast<uint32_t>(floor));
+
+  const int size_roll = std::uniform_int_distribution<int>(0, 99)(rng);
+  const ChestSize size =
+      size_roll < kChestSizeChances[0]
+          ? ChestSize::Small
+          : size_roll < kChestSizeChances[0] + kChestSizeChances[1]
+                ? ChestSize::Medium
+                : ChestSize::Large;
+  const int s = static_cast<int>(size);
+
+  // ONE roll decides both whether there is gold and which tier the relic is,
+  // and the correlation that creates is the mechanic rather than a side effect.
+  // The wiki states the rule directly: a chest gives gold only if it also rolled
+  // the LOWEST rarity available to that chest size. A single roll reproduces
+  // that exactly, because each size's gold band sits inside its lowest-tier
+  // band — small 50 within common 75, medium 35 within common 35, large 50
+  // within uncommon 75 (a large chest has no common).
+  //
+  // So for a large chest this is a hard exclusion, not a tendency: a rare from a
+  // large chest can never come with gold. Two independent rolls would leave both
+  // marginals looking correct and silently break that.
+  const int roll = std::uniform_int_distribution<int>(0, 99)(rng);
+
+  if (roll < kChestGoldChances[s]) gold += kChestGoldAmounts[s];
+
+  const int common_chance = kChestTierChances[s][0];
+  const int uncommon_chance = kChestTierChances[s][1];
+  const RelicTier tier = roll < common_chance ? RelicTier::Common
+                         : roll < common_chance + uncommon_chance
+                             ? RelicTier::Uncommon
+                             : RelicTier::Rare;
+
+  if (const std::optional<RelicId> drawn = random_relic(tier, rng)) {
+    obtain_relic(*drawn);
+  }
 }
 
 void RunState::award_combat_gold(RewardSource source) {
@@ -201,8 +358,76 @@ void RunState::generate_shop() {
 
   shop_remove_price = kBaseRemovePrice + kRemovePriceIncrease * shop_remove_count;
 
-  // Not stocked yet, and each is blocked on content that does not exist:
-  // 2 colorless card slots, 3 relics, 3 potions.
+  // Three relics. The first two roll a tier; the THIRD is always Shop tier,
+  // which is what makes shop-exclusive relics obtainable at all.
+  //
+  // Drawn without replacement against the shelf as well as against held relics:
+  // two slots can roll the same tier, and without `already_stocked` they could
+  // offer the identical relic twice. Buying the second would charge full price
+  // for a relic already owned.
+  shop_relics.clear();
+  std::vector<RelicId> already_stocked;
+  for (int i = 0; i < 3; ++i) {
+    const RelicTier tier =
+        i == 2 ? RelicTier::Shop : relic_tier_standard(rng);
+    const std::optional<RelicId> drawn = random_relic(tier, rng, already_stocked);
+    // An exhausted tier leaves the slot empty rather than stocking a duplicate.
+    if (!drawn) continue;
+    already_stocked.push_back(*drawn);
+    ShopRelic offer;
+    offer.id = *drawn;
+    const float jitter = std::uniform_real_distribution<float>(0.95f, 1.05f)(rng);
+    offer.price = static_cast<int>(
+        static_cast<float>(kRelicTierPrices[static_cast<int>(tier)]) * jitter);
+    shop_relics.push_back(offer);
+  }
+
+  // Three potions.
+  shop_potions.clear();
+  for (int i = 0; i < 3; ++i) {
+    const int rarity_roll = std::uniform_int_distribution<int>(0, 99)(rng);
+    const PotionRarity rarity = rarity_roll < 65    ? PotionRarity::Common
+                                : rarity_roll < 90  ? PotionRarity::Uncommon
+                                                    : PotionRarity::Rare;
+    const std::vector<PotionId>& pool = potion_pool(rarity);
+    ShopPotion offer;
+    offer.id = pool[std::uniform_int_distribution<size_t>(0, pool.size() - 1)(rng)];
+    const float jitter = std::uniform_real_distribution<float>(0.95f, 1.05f)(rng);
+    offer.price = static_cast<int>(
+        static_cast<float>(kPotionRarityPrices[static_cast<int>(rarity)]) *
+        jitter);
+    shop_potions.push_back(offer);
+  }
+
+  // Still unstocked: the 2 colorless card slots, which need colorless cards.
+}
+
+void RunState::buy_relic(int index) {
+  if (phase != Phase::Shop) return;
+  if (index < 0 || index >= static_cast<int>(shop_relics.size())) return;
+  ShopRelic& offer = shop_relics[index];
+  if (offer.sold || gold < offer.price) return;
+
+  // Acquire FIRST, then charge. obtain_relic refuses a relic already held, and
+  // paying before checking would take the gold and the slot in exchange for
+  // nothing.
+  if (!obtain_relic(offer.id)) return;
+  gold -= offer.price;
+  offer.sold = true;
+}
+
+void RunState::buy_potion(int index) {
+  if (phase != Phase::Shop) return;
+  if (index < 0 || index >= static_cast<int>(shop_potions.size())) return;
+  ShopPotion& offer = shop_potions[index];
+  if (offer.sold || gold < offer.price) return;
+
+  // Acquire FIRST, then charge — and let obtain_potion be the single authority
+  // on whether it can be. Re-checking only the full-belt case inline would miss
+  // Sozu, and a Sozu run would pay for potions it can never receive.
+  if (!obtain_potion(offer.id)) return;
+  gold -= offer.price;
+  offer.sold = true;
 }
 
 void RunState::buy_card(int index) {
@@ -234,7 +459,13 @@ void RunState::buy_card_removal(int deck_index) {
 
 void RunState::leave_shop() {
   if (phase != Phase::Shop) return;
+  // All three shelves, not just the cards: the header documents the whole block
+  // as empty outside Phase::Shop, and anything reading it later — the v2
+  // observation's shop slots, a serializer, the renderer — would otherwise see
+  // a shop that is not there.
   shop_cards.clear();
+  shop_relics.clear();
+  shop_potions.clear();
   leave_room();
 }
 
@@ -312,9 +543,14 @@ void RunState::enter_room(RoomType room) {
       generate_shop();
       break;
     case RoomType::Treasure:
-      // A deterministic pass-through: one relic, no choice (§4). Relics do not
-      // exist yet, so entering is all that happens.
+      // A deterministic pass-through: one relic, no choice (§4). The chest is
+      // opened on arrival rather than offering a decision — and the room then
+      // EXITS, which is what makes it a pass-through. Setting the phase without
+      // leaving would strand the run on floor 9, where every generated map puts
+      // a chest.
       phase = Phase::Treasure;
+      open_chest();
+      leave_room();
       break;
     case RoomType::Unknown:
       // A `?` that stayed a `?` — an actual event. Events are §11 step 7.
@@ -351,12 +587,18 @@ void RunState::begin_combat(EncounterPool pool) {
   const uint64_t combat_seed = derive_stream_seed(
       run_seed, RngStream::Combat, static_cast<uint32_t>(floor));
 
-  combat = start_combat(static_cast<uint32_t>(combat_seed), pool, master_deck);
-
-  // start_combat deals a fresh Ironclad. The run's HP is what actually carries,
-  // so it overrides — this is the whole point of a run.
-  combat.character.hp = hp;
-  combat.character.max_hp = max_hp;
+  // The fight is CONSTRUCTED from the run's state, not built fresh and then
+  // patched into shape. Setup reads this — HP, relics, potions — so anything
+  // assigned afterwards would be read too late (§3.2).
+  CombatSetup setup;
+  setup.seed = static_cast<uint32_t>(combat_seed);
+  setup.pool = pool;
+  setup.deck = master_deck;
+  setup.hp = hp;
+  setup.max_hp = max_hp;
+  setup.relics = relics;
+  setup.potions = potions;
+  combat = start_combat(std::move(setup));
 
   in_combat = true;
   phase = Phase::Combat;
@@ -371,6 +613,11 @@ void RunState::end_combat() {
   // Carried: HP and Max HP. Max HP because Feed and Neow can raise it mid-fight.
   hp = combat.character.hp;
   max_hp = combat.character.max_hp;
+
+  // Relic counters carry — all of them, with nothing resetting at the boundary
+  // (§3.3). Potions carry too, so any drunk during the fight are simply gone.
+  relics = combat.relics;
+  potions = combat.potions;
 
   // Discarded: every pile. The master deck is the truth, so combat's copies —
   // including any Wound/Dazed/Slimed/Burn the enemy added — simply go away.
@@ -393,8 +640,37 @@ void RunState::end_combat() {
     outcome = Outcome::Lost;
   } else {
     phase = Phase::Reward;
+
+    // The screen's CONTENTS are decided before anything is granted.
+    //
+    // This ordering is the whole point. A reward screen in StS is rolled as a
+    // unit and then collected, so a relic won from this fight cannot change what
+    // else this fight offered. Granting as we went made it possible: an elite
+    // dropping White Beast Statue would have had roll_potion_drop see the relic
+    // already held and force the drop chance to 100 — that very fight
+    // guaranteeing its own potion. Question Card and Prayer Wheel are the same
+    // trap against the card reward. Rolling first removes the class, rather than
+    // each relic separately.
+    //
+    // The count is every entry the screen will hold, card reward included (§4.2)
+    // — gold, the elite's relic, and the card. Miscounting it moves the
+    // four-item suppression threshold by a fight.
     award_combat_gold(combat_source);
+    const bool elite = combat_source == RewardSource::Elite;
+
+    std::optional<RelicId> elite_relic;
+    if (elite) {
+      std::mt19937 relic_rng =
+          make_stream(run_seed, RngStream::Relic, static_cast<uint32_t>(floor));
+      elite_relic = random_relic(relic_tier_standard(relic_rng), relic_rng);
+    }
+
+    const int on_screen = 1 /* gold */ + 1 /* card */ + (elite ? 1 : 0);
+    roll_potion_drop(on_screen);
     generate_card_reward(combat_source);
+
+    // Collected last, so nothing above could read it.
+    if (elite_relic) obtain_relic(*elite_relic);
   }
 }
 
