@@ -18,6 +18,8 @@ add_library(minispire
   src/enemy.cc
   src/encounter.cc
   src/map.cc
+  src/potion.cc
+  src/relic.cc
   src/query.cc
   src/run_state.cc
   src/turn_loop.cc
@@ -67,6 +69,7 @@ if(MINISPIRE_BUILD_TESTS AND NOT SKBUILD)
     tests/test_map.cc
     tests/test_path_choice.cc
     tests/test_rest_site.cc
+    tests/test_relic_potion.cc
     tests/test_shop.cc
     tests/test_run_rng.cc
     tests/test_run_state.cc
