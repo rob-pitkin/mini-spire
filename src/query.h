@@ -26,6 +26,18 @@ int effective_cost(const CombatState& state, CardId card);
 // Does the player's block clear at the start of their turn? Barricade keeps it.
 bool block_resets_at_turn_start(const CombatState& state);
 
+// The player's block AFTER the start-of-turn reset. Three cases rather than the
+// two the bool above covers: Barricade keeps all, Calipers loses 15, otherwise
+// all of it goes. Prefer this at the turn-start call site.
+int block_after_turn_start(const CombatState& state);
+
+// Ginger (Weak) and Turnip (Frail). Consulted BEFORE Artifact, so an immune
+// player does not spend an Artifact charge on a debuff that cannot land.
+bool player_is_immune_to(const CombatState& state, Debuff d);
+
+// False with Runic Pyramid: the hand is not discarded at end of turn.
+bool hand_discards_at_turn_end(const CombatState& state);
+
 // May the player draw right now? Battle Trance forbids further draws this turn.
 bool can_draw(const CombatState& state);
 

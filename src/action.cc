@@ -131,6 +131,17 @@ void apply_debuff(CombatState& state, const DebuffApplication& app,
                   int enemy_target) {
   auto* m = debuff_map(state, app.target, enemy_target);
   if (!m) return;
+
+  // Relic immunity (Ginger / Turnip) is checked BEFORE Artifact, and the order
+  // is the whole point: the wiki states that a player holding Ginger who would
+  // receive Weak keeps their Artifact charge. Putting this after the Artifact
+  // block below — the natural place, since Artifact reads first — would spend a
+  // charge negating a debuff that could never have landed.
+  if (app.target == Target::Character &&
+      player_is_immune_to(state, app.effect)) {
+    return;
+  }
+
   // Artifact (ROB-65): negates the whole debuff APPLICATION regardless of
   // stacks, consuming one Artifact charge. Checked on the same target's powers.
   auto* pm = power_map(state, app.target, enemy_target);
@@ -1159,21 +1170,37 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       }
       break;
     }
-    case ActionKind::DiscardHand:
+    case ActionKind::DiscardHand: {
       // End of the player's turn: unplayed Ethereal cards exhaust (ROB-65
       // Dazed), the rest discard. Routed through the executors so an ethereal
       // exhaust is seen by Feel No Pain / Dark Embrace — StS handles the hand
       // before end-of-turn powers, so those responses queue ahead of Combust.
+      //
+      // Runic Pyramid keeps the hand, but it is NOT a blanket "nothing leaves":
+      //   - Ethereal cards still exhaust. Exhausting is a different fate from
+      //     discarding, and the relic only stops the discard.
+      //   - Cards with an end-of-turn effect in hand still leave on their own
+      //     (Burn, and the Decay/Doubt/Regret/Shame family). The wiki lists
+      //     these as bypassing the relic.
+      // Treating it as "skip the whole loop" would strand a Burn in hand
+      // forever, dealing its damage every turn for the rest of the fight.
+      const bool discards = hand_discards_at_turn_end(state);
+      std::vector<Card> kept;
       for (const Card& c : state.current_hand) {
         const CardData& cd = CARD_DATABASE.at(c.card_id);
         // Burn: damage for sitting in hand at end of turn. Queued BEFORE the
         // card leaves, and as DealFixedDamage so block absorbs it (StS calls
         // it damage, not HP loss — "unblocked damage from Burn").
-        if (cd.end_of_turn_damage_in_hand > 0) {
+        const bool self_discards = cd.end_of_turn_damage_in_hand > 0;
+        if (self_discards) {
           Action burn = make_action(ActionKind::DealFixedDamage);
           burn.target = kPlayerSlot;
           burn.amount = cd.end_of_turn_damage_in_hand;
           q.push_back(burn);
+        }
+        if (!discards && !cd.ethereal && !self_discards) {
+          kept.push_back(c);
+          continue;
         }
         Action move = make_action(cd.ethereal ? ActionKind::ExhaustCard
                                               : ActionKind::DiscardCard);
@@ -1182,8 +1209,9 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         move.card_upgrades = c.upgrades;
         q.push_back(move);
       }
-      state.current_hand.clear();
+      state.current_hand = std::move(kept);
       break;
+    }
     case ActionKind::CheckDeath:
       // Deferred death processing (ROB-62): on-death hooks fire after the
       // card's damage fully resolves. Then, if the kills left exactly one

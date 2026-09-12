@@ -61,6 +61,45 @@ bool block_resets_at_turn_start(const CombatState& state) {
   return get_status(state.character.powers, Power::Barricade) == 0;
 }
 
+int block_after_turn_start(const CombatState& state) {
+  const int current = state.character.current_block;
+  // Three cases, not two — which is why this returns an amount rather than the
+  // bool it replaced at the call site. Barricade keeps everything, Calipers
+  // loses exactly 15 (wiki-confirmed), otherwise all block goes.
+  //
+  // Barricade wins when both are held: "block is not removed" is strictly
+  // stronger than "lose 15 rather than all".
+  if (!block_resets_at_turn_start(state)) return current;
+  if (state.has_relic(RelicId::Calipers)) {
+    const int kept = current - 15;
+    return kept > 0 ? kept : 0;
+  }
+  return 0;
+}
+
+bool player_is_immune_to(const CombatState& state, Debuff d) {
+  // Ginger and Turnip. The ORDER matters and is the detail the wiki is explicit
+  // about: both trigger BEFORE Artifact, so a player holding Ginger who would
+  // receive Weak keeps their Artifact charge. Checking immunity after Artifact
+  // — the natural place, since Artifact is already first in apply_debuff —
+  // would burn a charge on a debuff that was never going to land.
+  switch (d) {
+    case Debuff::Weak:
+      return state.has_relic(RelicId::Ginger);
+    case Debuff::Frail:
+      return state.has_relic(RelicId::Turnip);
+    default:
+      return false;
+  }
+}
+
+bool hand_discards_at_turn_end(const CombatState& state) {
+  // Runic Pyramid: the hand is kept. Ethereal cards still EXHAUST (a different
+  // fate from discarding) and cards with an end-of-turn effect in hand still
+  // leave — see the DiscardHand executor.
+  return !state.has_relic(RelicId::RunicPyramid);
+}
+
 bool can_draw(const CombatState& state) {
   // Battle Trance: no additional draws for the rest of this turn.
   return get_status(state.character.debuffs, Debuff::NoDraw) == 0;

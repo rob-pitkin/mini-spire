@@ -289,5 +289,205 @@ TEST(RelicQuery, TheBootRaisesTheRemainderAfterPartialBlock) {
   EXPECT_EQ(with.enemies[0].hp, hp_before - 5);
 }
 
+// ===================================================================== batch 1b
+// Query-layer rules about what happens to the player.
+
+// ------------------------------------------------------- Ginger and Turnip
+
+TEST(RelicQuery, GingerBlocksWeak) {
+  CombatState with = fight_with({RelicId::Ginger});
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::ApplyDebuff};
+  a.target = kPlayerSlot;
+  a.debuff = Debuff::Weak;
+  a.amount = 2;
+  q.push_back(a);
+  drain(with, q, ctx);
+  EXPECT_EQ(get_status(with.character.debuffs, Debuff::Weak), 0);
+}
+
+TEST(RelicQuery, GingerDoesNotBlockOtherDebuffs) {
+  CombatState with = fight_with({RelicId::Ginger});
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::ApplyDebuff};
+  a.target = kPlayerSlot;
+  a.debuff = Debuff::Vulnerable;
+  a.amount = 2;
+  q.push_back(a);
+  drain(with, q, ctx);
+  EXPECT_EQ(get_status(with.character.debuffs, Debuff::Vulnerable), 2);
+}
+
+TEST(RelicQuery, TurnipBlocksFrail) {
+  CombatState with = fight_with({RelicId::Turnip});
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::ApplyDebuff};
+  a.target = kPlayerSlot;
+  a.debuff = Debuff::Frail;
+  a.amount = 3;
+  q.push_back(a);
+  drain(with, q, ctx);
+  EXPECT_EQ(get_status(with.character.debuffs, Debuff::Frail), 0);
+}
+
+// The ordering case. Ginger is consulted BEFORE Artifact, so the charge
+// survives — a debuff that could never land must not cost one. Checking
+// immunity after Artifact would pass every other test in this file and fail
+// only here.
+TEST(RelicQuery, GingerDoesNotConsumeAnArtifactCharge) {
+  CombatState with = fight_with({RelicId::Ginger});
+  with.character.powers[Power::Artifact] = 1;
+
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::ApplyDebuff};
+  a.target = kPlayerSlot;
+  a.debuff = Debuff::Weak;
+  a.amount = 1;
+  q.push_back(a);
+  drain(with, q, ctx);
+
+  EXPECT_EQ(get_status(with.character.debuffs, Debuff::Weak), 0);
+  EXPECT_EQ(get_status(with.character.powers, Power::Artifact), 1)
+      << "Ginger spent an Artifact charge on a debuff it already prevented";
+}
+
+TEST(RelicQuery, TurnipDoesNotConsumeAnArtifactCharge) {
+  CombatState with = fight_with({RelicId::Turnip});
+  with.character.powers[Power::Artifact] = 1;
+
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::ApplyDebuff};
+  a.target = kPlayerSlot;
+  a.debuff = Debuff::Frail;
+  a.amount = 1;
+  q.push_back(a);
+  drain(with, q, ctx);
+
+  EXPECT_EQ(get_status(with.character.powers, Power::Artifact), 1);
+}
+
+// Without the relic, Artifact still does its job — the new early-out must not
+// have shadowed it.
+TEST(RelicQuery, ArtifactStillAbsorbsWeakWithoutGinger) {
+  CombatState bare = bare_fight();
+  bare.character.powers[Power::Artifact] = 1;
+
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::ApplyDebuff};
+  a.target = kPlayerSlot;
+  a.debuff = Debuff::Weak;
+  a.amount = 1;
+  q.push_back(a);
+  drain(bare, q, ctx);
+
+  EXPECT_EQ(get_status(bare.character.debuffs, Debuff::Weak), 0);
+  EXPECT_EQ(get_status(bare.character.powers, Power::Artifact), 0)
+      << "Artifact should have been spent";
+}
+
+// ----------------------------------------------------------------- Calipers
+
+TEST(RelicQuery, CalipersLosesFifteenBlockNotAllOfIt) {
+  CombatState with = fight_with({RelicId::Calipers});
+  with.character.current_block = 40;
+  EXPECT_EQ(block_after_turn_start(with), 25);
+}
+
+TEST(RelicQuery, CalipersCannotGoNegative) {
+  CombatState with = fight_with({RelicId::Calipers});
+  with.character.current_block = 8;
+  EXPECT_EQ(block_after_turn_start(with), 0);
+}
+
+TEST(RelicQuery, WithoutCalipersAllBlockIsLost) {
+  CombatState bare = bare_fight();
+  bare.character.current_block = 40;
+  EXPECT_EQ(block_after_turn_start(bare), 0);
+}
+
+// Barricade is strictly stronger than Calipers: "block is not removed" beats
+// "lose 15 rather than all", so holding both keeps everything.
+TEST(RelicQuery, BarricadeBeatsCalipers) {
+  CombatState with = fight_with({RelicId::Calipers});
+  with.character.current_block = 40;
+  with.character.powers[Power::Barricade] = 1;
+  EXPECT_EQ(block_after_turn_start(with), 40);
+}
+
+// ------------------------------------------------------------ Runic Pyramid
+
+TEST(RelicQuery, RunicPyramidKeepsTheHandAtEndOfTurn) {
+  CombatState with = fight_with({RelicId::RunicPyramid});
+  const size_t hand_before = with.current_hand.size();
+  ASSERT_GT(hand_before, 0u);
+
+  ActionQueue q;
+  ResolutionContext ctx;
+  q.push_back(Action{ActionKind::DiscardHand});
+  drain(with, q, ctx);
+
+  EXPECT_EQ(with.current_hand.size(), hand_before);
+  EXPECT_TRUE(with.discard_pile.empty());
+}
+
+TEST(RelicQuery, WithoutRunicPyramidTheHandDiscards) {
+  CombatState bare = bare_fight();
+  const size_t hand_before = bare.current_hand.size();
+  ASSERT_GT(hand_before, 0u);
+
+  ActionQueue q;
+  ResolutionContext ctx;
+  q.push_back(Action{ActionKind::DiscardHand});
+  drain(bare, q, ctx);
+
+  EXPECT_TRUE(bare.current_hand.empty());
+  EXPECT_EQ(bare.discard_pile.size(), hand_before);
+}
+
+// Runic Pyramid is not a blanket "nothing leaves". A Burn deals its damage and
+// STILL leaves the hand — the wiki lists the end-of-turn-effect family as
+// bypassing the relic. Keeping it would strand the Burn in hand, dealing its
+// damage every turn for the rest of the fight.
+TEST(RelicQuery, RunicPyramidDoesNotStrandABurnInHand) {
+  CombatState with = fight_with({RelicId::RunicPyramid});
+  with.current_hand.clear();
+  with.current_hand.push_back(Card{CardId::Burn});
+  with.current_hand.push_back(Card{CardId::Strike});
+  const int hp_before = with.character.hp;
+
+  ActionQueue q;
+  ResolutionContext ctx;
+  q.push_back(Action{ActionKind::DiscardHand});
+  drain(with, q, ctx);
+
+  ASSERT_EQ(with.current_hand.size(), 1u) << "the Burn should have left";
+  EXPECT_EQ(with.current_hand[0].card_id, CardId::Strike);
+  EXPECT_LT(with.character.hp, hp_before) << "the Burn dealt no damage";
+}
+
+// Ethereal cards exhaust rather than discard, and exhausting is a different
+// fate the relic does not prevent.
+TEST(RelicQuery, RunicPyramidStillLetsEtherealCardsExhaust) {
+  CombatState with = fight_with({RelicId::RunicPyramid});
+  with.current_hand.clear();
+  with.current_hand.push_back(Card{CardId::Dazed});
+  with.current_hand.push_back(Card{CardId::Strike});
+
+  ActionQueue q;
+  ResolutionContext ctx;
+  q.push_back(Action{ActionKind::DiscardHand});
+  drain(with, q, ctx);
+
+  ASSERT_EQ(with.current_hand.size(), 1u) << "the ethereal card should have left";
+  EXPECT_EQ(with.current_hand[0].card_id, CardId::Strike);
+  EXPECT_EQ(with.exhaust_pile.size(), 1u);
+}
+
 }  // namespace
 }  // namespace minispire

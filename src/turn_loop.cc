@@ -788,7 +788,7 @@ void handle_end_turn(CombatState& state) {
   // expiry) and the draw are a translate + drain, so drawn Statuses can fire
   // Evolve / Fire Breathing.
   // Barricade keeps block across the turn boundary (query, Stage 4b).
-  if (block_resets_at_turn_start(state)) state.character.current_block = 0;
+  state.character.current_block = block_after_turn_start(state);
   state.character.energy = state.character.energy_per_turn;
   // Battle Trance's NoDraw needs no clear here — it is a Debuff now (ROB-40 B2)
   // and the end-of-turn tick already expired it.
