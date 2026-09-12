@@ -866,13 +866,26 @@ CombatState start_combat(CombatSetup setup) {
   state.character_turn = true;
   state.outcome = Outcome::InProgress;
 
-  // Start-of-combat relic triggers belong HERE, before the opening hand — Bag
-  // of Marbles resolves before you see your cards, and Bag of Preparation
-  // changes how many you see. Effects land in a later step; the ordering slot
-  // exists now so they cannot be bolted on in the wrong place.
+  // Start-of-combat relics, in the three ordered sub-phases the real game uses
+  // (docs/design/relic-effects.md §3.1). The available pieces:
+  //
+  //   fire_relic_hooks(state, Hook::CombatStartPreDraw, q)  -- pre-draw relics
+  //   draw_opening_hand(state)                              -- the opening hand
+  //   fire_relic_hooks(state, Hook::CombatStart, q)         -- post-draw relics
+  //   fire_relic_hooks(state, Hook::TurnStartPostDraw, q)   -- last sub-phase
+  //   drain(state, q, ctx)                                  -- resolve pushed actions
+  //
+  // Note draw_opening_hand is imperative (it is Innate-aware and not an Action),
+  // so anything pushed before it resolves only when the queue is next drained.
+  ActionQueue q;
+  ResolutionContext ctx;
 
-  // Draw the opening hand (Innate cards come first and count toward it).
+  fire_relic_hooks(state, Hook::CombatStartPreDraw, q);
+  drain(state, q, ctx);
   draw_opening_hand(state);
+  fire_relic_hooks(state, Hook::CombatStart, q);
+  fire_relic_hooks(state, Hook::TurnStartPostDraw, q);
+  drain(state, q, ctx);
 
   return state;
 }

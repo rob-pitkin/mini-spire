@@ -309,6 +309,15 @@ void fire_enemy_hooks(CombatState& state, int slot, Hook hook, ActionQueue& q) {
     case Hook::HpLostPlayer:
     case Hook::CardDrawn:
     case Hook::PlayerAttacked:
+    // Relic hooks have no enemy-Trigger analog. Listed explicitly rather than
+    // caught by a default so that adding a hook keeps failing to compile here
+    // until someone decides whether enemies care about it.
+    case Hook::CombatStartPreDraw:
+    case Hook::CombatStart:
+    case Hook::TurnStartPostDraw:
+    case Hook::BlockBroken:
+    case Hook::ShuffleDrawPile:
+    case Hook::PotionDrunk:
       return;
   }
 
@@ -408,7 +417,95 @@ void push_remove_player_power(ActionQueue& q, Power p) {
   q.push_back(a);
 }
 
+void push_player_power(ActionQueue& q, Power p, int amount) {
+  Action a = make_action(ActionKind::ApplyPower);
+  a.target = kPlayerSlot;
+  a.power = p;
+  a.amount = amount;
+  q.push_back(a);
+}
+void push_player_heal(ActionQueue& q, int amount) {
+  Action a = make_action(ActionKind::Heal);
+  a.amount = amount;
+  q.push_back(a);
+}
+void push_player_energy(ActionQueue& q, int amount) {
+  Action a = make_action(ActionKind::GainEnergy);
+  a.amount = amount;
+  q.push_back(a);
+}
+// Debuff every LIVING enemy. Expanded here rather than at execution because the
+// target set cannot change during a combat-start drain — nothing has acted yet.
+void push_debuff_all_enemies(CombatState& state, ActionQueue& q, Debuff d,
+                             int amount) {
+  for (int slot = 0; slot < static_cast<int>(state.enemies.size()); ++slot) {
+    if (state.enemies[slot].hp <= 0) continue;
+    Action a = make_action(ActionKind::ApplyDebuff);
+    a.target = slot;
+    a.debuff = d;
+    a.amount = amount;
+    q.push_back(a);
+  }
+}
+
 }  // namespace
+
+void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q) {
+  // ACQUISITION order — the order of state.relics, which is the order the
+  // player picked them up and the order their relic bar shows. Unlike the
+  // powers registry below (Power-enum order), this loop must not be sorted or
+  // grouped by hook: doing so would silently change resolution order.
+  for (HeldRelic& relic : state.relics) {
+    switch (hook) {
+      case Hook::CombatStartPreDraw:
+        // Nothing yet. Toolbox and the other pre-draw relics generate cards,
+        // which needs the card-generation path (batch 3).
+        break;
+
+      case Hook::CombatStart:
+        switch (relic.id) {
+          case RelicId::Vajra:
+            push_player_power(q, Power::Strength, 1);
+            break;
+          case RelicId::OddlySmoothStone:
+            push_player_power(q, Power::Dexterity, 1);
+            break;
+          case RelicId::Anchor:
+            push_player_block(q, 10);
+            break;
+          case RelicId::BloodVial:
+            push_player_heal(q, 2);
+            break;
+          case RelicId::Lantern:
+            push_player_energy(q, 1);
+            break;
+          case RelicId::BagOfMarbles:
+            push_debuff_all_enemies(state, q, Debuff::Vulnerable, 1);
+            break;
+          case RelicId::BagOfPreparation:
+            // Resolves after the opening hand is already dealt, so this is a
+            // SECOND draw of 2 rather than a 7-card opening draw. The
+            // distinction is observable: the shuffle is unchanged, but any
+            // draw-triggered effect sees two separate draws.
+            push_draw(q, 2);
+            break;
+          default:
+            break;
+        }
+        break;
+
+      case Hook::TurnStartPostDraw:
+        // Gambling Chip and Warped Tongs need a choice and an upgrade path
+        // respectively; both land in later batches.
+        break;
+
+      default:
+        // Every other hook is wired in a later batch. Listed explicitly rather
+        // than silently ignored so an unhandled hook is a visible gap.
+        break;
+    }
+  }
+}
 
 void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
                              CardId card, int attacker_slot) {
@@ -533,6 +630,16 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
     case Hook::EnemyWake:
     case Hook::BecameLastEnemy:
       break;  // enemy-side hooks
+    // Relic hooks: no player POWER responds to these. Relics answer them in
+    // fire_relic_hooks. Enumerated for the same reason as the enemy registry —
+    // a new hook should not compile until every registry has considered it.
+    case Hook::CombatStartPreDraw:
+    case Hook::CombatStart:
+    case Hook::TurnStartPostDraw:
+    case Hook::BlockBroken:
+    case Hook::ShuffleDrawPile:
+    case Hook::PotionDrunk:
+      break;
   }
 }
 

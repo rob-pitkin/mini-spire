@@ -65,9 +65,23 @@ enum class Hook {
   EnemyDamaged,       // Curl Up, Angry — ATTACK damage only
   OnAnyDamage,        // Lagavulin damage-wake — any damage, incl. fixed/thorns
   EnemyHpThreshold,   // Large Slime split interrupt
-  EnemyDeath,         // Spore Cloud
+  EnemyDeath,         // Spore Cloud; relics: Gremlin Horn
   EnemyWake,          // Lagavulin Metallicize removal
   BecameLastEnemy,    // Shield Gremlin attacks once alone
+  // --- Relic hooks (docs/design/relic-effects.md). Appended, never reordered:
+  // the enum is switched on in several registries and a renumber is silent. ---
+  //
+  // Combat start is THREE ordered sub-phases, not one. The real game queues
+  // pre-draw relics, then the opening draw, then the rest — so Bag of
+  // Preparation's "draw 2" resolves AFTER the opening hand rather than merging
+  // into a single 7-card draw, and that changes which cards you get. Collapsing
+  // these into one hook would be a parity bug with no local symptom.
+  CombatStartPreDraw,   // resolves BEFORE the opening hand (Toolbox)
+  CombatStart,          // resolves AFTER it (Bag of Marbles, Bag of Preparation)
+  TurnStartPostDraw,    // last of the three (Gambling Chip, Warped Tongs)
+  BlockBroken,          // Hand Drill — no site in sts_lightspeed (§2.2)
+  ShuffleDrawPile,      // Sundial, The Abacus
+  PotionDrunk,          // Toy Ornithopter, Sacred Bark
 };
 
 // Fire the enemy-at-`slot`'s TriggeredEffects matching `hook`, PUSHING the
@@ -94,6 +108,21 @@ void fire_enemy_power_hooks(CombatState& state, int slot, Hook hook,
 void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
                              CardId card = CardId::Strike,
                              int attacker_slot = kNoSlot);
+
+// Fire the player's RELIC behaviors for `hook`, pushing response actions. The
+// sibling of fire_player_power_hooks and built the same way: a switch over
+// state.relics, no state beyond each HeldRelic's counter, so clone() stays a
+// plain deep copy.
+//
+// The one difference is the iteration order. Powers fire in Power-enum order
+// because that is their canonical order; relics fire in ACQUISITION order,
+// which is the order of state.relics — the order the player picked them up and
+// the order their bar displays. Sorting or grouping this loop would change
+// resolution order, so it iterates the vector as it stands.
+//
+// Effects are PUSHED, never applied here, exactly as the powers registry does.
+// See docs/design/relic-effects.md for which relic hangs off which hook.
+void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q);
 
 // Drain the queue to completion: pop-execute until empty, short-circuiting on
 // a terminal outcome. Executors may push more actions. The queue must be empty
