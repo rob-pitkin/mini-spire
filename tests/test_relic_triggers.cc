@@ -489,5 +489,86 @@ TEST(RelicQuery, RunicPyramidStillLetsEtherealCardsExhaust) {
   EXPECT_EQ(with.exhaust_pile.size(), 1u);
 }
 
+// ===================================================================== batch 1c
+// The boss energy relics. Each reads "gain 1 Energy at the start of each turn",
+// which is what energy_per_turn means, so they are summed once at setup.
+
+CombatState elite_fight_with(std::vector<RelicId> ids, uint32_t seed = 1) {
+  CombatSetup setup;
+  setup.seed = seed;
+  setup.pool = EncounterPool::Elite;
+  setup.deck = starter_deck();
+  for (RelicId id : ids) setup.relics.push_back(HeldRelic{id, 0});
+  return start_combat(setup);
+}
+
+TEST(RelicEnergy, EachFlatEnergyRelicGivesOne) {
+  const CombatState bare = bare_fight();
+  const RelicId flat[] = {
+      RelicId::CoffeeDripper, RelicId::FusionHammer, RelicId::Ectoplasm,
+      RelicId::PhilosophersStone, RelicId::MarkOfPain, RelicId::RunicDome,
+      RelicId::CursedKey, RelicId::BustedCrown, RelicId::Sozu,
+      RelicId::VelvetChoker};
+  for (RelicId id : flat) {
+    const CombatState with = fight_with({id});
+    EXPECT_EQ(with.character.energy_per_turn,
+              bare.character.energy_per_turn + 1)
+        << relic_name(id) << " gave no energy";
+    EXPECT_EQ(with.character.energy, with.character.energy_per_turn)
+        << relic_name(id) << " granted per-turn energy but not turn 1's";
+  }
+}
+
+// They stack — nothing in the game stops a run holding several boss relics.
+TEST(RelicEnergy, EnergyRelicsStack) {
+  const CombatState bare = bare_fight();
+  const CombatState with =
+      fight_with({RelicId::Sozu, RelicId::RunicDome, RelicId::CursedKey});
+  EXPECT_EQ(with.character.energy_per_turn,
+            bare.character.energy_per_turn + 3);
+}
+
+// Slaver's Collar is the conditional one: "During Boss and Elite combats."
+TEST(RelicEnergy, SlaversCollarGivesNothingInANormalFight) {
+  const CombatState bare = bare_fight();
+  const CombatState with = fight_with({RelicId::SlaversCollar});
+  EXPECT_EQ(with.character.energy_per_turn, bare.character.energy_per_turn);
+}
+
+TEST(RelicEnergy, SlaversCollarGivesEnergyInAnEliteFight) {
+  const CombatState bare_elite = elite_fight_with({});
+  const CombatState with = elite_fight_with({RelicId::SlaversCollar});
+  EXPECT_EQ(with.character.energy_per_turn,
+            bare_elite.character.energy_per_turn + 1);
+}
+
+// An unconditional relic is unaffected by the fight's kind — the conditional
+// path must not have made everything conditional.
+TEST(RelicEnergy, AFlatEnergyRelicWorksInBothFightKinds) {
+  const CombatState normal = fight_with({RelicId::Sozu});
+  const CombatState elite = elite_fight_with({RelicId::Sozu});
+  EXPECT_EQ(normal.character.energy_per_turn, IRONCLAD_ENERGY_PER_TURN + 1);
+  EXPECT_EQ(elite.character.energy_per_turn, IRONCLAD_ENERGY_PER_TURN + 1);
+}
+
+// The energy survives into later turns, not just the first — it is per-turn
+// energy, not a one-off grant. Driven through the real turn boundary rather
+// than by calling the refill directly, so it exercises the path the agent does.
+TEST(RelicEnergy, TheEnergyPersistsAcrossTurns) {
+  CombatState with = fight_with({RelicId::Sozu});
+  const int expected = with.character.energy_per_turn;
+  ASSERT_EQ(with.character.energy, expected);
+
+  with.character.energy = 0;  // spend it all
+  // kEndTurnAction from turn_loop.h, never re-derived — the option-slot channel
+  // sits after the combat block, so the last index is decline, not end-turn.
+  ASSERT_TRUE(apply_action(with, kEndTurnAction));
+
+  // A Weak-pool fight cannot end on turn 1, but assert rather than assume.
+  ASSERT_EQ(with.outcome, Outcome::InProgress);
+  EXPECT_EQ(with.character.energy, expected)
+      << "turn 2 refilled to the base amount, not the relic-boosted one";
+}
+
 }  // namespace
 }  // namespace minispire

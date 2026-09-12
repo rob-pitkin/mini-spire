@@ -260,7 +260,42 @@ probably yes, and the fix is to call it after the second drain. What needs
 deciding is whether an enemy that dies before the player has acted should
 trigger Spore Cloud and friends at all.
 
-### 6.2 Relic counters are loaded but never read at combat start
+### 6.2 The boss energy relics have their upside but not their drawback
+
+Batch 1c wired `+1 energy` for eleven relics. Each also has a drawback, and
+those live in later batches — so **each of these is currently strictly stronger
+than the real relic.**
+
+| relic | drawback | lands in |
+|---|---|---|
+| Sozu | no potions | ✅ done |
+| Coffee Dripper | cannot Rest | batch 2 (run layer) |
+| Fusion Hammer | cannot Smith | batch 2 |
+| Ectoplasm | cannot gain gold | batch 2 |
+| Busted Crown | fewer card reward options | batch 2 |
+| Cursed Key | chests give a Curse | batch 2 — needs curses in the deck |
+| Philosopher's Stone | all enemies +1 Strength | batch 3 (combat start) |
+| Mark of Pain | 2 Wounds into the draw pile | batch 3 — needs card generation |
+| Velvet Choker | max 6 cards per turn | batch 5 — needs a per-turn play counter and a mask rule |
+| Runic Dome | cannot see enemy intent | **needs the v2 observation** |
+| Slaver's Collar | none (conditional upside) | ✅ complete |
+
+**Why this is safe right now, and exactly when it stops being safe.** Every one
+of these is Boss tier, and no run can obtain a Boss-tier relic today: the three
+`random_relic` call sites pass chest tiers, `relic_tier_standard`
+(common/uncommon/rare) and `RelicTier::Shop` — never `Boss`. Neow is the only
+boss-relic source in an Act 1 run (§4.4) and is not implemented. Verified by
+reading all three sites, not by grep.
+
+**So the moment Neow lands, this becomes a live parity bug** — an agent would
+train against eleven relics that are pure upside. Neow must not ship before the
+drawbacks, or must exclude these from its boss-relic pool until they do.
+
+Runic Dome is the sharp one: its drawback is an *observation* change (hiding
+intent), so it cannot be fixed in the engine at all and is blocked on the v2
+observation work. It is the one relic here whose parity depends on §5.
+
+### 6.3 Relic counters are loaded but never read at combat start
 
 Five relics branch on their counter *during* setup in the reference — Happy
 Flower, Ink Bottle, Pen Nib, Nunchaku, Incense Burner — e.g. Pen Nib at 9

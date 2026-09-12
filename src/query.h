@@ -38,6 +38,13 @@ bool player_is_immune_to(const CombatState& state, Debuff d);
 // False with Runic Pyramid: the hand is not discarded at end of turn.
 bool hand_discards_at_turn_end(const CombatState& state);
 
+// Extra energy per turn from relics. Summed once at combat setup, since
+// "gain 1 Energy at the start of each turn" IS energy_per_turn and no relic is
+// gained mid-fight. Takes `elite_or_boss` rather than the encounter itself so
+// query.h stays independent of encounter.h — Slaver's Collar is the only member
+// that cares.
+int relic_bonus_energy(const CombatState& state, bool elite_or_boss);
+
 // May the player draw right now? Battle Trance forbids further draws this turn.
 bool can_draw(const CombatState& state);
 

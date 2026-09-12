@@ -93,6 +93,31 @@ bool player_is_immune_to(const CombatState& state, Debuff d) {
   }
 }
 
+int relic_bonus_energy(const CombatState& state, bool elite_or_boss) {
+  // The boss energy relics. Each reads "Gain 1 Energy at the start of each
+  // turn", which is exactly what energy_per_turn means here, so this is summed
+  // once at setup rather than fired every turn. Safe because no relic is gained
+  // mid-combat.
+  //
+  // They STACK: holding two is +2. Nothing in the game prevents it, and the
+  // Ironclad can hold several boss relics in a full run.
+  static const RelicId kFlatEnergyRelics[] = {
+      RelicId::CoffeeDripper, RelicId::FusionHammer, RelicId::Ectoplasm,
+      RelicId::PhilosophersStone, RelicId::MarkOfPain, RelicId::RunicDome,
+      RelicId::CursedKey, RelicId::BustedCrown, RelicId::Sozu,
+      RelicId::VelvetChoker,
+  };
+  int bonus = 0;
+  for (RelicId id : kFlatEnergyRelics) {
+    if (state.has_relic(id)) ++bonus;
+  }
+  // Slaver's Collar is the one conditional member: "During Boss and Elite
+  // combats, gain 1 Energy at the start of your turn." In a normal fight it
+  // does nothing at all.
+  if (elite_or_boss && state.has_relic(RelicId::SlaversCollar)) ++bonus;
+  return bonus;
+}
+
 bool hand_discards_at_turn_end(const CombatState& state) {
   // Runic Pyramid: the hand is kept. Ethereal cards still EXHAUST (a different
   // fate from discarding) and cards with an end-of-turn effect in hand still
