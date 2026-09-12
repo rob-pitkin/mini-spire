@@ -302,7 +302,21 @@ struct RunState {
   // Takes a relic. Duplicates are ignored: you cannot hold two of the same.
   // False when nothing was gained — the relic is already held. Callers that
   // charge for it MUST check, or the payment buys nothing.
+  //
+  // Also fires the relic's PICKUP effect, if it has one (Strawberry's Max HP,
+  // War Paint's upgrades). Those run here rather than at a trigger site because
+  // there is no fight to queue them into.
   bool obtain_relic(RelicId id);
+
+  // Raise Max HP by `amount` and heal by the same — gaining Max HP heals in
+  // StS, which is a general rule rather than a per-relic quirk.
+  void gain_max_hp(int amount);
+
+  // Upgrade up to `count` random upgradable cards of `type` in the master deck,
+  // drawn without replacement. Returns how many were actually upgraded, which
+  // can be fewer than asked when the deck has run out of eligible cards.
+  // `source` indexes the RNG stream, so each relic's draw is its own.
+  int upgrade_random_cards(CardType type, int count, RelicId source);
 
   // Takes a potion if a slot is free. Returns false when the belt is full,
   // which is a real decision point in the game rather than an error.

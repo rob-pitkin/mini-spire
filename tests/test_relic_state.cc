@@ -313,6 +313,150 @@ TEST(PotionState, AFullScreenSuppressesEvenWhiteBeastStatue) {
   EXPECT_TRUE(run.potions.empty());
 }
 
+// ------------------------------------------------------- pickup effects (2a)
+
+// Gaining Max HP HEALS by the same amount. That is a general StS rule, not a
+// per-relic quirk, and it is why a Strawberry taken at low HP is worth 7 HP now
+// as well as 7 capacity.
+TEST(RelicPickup, FoodRelicsRaiseMaxHpAndHealTheSameAmount) {
+  struct Case { RelicId id; int amount; };
+  const Case cases[] = {{RelicId::Strawberry, 7},
+                        {RelicId::Pear, 10},
+                        {RelicId::Mango, 14}};
+  for (const Case& c : cases) {
+    RunState run = RunState::start(1);
+    run.hp = 40;
+    const int max_before = run.max_hp;
+    run.obtain_relic(c.id);
+    EXPECT_EQ(run.max_hp, max_before + c.amount) << relic_name(c.id);
+    EXPECT_EQ(run.hp, 40 + c.amount) << relic_name(c.id) << " did not heal";
+  }
+}
+
+// At full HP the heal has nowhere to go, but Max HP still rises — and HP must
+// track it rather than being left behind at the old maximum.
+TEST(RelicPickup, AFoodRelicTakenAtFullHpKeepsYouAtFull) {
+  RunState run = RunState::start(1);
+  ASSERT_EQ(run.hp, run.max_hp);
+  run.obtain_relic(RelicId::Pear);
+  EXPECT_EQ(run.hp, run.max_hp);
+  EXPECT_EQ(run.max_hp, IRONCLAD_MAX_HP + 10);
+}
+
+// Lee's Waffle is NOT just a bigger Strawberry: +7 Max HP and a FULL heal.
+TEST(RelicPickup, LeesWaffleFullyHeals) {
+  RunState run = RunState::start(1);
+  run.hp = 12;
+  run.obtain_relic(RelicId::LeesWaffle);
+  EXPECT_EQ(run.max_hp, IRONCLAD_MAX_HP + 7);
+  EXPECT_EQ(run.hp, run.max_hp) << "Lee's Waffle healed only the Max HP gain";
+}
+
+TEST(RelicPickup, WarPaintUpgradesTwoSkills) {
+  RunState run = RunState::start(1);
+  // The starter deck's Skills are 4 Defends. Two should come back upgraded.
+  const std::vector<Card> before = run.master_deck;
+  run.obtain_relic(RelicId::WarPaint);
+
+  int changed = 0;
+  for (size_t i = 0; i < before.size(); ++i) {
+    if (!before[i].same_as(run.master_deck[i])) ++changed;
+  }
+  EXPECT_EQ(changed, 2) << "War Paint should upgrade exactly 2 cards";
+
+  // And they must be Skills, not Attacks.
+  for (size_t i = 0; i < before.size(); ++i) {
+    if (before[i].same_as(run.master_deck[i])) continue;
+    EXPECT_EQ(CARD_DATABASE.at(before[i].card_id).type, CardType::Skill)
+        << "War Paint upgraded a non-Skill";
+  }
+}
+
+TEST(RelicPickup, WhetstoneUpgradesTwoAttacks) {
+  RunState run = RunState::start(1);
+  const std::vector<Card> before = run.master_deck;
+  run.obtain_relic(RelicId::Whetstone);
+
+  int changed = 0;
+  for (size_t i = 0; i < before.size(); ++i) {
+    if (before[i].same_as(run.master_deck[i])) continue;
+    ++changed;
+    EXPECT_EQ(CARD_DATABASE.at(before[i].card_id).type, CardType::Attack)
+        << "Whetstone upgraded a non-Attack";
+  }
+  EXPECT_EQ(changed, 2);
+}
+
+// A deck with nothing eligible is a real outcome, not an error. The relic is
+// still obtained; it just has nothing to do.
+TEST(RelicPickup, WarPaintOnADeckWithNoSkillsUpgradesNothing) {
+  RunState run = RunState::start(1);
+  run.master_deck.clear();
+  run.add_card(Card{CardId::Strike});
+  const std::vector<Card> before = run.master_deck;
+
+  EXPECT_TRUE(run.obtain_relic(RelicId::WarPaint));
+
+  ASSERT_EQ(run.master_deck.size(), before.size());
+  EXPECT_TRUE(before[0].same_as(run.master_deck[0]));
+}
+
+// Fewer eligible cards than asked: upgrade what there is, and leave the rest
+// alone rather than reaching into another card type to make up the count.
+TEST(RelicPickup, WarPaintWithOneSkillUpgradesJustThatOne) {
+  RunState run = RunState::start(1);
+  run.master_deck.clear();
+  run.add_card(Card{CardId::Defend});
+  run.add_card(Card{CardId::Strike});
+  const std::vector<Card> before = run.master_deck;
+
+  run.obtain_relic(RelicId::WarPaint);
+
+  EXPECT_FALSE(before[0].same_as(run.master_deck[0]))
+      << "the only Skill was not upgraded";
+  EXPECT_TRUE(before[1].same_as(run.master_deck[1]))
+      << "War Paint reached into the Attacks to make up its count";
+}
+
+// Two relics picked up on the SAME floor must not share a draw. The stream is
+// indexed by RelicId for exactly this reason — a floor index would hand War
+// Paint and Whetstone identical rolls.
+TEST(RelicPickup, TwoPickupsOnOneFloorDrawIndependently) {
+  RunState a = RunState::start(7);
+  a.floor = 3;
+  a.obtain_relic(RelicId::WarPaint);
+
+  RunState b = RunState::start(7);
+  b.floor = 3;
+  b.obtain_relic(RelicId::Whetstone);
+
+  // Different card TYPES, so the picks cannot coincide by construction — what
+  // this asserts is that each fired against its own pool rather than one
+  // stream's draw being reused.
+  int a_changed = 0, b_changed = 0;
+  const RunState fresh = RunState::start(7);
+  for (size_t i = 0; i < fresh.master_deck.size(); ++i) {
+    if (!fresh.master_deck[i].same_as(a.master_deck[i])) ++a_changed;
+    if (!fresh.master_deck[i].same_as(b.master_deck[i])) ++b_changed;
+  }
+  EXPECT_EQ(a_changed, 2);
+  EXPECT_EQ(b_changed, 2);
+}
+
+// Pickup effects fire once. Re-obtaining is refused, so the HP cannot be
+// farmed by repeated calls.
+TEST(RelicPickup, APickupEffectCannotFireTwice) {
+  RunState run = RunState::start(1);
+  run.hp = 40;
+  EXPECT_TRUE(run.obtain_relic(RelicId::Pear));
+  const int hp_after = run.hp;
+  const int max_after = run.max_hp;
+
+  EXPECT_FALSE(run.obtain_relic(RelicId::Pear));
+  EXPECT_EQ(run.hp, hp_after);
+  EXPECT_EQ(run.max_hp, max_after);
+}
+
 // --------------------------------------------------------------- the chest
 
 // A treasure room is a pass-through: it opens and EXITS. Every generated map

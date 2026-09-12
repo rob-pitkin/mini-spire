@@ -55,13 +55,82 @@ bool RunState::has_relic(RelicId id) const {
   return false;
 }
 
+void RunState::gain_max_hp(int amount) {
+  // Gaining Max HP HEALS by the same amount — the general rule in StS, not a
+  // per-relic quirk, and the reason Strawberry is worth 7 HP now as well as 7
+  // capacity. (Mark of the Bloom blocks the heal, but it is an Act 2+ event
+  // relic and outside the vocabulary.)
+  max_hp += amount;
+  hp += amount;
+  if (hp > max_hp) hp = max_hp;
+}
+
+int RunState::upgrade_random_cards(CardType type, int count, RelicId source) {
+  // Indexed by the relic's own id (see RngStream::RelicEffect): two relics can
+  // be picked up on the same floor, so a floor index would give both the same
+  // upgrades.
+  std::mt19937 rng =
+      make_stream(run_seed, RngStream::RelicEffect,
+                  static_cast<uint32_t>(source));
+
+  // Eligible = right type AND actually upgradable. A deck of already-upgraded
+  // Strikes leaves War Paint nothing to do, which is a real outcome rather than
+  // an error.
+  std::vector<int> eligible;
+  for (size_t i = 0; i < master_deck.size(); ++i) {
+    if (CARD_DATABASE.at(master_deck[i].card_id).type != type) continue;
+    Card probe = master_deck[i];
+    if (upgrade_card_in_place(probe)) eligible.push_back(static_cast<int>(i));
+  }
+
+  // Drawn WITHOUT REPLACEMENT, the same discipline as card rewards and shop
+  // stock: a retry loop would consume a variable number of draws and shift
+  // every later roll in the run.
+  int upgraded = 0;
+  for (int n = 0; n < count && !eligible.empty(); ++n) {
+    const size_t pick = std::uniform_int_distribution<size_t>(
+        0, eligible.size() - 1)(rng);
+    if (upgrade_card_in_place(master_deck[eligible[pick]])) ++upgraded;
+    eligible.erase(eligible.begin() + static_cast<long>(pick));
+  }
+  return upgraded;
+}
+
 bool RunState::obtain_relic(RelicId id) {
   if (has_relic(id)) return false;
   relics.push_back(HeldRelic{id, 0});
 
-  // Potion Belt widens the belt the moment it is picked up, so a potion that
-  // would not have fit a second ago now does.
-  if (id == RelicId::PotionBelt) potion_slots += 2;
+  // Pickup effects (§3.2). These fire once, the moment the relic is taken —
+  // they are not combat triggers and do not go through the action queue,
+  // because there is no fight to queue into.
+  switch (id) {
+    // Potion Belt widens the belt the moment it is picked up, so a potion that
+    // would not have fit a second ago now does.
+    case RelicId::PotionBelt:
+      potion_slots += 2;
+      break;
+
+    case RelicId::Strawberry: gain_max_hp(7); break;
+    case RelicId::Pear: gain_max_hp(10); break;
+    case RelicId::Mango: gain_max_hp(14); break;
+
+    case RelicId::LeesWaffle:
+      // +7 Max HP *and* a full heal — not the same as the other three, whose
+      // heal is only the incidental Max-HP one.
+      gain_max_hp(7);
+      hp = max_hp;
+      break;
+
+    case RelicId::WarPaint:
+      upgrade_random_cards(CardType::Skill, 2, id);
+      break;
+    case RelicId::Whetstone:
+      upgrade_random_cards(CardType::Attack, 2, id);
+      break;
+
+    default:
+      break;
+  }
   return true;
 }
 

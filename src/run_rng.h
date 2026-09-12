@@ -29,6 +29,12 @@ enum class RngStream : uint32_t {
   AutoResolve,    // engine-side policies for shape-breakers (§9)
   CardRandom,     // in-combat card generation: Discovery potions, Infernal Blade
   Treasure,       // gold drops and chest contents
+  RelicEffect,    // a relic's own randomness — War Paint / Whetstone's upgrades.
+                  // INDEXED BY RelicId, not by floor: two relics can be picked
+                  // up on the same floor (two shop purchases), and a
+                  // floor-indexed stream would hand both the same draws. A
+                  // relic can only be obtained once per run, so its id is a
+                  // collision-free index.
 
   // APPEND ONLY. A stream's position is baked into every seed derived from it,
   // so inserting a value in the middle silently changes every run.
