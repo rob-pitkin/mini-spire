@@ -113,6 +113,14 @@ struct HeldRelic {
   int counter = 0;
 };
 
+// Thresholds for the counter relics. They live here rather than in run_state.h
+// because the counters are read inside COMBAT (action.cc), which does not see
+// the run layer — and a relic's own threshold belongs with the relic anyway.
+//
+// Happy Flower fires every third player turn, counted ACROSS combats: a counter
+// left at 2 fires on the first turn of the next fight (§3.3).
+inline constexpr int kHappyFlowerTurns = 3;
+
 }  // namespace minispire
 
 #endif  // MINISPIRE_RELIC_H

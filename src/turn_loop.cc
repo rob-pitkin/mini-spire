@@ -799,6 +799,10 @@ void handle_end_turn(CombatState& state) {
     ActionQueue q;
     ResolutionContext ctx;
     fire_player_power_hooks(state, Hook::TurnStartPlayer, q);
+    // Relics fire on the same hook, AFTER the powers. Turn 1 is deliberately
+    // not handled here: start_combat's CombatStart sub-phase is turn 1's start,
+    // so firing both would double-count anything that counts turns.
+    fire_relic_hooks(state, Hook::TurnStartPlayer, q);
     Action draw;
     draw.kind = ActionKind::DrawCards;
     draw.amount = STARTING_HAND_SIZE;

@@ -163,6 +163,108 @@ TEST(RelicTriggers, RelicsHeldInTheRunFireInTheRunsFights) {
   EXPECT_EQ(get_status(run.combat.character.powers, Power::Strength), 1);
 }
 
+// ===================================================================== batch 3b
+// Turn-start relics. Turn 1's start IS combat start, so both call sites route
+// through one function — counting turns in only one of them is the bug.
+
+namespace {
+
+// Advance one full turn boundary, asserting the fight is still live.
+void take_a_turn(CombatState& state) {
+  ASSERT_TRUE(apply_action(state, kEndTurnAction));
+  ASSERT_EQ(state.outcome, Outcome::InProgress);
+}
+
+int player_strength(const CombatState& s) {
+  return get_status(s.character.powers, Power::Strength);
+}
+
+}  // namespace
+
+// ------------------------------------------------------------- Brimstone
+
+// EVERY turn, not once per fight. A combat-start reading caps it at +2 for the
+// whole fight, which is how it was originally misclassified (§6.3).
+TEST(TurnStartRelics, BrimstoneStrengthensEveryTurn) {
+  CombatState s = fight_with({RelicId::Brimstone});
+  EXPECT_EQ(player_strength(s), 2) << "turn 1";
+
+  take_a_turn(s);
+  EXPECT_EQ(player_strength(s), 4) << "turn 2 — Brimstone fired only once";
+
+  take_a_turn(s);
+  EXPECT_EQ(player_strength(s), 6) << "turn 3";
+}
+
+// The drawback compounds too: every enemy gains 1 Strength every turn.
+TEST(TurnStartRelics, BrimstoneAlsoStrengthensEveryEnemyEveryTurn) {
+  CombatState s = fight_with({RelicId::Brimstone});
+  ASSERT_FALSE(s.enemies.empty());
+  for (const Enemy& e : s.enemies) {
+    if (e.hp > 0) EXPECT_EQ(get_status(e.powers, Power::Strength), 1);
+  }
+
+  take_a_turn(s);
+  for (const Enemy& e : s.enemies) {
+    if (e.hp > 0) EXPECT_EQ(get_status(e.powers, Power::Strength), 2);
+  }
+}
+
+// ----------------------------------------------------------- Happy Flower
+
+// Fires on the THIRD turn, not the first — the counter starts at 0 and turn 1
+// takes it to 1.
+TEST(TurnStartRelics, HappyFlowerFiresEveryThirdTurn) {
+  CombatState s = fight_with({RelicId::HappyFlower});
+  const int base = s.character.energy_per_turn;
+  EXPECT_EQ(s.character.energy, base) << "turn 1 should not fire";
+
+  take_a_turn(s);
+  EXPECT_EQ(s.character.energy, base) << "turn 2 should not fire";
+
+  take_a_turn(s);
+  EXPECT_EQ(s.character.energy, base + 1) << "turn 3 should fire";
+
+  take_a_turn(s);
+  EXPECT_EQ(s.character.energy, base) << "the counter did not reset";
+}
+
+// Turn 1 must increment exactly once. If combat start and the turn boundary
+// both counted it, this would read 2 after one turn rather than 1.
+TEST(TurnStartRelics, TurnOneCountsOnceNotTwice) {
+  CombatState s = fight_with({RelicId::HappyFlower});
+  ASSERT_EQ(s.relics.size(), 1u);
+  EXPECT_EQ(s.relics[0].counter, 1) << "turn 1 was double-counted";
+}
+
+// The counter is RUN-scoped: a fight that ends with it at 2 fires on the first
+// turn of the next fight. This is §3.3's whole purpose, and the wiki states it
+// as the relic's behaviour.
+TEST(TurnStartRelics, HappyFlowersCounterCarriesIntoTheNextFight) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::HappyFlower);
+
+  run.begin_combat(EncounterPool::Weak);
+  take_a_turn(run.combat);  // counter: 1 -> 2
+  ASSERT_EQ(run.combat.relics.size(), 2u);  // Burning Blood + Happy Flower
+  int counter = -1;
+  for (const HeldRelic& r : run.combat.relics) {
+    if (r.id == RelicId::HappyFlower) counter = r.counter;
+  }
+  ASSERT_EQ(counter, 2) << "two turns should leave the counter at 2";
+
+  run.combat.character.hp = 60;
+  run.end_combat();
+  run.skip_card_reward();
+
+  // Next fight: turn 1 takes the counter from 2 to 3, so it fires immediately.
+  run.floor = 8;
+  run.begin_combat(EncounterPool::Weak);
+  EXPECT_EQ(run.combat.character.energy,
+            run.combat.character.energy_per_turn + 1)
+      << "a carried counter did not fire on the next fight's first turn";
+}
+
 // ===================================================================== batch 3a
 // Combat-start effects beyond the simple self-buffs from batch 0.
 

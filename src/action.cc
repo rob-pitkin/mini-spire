@@ -474,6 +474,52 @@ void push_debuff_all_enemies(CombatState& state, ActionQueue& q, Debuff d,
 
 }  // namespace
 
+namespace {
+
+// The start of ONE player turn, for one relic.
+//
+// Shared by two call sites on purpose: the turn boundary fires it for turns 2+,
+// and start_combat's CombatStart sub-phase fires it for turn 1 — because combat
+// start IS turn 1's start. Counting turns in only one of those places is the bug
+// this factoring exists to prevent, and it is exactly how Brimstone and Red
+// Skull ended up misclassified (relic-effects.md §6.3): from the reference's
+// single init call site, a per-turn effect and a once-per-fight effect are
+// indistinguishable.
+void fire_turn_start_relic(CombatState& state, HeldRelic& relic,
+                           ActionQueue& q) {
+  switch (relic.id) {
+    case RelicId::Brimstone:
+      // Every turn, not once per fight. The enemies' Strength is the drawback,
+      // and it compounds for as long as the fight runs.
+      push_player_power(q, Power::Strength, 2);
+      push_power_all_enemies(state, q, Power::Strength, 1);
+      break;
+
+    case RelicId::HappyFlower:
+      // The counter is incremented at the START of the player's turn and is NOT
+      // reset between combats — so a counter left at 2 fires on the first turn
+      // of the NEXT fight. That run-scoped behaviour is §3.3's whole purpose,
+      // and it is why the counter lives on HeldRelic rather than being rebuilt
+      // per fight.
+      //
+      // Mutating the counter here is trigger bookkeeping, not an effect: the
+      // no-direct-mutation rule exists to stop a live reference spanning a
+      // state change, and writing an int on an element already in hand cannot
+      // reallocate or invalidate anything. The ENERGY still goes through the
+      // queue.
+      if (++relic.counter >= kHappyFlowerTurns) {
+        relic.counter = 0;
+        push_player_energy(q, 1);
+      }
+      break;
+
+    default:
+      break;
+  }
+}
+
+}  // namespace
+
 void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q) {
   // ACQUISITION order — the order of state.relics, which is the order the
   // player picked them up and the order their relic bar shows. Unlike the
@@ -487,6 +533,10 @@ void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q) {
         break;
 
       case Hook::CombatStart:
+        // Turn 1's start. Anything that fires every turn must fire here too and
+        // exactly once — routed through the same function the turn boundary
+        // uses, rather than duplicated, so the two can never drift.
+        fire_turn_start_relic(state, relic, q);
         switch (relic.id) {
           case RelicId::Vajra:
             push_player_power(q, Power::Strength, 1);
@@ -597,6 +647,10 @@ void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q) {
           default:
             break;
         }
+        break;
+
+      case Hook::TurnStartPlayer:
+        fire_turn_start_relic(state, relic, q);
         break;
 
       case Hook::TurnStartPostDraw:

@@ -304,7 +304,7 @@ Reading the wiki's effect text is what separated them.
 
 | relic | §3.1 said | actually | why it matters |
 |---|---|---|---|
-| **Brimstone** | CombatStart | **TurnStart** — "at the start of your turn, gain 2 Strength and ALL enemies gain 1" | fires every turn, not once. A combat-start reading caps it at +2/+1 for the whole fight. |
+| **Brimstone** | CombatStart | **TurnStart** — "at the start of your turn, gain 2 Strength and ALL enemies gain 1" | fires every turn, not once. A combat-start reading caps it at +2/+1 for the whole fight. ✅ fixed in batch 3b |
 | **Red Skull** | CombatStart | **dynamic on HP change** — "while your HP is at or below 50%, you have 3 additional Strength", gained *and removed* as HP crosses the threshold, even on the enemy's turn | not a grant at all; it needs an HP-change hook and a removal path. |
 
 Both are deferred to batch 4/5 rather than implemented wrongly now.
@@ -319,10 +319,30 @@ Same state as Cursed Key (§6.2), and the same blocker: curses need to exist as
 cards before either relic does anything. Ascender's Bane is out of scope
 (Ascension is pinned at 0, §15), so the first curses will arrive with events.
 
-### 6.5 Relic counters are loaded but never read at combat start
+### 6.5 The remaining counter relics need powers that do not exist
 
-Five relics branch on their counter *during* setup in the reference — Happy
-Flower, Ink Bottle, Pen Nib, Nunchaku, Incense Burner — e.g. Pen Nib at 9
-converts into a buff and resets to −1. `HeldRelic::counter` already carries
-across fights (§3.3), but no wired relic reads it yet. Batch 4 (turn boundaries)
-is where this starts to matter.
+Happy Flower is done (batch 3b) and Girya (2b) uses its counter too, so §3.3's
+run-scoped counters are now exercised end to end. Four counter relics remain,
+and each is blocked on a missing `Power`, not on the counter machinery:
+
+| relic | needs |
+|---|---|
+| **Incense Burner** | `Power::Intangible` — every 6 turns |
+| **Pen Nib** | a "next Attack deals double" power; the reference carries `PS::PEN_NIB` |
+| **Nunchaku** | nothing missing — needs the card-play hook (batch 5) |
+| **Ink Bottle** | nothing missing — needs the card-play hook (batch 5) |
+
+Intangible in particular is a real engine addition (damage reduced to 1 from all
+sources), not a relic detail.
+
+### 6.6 A turn-start relic must fire from TWO call sites
+
+Turn 1's start *is* combat start, so anything firing every turn has to be
+handled at both `Hook::CombatStart` and `Hook::TurnStartPlayer` — and exactly
+once between them. `fire_turn_start_relic` exists so the two cannot drift:
+both call sites route through it rather than duplicating the arms.
+
+This is the same confusion that misclassified Brimstone and Red Skull (§6.3).
+The reference has a single `initRelics` call site where a per-turn effect and a
+once-per-fight effect are indistinguishable, and reproducing that shape would
+have reproduced the ambiguity.
