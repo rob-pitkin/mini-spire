@@ -687,6 +687,7 @@ void handle_end_turn(CombatState& state) {
     ResolutionContext ctx;
     q.push_back(Action{ActionKind::DiscardHand});
     fire_player_power_hooks(state, Hook::TurnEndPlayer, q);
+    fire_relic_hooks(state, Hook::TurnEndPlayer, q);
     drain(state, q, ctx);
     // Combust's damage lands inside that drain, so its kills need their
     // on-death hooks fired before we decide the fight is over (ROB-90).

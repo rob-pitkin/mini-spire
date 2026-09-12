@@ -17,7 +17,12 @@ rather than a guess.
   argument is parity review — *"at combat start, in what order, does what
   happen?"* is the question we ask repeatedly, and B is the only shape that
   answers it by reading one function top to bottom.
-- **§4.2 — relic ORDER in the observation: deferred, not blocking.** The engine
+- **§4.2 — relic ORDER: half of it is now settled by implementation.** The
+  *engine* ordering question turned concrete in batch 4 and is answered in §6.7:
+  relics fire **sequentially**, not batched, wherever one can read what another
+  just changed. What remains deferred is only whether the OBSERVATION exposes
+  acquisition order, below.
+- **§4.2 — relic order in the observation: deferred, not blocking.** The engine
   fires in acquisition order for parity regardless of what the observation
   shows, so `relics` vector order is load-bearing either way and no batch below
   depends on the answer. The v2 observation is not built, so adding a channel
@@ -318,6 +323,33 @@ counting logic is right and cannot be tested.
 Same state as Cursed Key (§6.2), and the same blocker: curses need to exist as
 cards before either relic does anything. Ascender's Bane is out of scope
 (Ascension is pinned at 0, §15), so the first curses will arrive with events.
+
+### 6.7 Relics fire SEQUENTIALLY, not batched — found by a failing test
+
+The action queue batches: hooks push, and the queue drains once at the end. For
+relics that is **wrong wherever one relic reads what another just changed**,
+because StS applies relics one at a time — a relic's effect has landed before
+the next one looks at anything.
+
+**Burning Blood + Meat on the Bone is the case that proves it.** Burning Blood
+heals 6; Meat on the Bone then asks whether HP is at or below half. At 35 of 80:
+
+| | Meat on the Bone sees | fires? | total heal |
+|---|---|---|---|
+| batched (both read pre-heal HP) | 35 — below half | yes | **18** |
+| sequential (reads 41, post-heal) | 41 — above half | no | **6** |
+
+`fire_relic_hooks_sequentially` drains after each relic and is what `end_combat`
+uses. The batched `fire_relic_hooks` remains for hooks whose relics commute.
+
+**The general rule**: use the sequential form wherever one relic on a hook can
+read state another changed. Combat start is currently safe — its relics grant
+Strength, Block, energy and debuffs without reading each other — but that is a
+property of which relics are wired, not a guarantee. Anything added there that
+*reads* HP, block or a power must move that hook to the sequential form.
+
+Found because a test asserted the interaction rather than each relic alone. The
+naive version passes every single-relic test.
 
 ### 6.5 The remaining counter relics need powers that do not exist
 

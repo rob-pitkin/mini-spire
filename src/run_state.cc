@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "action.h"  // Hook, ResolutionContext, fire_relic_hooks, drain
+
 namespace minispire {
 
 void RunState::add_card(Card card) {
@@ -807,6 +809,21 @@ void RunState::begin_combat(EncounterPool pool) {
 }
 
 void RunState::end_combat() {
+  // End-of-combat relics fire on the FIGHT's state, before anything is written
+  // back — so Burning Blood's heal lands in one place and is carried out by the
+  // write-back below, rather than being applied twice or to the wrong copy.
+  //
+  // Only on a win. A dead Ironclad does not heal 6 and get back up; Lizard Tail
+  // is the relic for that and is a different hook.
+  //
+  // SEQUENTIALLY, not batched. Burning Blood heals 6 and Meat on the Bone then
+  // asks whether HP is at or below half — at 35 of 80 the answer is yes before
+  // that heal and no after it. Batched, both read the pre-heal HP and both
+  // fire, healing 18 where the real game heals 6.
+  if (combat.character.hp > 0) {
+    fire_relic_hooks_sequentially(combat, Hook::CombatEnd);
+  }
+
   // Carried: HP and Max HP. Max HP because Feed and Neow can raise it mid-fight.
   hp = combat.character.hp;
   max_hp = combat.character.max_hp;

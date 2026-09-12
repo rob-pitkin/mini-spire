@@ -82,6 +82,9 @@ enum class Hook {
   BlockBroken,          // Hand Drill — no site in sts_lightspeed (§2.2)
   ShuffleDrawPile,      // Sundial, The Abacus
   PotionDrunk,          // Toy Ornithopter, Sacred Bark
+  CombatEnd,            // Burning Blood, Meat on the Bone — fired on the WON
+                        // fight's state, before RunState writes HP back, so the
+                        // heal lands in one place rather than two
 };
 
 // Fire the enemy-at-`slot`'s TriggeredEffects matching `hook`, PUSHING the
@@ -123,6 +126,21 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
 // Effects are PUSHED, never applied here, exactly as the powers registry does.
 // See docs/design/relic-effects.md for which relic hangs off which hook.
 void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q);
+
+// As above, but drains after EACH relic instead of batching them.
+//
+// StS applies relics sequentially: a relic's effect has already landed by the
+// time the next one reads state. Batching them into one queue makes every relic
+// on a hook read the SAME pre-effect state, which is only equivalent when their
+// effects commute.
+//
+// Burning Blood and Meat on the Bone are the case where they do not. Burning
+// Blood heals 6, and Meat on the Bone then asks whether HP is at or below half
+// — at 35 of 80 the answer is yes before the heal and no after it. Batched, both
+// read 35 and both fire, healing 18 instead of 6.
+//
+// Use this wherever one relic on a hook can read what another just changed.
+void fire_relic_hooks_sequentially(CombatState& state, Hook hook);
 
 // Drain the queue to completion: pop-execute until empty, short-circuiting on
 // a terminal outcome. Executors may push more actions. The queue must be empty

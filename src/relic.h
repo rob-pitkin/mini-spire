@@ -121,6 +121,10 @@ struct HeldRelic {
 // left at 2 fires on the first turn of the next fight (§3.3).
 inline constexpr int kHappyFlowerTurns = 3;
 
+// Stone Calendar fires at the end of turn 7 ONLY — not every seventh turn.
+inline constexpr int kStoneCalendarTurn = 7;
+inline constexpr int kStoneCalendarDamage = 52;
+
 }  // namespace minispire
 
 #endif  // MINISPIRE_RELIC_H

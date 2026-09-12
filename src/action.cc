@@ -329,6 +329,7 @@ void fire_enemy_hooks(CombatState& state, int slot, Hook hook, ActionQueue& q) {
     case Hook::BlockBroken:
     case Hook::ShuffleDrawPile:
     case Hook::PotionDrunk:
+    case Hook::CombatEnd:
       return;
   }
 
@@ -520,12 +521,40 @@ void fire_turn_start_relic(CombatState& state, HeldRelic& relic,
 
 }  // namespace
 
+namespace {
+// One relic's response to one hook. Extracted so the batched and sequential
+// entry points cannot diverge — they differ only in when they drain.
+void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
+                    ActionQueue& q);
+}  // namespace
+
+void fire_relic_hooks_sequentially(CombatState& state, Hook hook) {
+  // Indexed rather than range-based: the drain can push actions that touch the
+  // relic vector, and an iterator held across it would be the exact dangling
+  // shape the action queue exists to prevent.
+  for (size_t i = 0; i < state.relics.size(); ++i) {
+    ActionQueue q;
+    ResolutionContext ctx;
+    fire_one_relic(state, state.relics[i], hook, q);
+    drain(state, q, ctx);
+  }
+}
+
 void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q) {
   // ACQUISITION order — the order of state.relics, which is the order the
   // player picked them up and the order their relic bar shows. Unlike the
   // powers registry below (Power-enum order), this loop must not be sorted or
   // grouped by hook: doing so would silently change resolution order.
   for (HeldRelic& relic : state.relics) {
+    fire_one_relic(state, relic, hook, q);
+  }
+}
+
+namespace {
+
+void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
+                    ActionQueue& q) {
+  {
     switch (hook) {
       case Hook::CombatStartPreDraw:
         // Nothing yet. Toolbox and the other pre-draw relics generate cards,
@@ -653,6 +682,55 @@ void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q) {
         fire_turn_start_relic(state, relic, q);
         break;
 
+      case Hook::TurnEndPlayer:
+        switch (relic.id) {
+          case RelicId::Orichalcum:
+            // EXACTLY zero block, not "low" block — 1 point is enough to
+            // suppress it. Read at end of turn, before the block is cleared at
+            // the next turn's start.
+            if (state.character.current_block == 0) push_player_block(q, 6);
+            break;
+
+          case RelicId::StoneCalendar:
+            // Turn 7 ONLY, not every seventh turn. And it is FIXED damage, not
+            // an attack: the wiki notes Strength and Vulnerable do not apply,
+            // so DealFixedDamage rather than the attack path.
+            if (state.turn_number == kStoneCalendarTurn) {
+              Action a = make_action(ActionKind::DamageAllEnemies);
+              a.amount = kStoneCalendarDamage;
+              q.push_back(a);
+            }
+            break;
+
+          default:
+            break;
+        }
+        break;
+
+      case Hook::CombatEnd:
+        switch (relic.id) {
+          case RelicId::BurningBlood:
+            push_player_heal(q, 6);
+            break;
+
+          case RelicId::MeatOnTheBone:
+            // "At or below 50%" is read at the moment this relic fires, and
+            // that moment is AFTER earlier relics have already resolved —
+            // which is why CombatEnd fires sequentially rather than batched
+            // (fire_relic_hooks_sequentially). Burning Blood is always
+            // acquired first, being the starter, so its 6 HP can lift you over
+            // the threshold and suppress this. Batched, both would read the
+            // same pre-heal HP and both fire.
+            if (state.character.hp * 2 <= state.character.max_hp) {
+              push_player_heal(q, 12);
+            }
+            break;
+
+          default:
+            break;
+        }
+        break;
+
       case Hook::TurnStartPostDraw:
         // Gambling Chip and Warped Tongs need a choice and an upgrade path
         // respectively; both land in later batches.
@@ -665,6 +743,8 @@ void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q) {
     }
   }
 }
+
+}  // namespace
 
 void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
                              CardId card, int attacker_slot) {
@@ -798,6 +878,7 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
     case Hook::BlockBroken:
     case Hook::ShuffleDrawPile:
     case Hook::PotionDrunk:
+    case Hook::CombatEnd:
       break;
   }
 }

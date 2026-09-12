@@ -163,6 +163,148 @@ TEST(RelicTriggers, RelicsHeldInTheRunFireInTheRunsFights) {
   EXPECT_EQ(get_status(run.combat.character.powers, Power::Strength), 1);
 }
 
+// ====================================================================== batch 4
+// Turn-end and combat-end relics.
+
+namespace {
+
+// A run that fights, ends the fight at `end_hp`, and returns. The relics are
+// obtained BEFORE the fight so they are projected into it.
+RunState won_a_fight_at(int end_hp, std::vector<RelicId> ids,
+                        uint64_t seed = 1) {
+  RunState run = RunState::start(seed);
+  for (RelicId id : ids) run.obtain_relic(id);
+  run.begin_combat(EncounterPool::Weak);
+  run.combat.character.hp = end_hp;
+  run.end_combat();
+  return run;
+}
+
+}  // namespace
+
+// --------------------------------------------------------- Burning Blood
+
+// The starter relic, inert until now. Every Ironclad run holds it.
+TEST(CombatEndRelics, BurningBloodHealsSixOnAWin) {
+  const RunState run = won_a_fight_at(40, {});
+  EXPECT_EQ(run.hp, 46);
+}
+
+TEST(CombatEndRelics, BurningBloodCannotHealAboveMaxHp) {
+  RunState run = RunState::start(1);
+  run.begin_combat(EncounterPool::Weak);
+  run.combat.character.hp = run.max_hp - 2;
+  run.end_combat();
+  EXPECT_EQ(run.hp, run.max_hp);
+}
+
+// A dead Ironclad does not heal 6 and get back up. Lizard Tail is the relic for
+// that, and it is a different hook.
+TEST(CombatEndRelics, BurningBloodDoesNotFireOnALoss) {
+  RunState run = RunState::start(1);
+  run.begin_combat(EncounterPool::Weak);
+  run.combat.character.hp = 0;
+  run.end_combat();
+  EXPECT_EQ(run.hp, 0);
+  EXPECT_EQ(run.outcome, Outcome::Lost);
+}
+
+// -------------------------------------------------------- Meat on the Bone
+
+TEST(CombatEndRelics, MeatOnTheBoneHealsTwelveWhenLow) {
+  // 20 of 80 is well under half, and stays under after Burning Blood's 6.
+  const RunState run = won_a_fight_at(20, {RelicId::MeatOnTheBone});
+  EXPECT_EQ(run.hp, 20 + 6 + 12);
+}
+
+TEST(CombatEndRelics, MeatOnTheBoneDoesNothingWhenHealthy) {
+  const RunState run = won_a_fight_at(70, {RelicId::MeatOnTheBone});
+  EXPECT_EQ(run.hp, 70 + 6) << "Meat on the Bone fired above half HP";
+}
+
+// The ordering case, and the reason acquisition order matters. Burning Blood is
+// always acquired first (it is the starter), so its 6 HP is applied BEFORE Meat
+// on the Bone reads the threshold — and can lift the player over it.
+//
+// At 35 of 80: below half (40) on its own, but 41 after Burning Blood. So Meat
+// on the Bone must NOT fire. Nothing special-cases this; iterating the relic
+// vector in acquisition order is what makes it right.
+TEST(CombatEndRelics, BurningBloodCanLiftYouOverMeatOnTheBonesThreshold) {
+  const RunState run = won_a_fight_at(35, {RelicId::MeatOnTheBone});
+  EXPECT_EQ(run.hp, 41)
+      << "Meat on the Bone read the threshold before Burning Blood healed";
+}
+
+// And just below that boundary it does fire: 34 -> 40, which is exactly half.
+TEST(CombatEndRelics, MeatOnTheBoneFiresAtExactlyHalf) {
+  const RunState run = won_a_fight_at(34, {RelicId::MeatOnTheBone});
+  EXPECT_EQ(run.hp, 34 + 6 + 12) << "'at or below 50%' excluded exactly 50%";
+}
+
+// ------------------------------------------------------------- Orichalcum
+
+TEST(TurnEndRelics, OrichalcumGivesBlockWhenYouEndTurnWithNone) {
+  CombatState s = fight_with({RelicId::Orichalcum});
+  s.character.current_block = 0;
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  // The block is granted at end of turn and then cleared at the next turn's
+  // start, so what it actually does is absorb the enemy's attack in between.
+  SUCCEED();
+}
+
+// EXACTLY zero, not "low" — one point of block suppresses it entirely.
+TEST(TurnEndRelics, OrichalcumIsSuppressedByASinglePointOfBlock) {
+  CombatState with_none = fight_with({RelicId::Orichalcum});
+  CombatState with_one = fight_with({RelicId::Orichalcum});
+  with_none.character.current_block = 0;
+  with_one.character.current_block = 1;
+
+  const int hp_none_before = with_none.character.hp;
+  const int hp_one_before = with_one.character.hp;
+  ASSERT_TRUE(apply_action(with_none, kEndTurnAction));
+  ASSERT_TRUE(apply_action(with_one, kEndTurnAction));
+
+  // The 6 block absorbs more than the 1 block does, so the no-block run should
+  // have taken no more damage than the one-block run.
+  EXPECT_LE(hp_none_before - with_none.character.hp,
+            hp_one_before - with_one.character.hp)
+      << "one point of block did not suppress Orichalcum";
+}
+
+// ---------------------------------------------------------- Stone Calendar
+
+// Turn 7 ONLY, and 52 fixed damage — not an attack, so Strength and Vulnerable
+// do not scale it.
+TEST(TurnEndRelics, StoneCalendarFiresAtTheEndOfTurnSeven) {
+  CombatState s = fight_with({RelicId::StoneCalendar});
+  ASSERT_FALSE(s.enemies.empty());
+
+  // Turns 1-6 must not fire. Give the enemies enough HP to survive the hit so
+  // the fight does not end before turn 7.
+  for (Enemy& e : s.enemies) {
+    e.max_hp = 500;
+    e.hp = 500;
+  }
+
+  for (int turn = 1; turn <= 6; ++turn) {
+    const int hp_before = s.enemies[0].hp;
+    ASSERT_TRUE(apply_action(s, kEndTurnAction));
+    ASSERT_EQ(s.outcome, Outcome::InProgress) << "turn " << turn;
+    EXPECT_LT(hp_before - s.enemies[0].hp, kStoneCalendarDamage)
+        << "Stone Calendar fired on turn " << turn;
+  }
+
+  ASSERT_EQ(s.turn_number, 7);
+  // Clear enemy block: Stone Calendar's damage is absorbed by block like any
+  // other fixed damage, and an enemy that gained block on turn 6 would eat part
+  // of the hit and make this read low for the wrong reason.
+  for (Enemy& e : s.enemies) e.current_block = 0;
+  const int hp_before = s.enemies[0].hp;
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  EXPECT_GE(hp_before - s.enemies[0].hp, kStoneCalendarDamage)
+      << "Stone Calendar did not fire at the end of turn 7";
+}
+
 // ===================================================================== batch 3b
 // Turn-start relics. Turn 1's start IS combat start, so both call sites route
 // through one function — counting turns in only one of them is the bug.

@@ -100,7 +100,9 @@ TEST(RunState, HpCarriesOutOfCombat) {
   run.combat.character.hp = 17;
   run.end_combat();
 
-  EXPECT_EQ(run.hp, 17);
+  // 17 plus Burning Blood's 6. Every Ironclad run holds the starter relic, so
+  // a won fight always heals — this asserts the carry, not that HP is frozen.
+  EXPECT_EQ(run.hp, 17 + 6);
   EXPECT_FALSE(run.in_combat);
 }
 
@@ -241,10 +243,11 @@ TEST(RunState, HpCarriesAcrossSequentialFights) {
   run.begin_combat(EncounterPool::Weak);
   run.combat.character.hp = 55;
   run.end_combat();
-  ASSERT_EQ(run.hp, 55);
+  // Burning Blood heals 6 on the way out, so the next fight starts at 61.
+  ASSERT_EQ(run.hp, 55 + 6);
 
   run.advance_to_next_floor(EncounterPool::Weak);
-  EXPECT_EQ(run.combat.character.hp, 55)
+  EXPECT_EQ(run.combat.character.hp, 61)
       << "the next fight did not start from the HP the last one ended on";
 }
 
