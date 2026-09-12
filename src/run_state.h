@@ -126,6 +126,14 @@ inline constexpr float kCourierFactor = 0.80f;
 // Smiling Mask pins card removal here, immune to the two factors above.
 inline constexpr int kSmilingMaskRemovalPrice = 50;
 
+// Golden Idol's extra gold. The BONUS is rounded and added, rather than the
+// whole 1.25x product being rounded — the same operation the reference uses.
+inline constexpr float kGoldenIdolBonus = 0.25f;
+
+// Question Card adds a card reward option; Busted Crown removes two.
+inline constexpr int kQuestionCardExtraCards = 1;
+inline constexpr int kBustedCrownFewerCards = 2;
+
 // A shop's five class-card slots. Two attacks, two skills, one power, and the
 // power slot promotes a COMMON roll to UNCOMMON.
 inline constexpr int kShopCardSlots = 5;
@@ -395,6 +403,12 @@ struct RunState {
 
   // Leaves the shop.
   void leave_shop();
+
+  // Card reward screens still owed after the current one (Prayer Wheel). A
+  // COUNT of screens rather than extra cards, because the relic gives a second
+  // reward that is "otherwise functionally identical to a normal card reward"
+  // — its own rarity rolls and its own take-or-skip.
+  int pending_extra_card_rewards = 0;
 
   // Combined shop discount: Membership Card and The Courier, multiplied.
   float shop_price_multiplier() const;

@@ -457,6 +457,168 @@ TEST(RelicPickup, APickupEffectCannotFireTwice) {
   EXPECT_EQ(run.max_hp, max_after);
 }
 
+// --------------------------------------------- reward generation (batch 2d)
+
+namespace {
+
+RunState fight_and_win(std::vector<RelicId> ids, EncounterPool pool,
+                       uint64_t seed = 3) {
+  RunState run = RunState::start(seed);
+  for (RelicId id : ids) run.obtain_relic(id);
+  run.begin_combat(pool);
+  run.combat.character.hp = 50;
+  run.end_combat();
+  return run;
+}
+
+}  // namespace
+
+// ------------------------------------------------------------- Golden Idol
+
+TEST(RewardRelics, GoldenIdolPaysTwentyFivePercentMore) {
+  for (uint64_t s = 0; s < 40; ++s) {
+    const RunState bare = fight_and_win({}, EncounterPool::Weak, s);
+    const RunState rich =
+        fight_and_win({RelicId::GoldenIdol}, EncounterPool::Weak, s);
+    // The bonus is rounded and added, so the result is the base plus
+    // lround(base * 0.25).
+    const int expected =
+        bare.gold + static_cast<int>(std::lround(bare.gold * 0.25f));
+    EXPECT_EQ(rich.gold, expected) << "seed " << s << ", base " << bare.gold;
+  }
+}
+
+// ------------------------------------------------------------- Ectoplasm
+
+TEST(RewardRelics, EctoplasmMeansNoGoldAtAll) {
+  const RunState run =
+      fight_and_win({RelicId::Ectoplasm}, EncounterPool::Weak);
+  EXPECT_EQ(run.gold, 0) << "Ectoplasm gained gold";
+}
+
+// Ectoplasm is applied last, so it overrides Golden Idol rather than racing it.
+// "You can no longer gain Gold" has no reading in which +25% of nothing is
+// something.
+TEST(RewardRelics, EctoplasmBeatsGoldenIdol) {
+  const RunState run = fight_and_win(
+      {RelicId::GoldenIdol, RelicId::Ectoplasm}, EncounterPool::Weak);
+  EXPECT_EQ(run.gold, 0);
+}
+
+// --------------------------------------------- card reward screen size
+
+TEST(RewardRelics, QuestionCardAddsAnOption) {
+  const RunState bare = fight_and_win({}, EncounterPool::Weak);
+  const RunState with =
+      fight_and_win({RelicId::QuestionCard}, EncounterPool::Weak);
+  EXPECT_EQ(with.card_reward.size(), bare.card_reward.size() + 1);
+}
+
+TEST(RewardRelics, BustedCrownRemovesTwoOptions) {
+  const RunState bare = fight_and_win({}, EncounterPool::Weak);
+  const RunState with =
+      fight_and_win({RelicId::BustedCrown}, EncounterPool::Weak);
+  EXPECT_EQ(with.card_reward.size(), bare.card_reward.size() - 2);
+}
+
+// They stack: 3 + 1 - 2 = 2, which the wiki states directly.
+TEST(RewardRelics, QuestionCardAndBustedCrownStack) {
+  const RunState bare = fight_and_win({}, EncounterPool::Weak);
+  const RunState with = fight_and_win(
+      {RelicId::QuestionCard, RelicId::BustedCrown}, EncounterPool::Weak);
+  EXPECT_EQ(with.card_reward.size(), bare.card_reward.size() - 1);
+}
+
+// Busted Crown does not touch shop offerings — the wiki calls this out as the
+// way to play around it.
+TEST(RewardRelics, BustedCrownDoesNotShrinkTheShop) {
+  RunState bare = RunState::start(1);
+  bare.floor = 5;
+  bare.phase = Phase::Shop;
+  bare.generate_shop();
+
+  RunState with = RunState::start(1);
+  with.obtain_relic(RelicId::BustedCrown);
+  with.floor = 5;
+  with.phase = Phase::Shop;
+  with.generate_shop();
+
+  EXPECT_EQ(with.shop_cards.size(), bare.shop_cards.size());
+}
+
+// ------------------------------------------------------------ Prayer Wheel
+
+// A SECOND screen, not more cards on the first. Taking or skipping the first
+// rolls another instead of leaving the room.
+TEST(RewardRelics, PrayerWheelGivesASecondCardRewardScreen) {
+  RunState run = fight_and_win({RelicId::PrayerWheel}, EncounterPool::Weak);
+  const size_t first_size = run.card_reward.size();
+  ASSERT_GT(first_size, 0u);
+
+  run.skip_card_reward();
+
+  EXPECT_EQ(run.card_reward.size(), first_size)
+      << "Prayer Wheel did not roll a second screen";
+  EXPECT_EQ(run.phase, Phase::Reward) << "the run left before the second screen";
+
+  run.skip_card_reward();
+  EXPECT_TRUE(run.card_reward.empty());
+  EXPECT_NE(run.phase, Phase::Reward) << "the run never left after both screens";
+}
+
+TEST(RewardRelics, WithoutPrayerWheelThereIsOneScreen) {
+  RunState run = fight_and_win({}, EncounterPool::Weak);
+  ASSERT_FALSE(run.card_reward.empty());
+  run.skip_card_reward();
+  EXPECT_TRUE(run.card_reward.empty());
+}
+
+// Explicitly not on elites — the wiki says so, and this is the kind of
+// condition that is easy to implement as "always".
+TEST(RewardRelics, PrayerWheelDoesNotFireOnElites) {
+  RunState run = fight_and_win({RelicId::PrayerWheel}, EncounterPool::Elite);
+  EXPECT_EQ(run.pending_extra_card_rewards, 0);
+}
+
+// -------------------------------------------------------------- Black Star
+
+TEST(RewardRelics, BlackStarGivesElitesASecondRelic) {
+  const RunState bare = fight_and_win({}, EncounterPool::Elite);
+  RunState with = RunState::start(3);
+  with.obtain_relic(RelicId::BlackStar);
+  const size_t before = with.relics.size();
+  with.begin_combat(EncounterPool::Elite);
+  with.combat.character.hp = 50;
+  with.end_combat();
+
+  EXPECT_EQ(with.relics.size(), before + 2) << "Black Star paid only one relic";
+  (void)bare;
+}
+
+TEST(RewardRelics, BlackStarDoesNotAffectNormalFights) {
+  RunState run = RunState::start(3);
+  run.obtain_relic(RelicId::BlackStar);
+  const size_t before = run.relics.size();
+  run.begin_combat(EncounterPool::Weak);
+  run.combat.character.hp = 50;
+  run.end_combat();
+  EXPECT_EQ(run.relics.size(), before);
+}
+
+// The two relics must be different — an elite cannot pay the same relic twice.
+TEST(RewardRelics, BlackStarsTwoRelicsAreDistinct) {
+  for (uint64_t s = 0; s < 60; ++s) {
+    RunState run = RunState::start(s);
+    run.obtain_relic(RelicId::BlackStar);
+    const size_t before = run.relics.size();
+    run.begin_combat(EncounterPool::Elite);
+    run.combat.character.hp = 50;
+    run.end_combat();
+    ASSERT_EQ(run.relics.size(), before + 2) << "seed " << s;
+    EXPECT_NE(run.relics[before].id, run.relics[before + 1].id) << "seed " << s;
+  }
+}
+
 // --------------------------------------------------------------- the chest
 
 // A treasure room is a pass-through: it opens and EXITS. Every generated map

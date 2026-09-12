@@ -271,9 +271,9 @@ than the real relic.**
 | Sozu | no potions | ✅ done |
 | Coffee Dripper | cannot Rest | ✅ done (batch 2b) |
 | Fusion Hammer | cannot Smith | ✅ done (batch 2b) |
-| Ectoplasm | cannot gain gold | batch 2c |
-| Busted Crown | fewer card reward options | batch 2c |
-| Cursed Key | chests give a Curse | batch 2d — needs curses in the deck |
+| Ectoplasm | cannot gain gold | ✅ done (batch 2d) |
+| Busted Crown | fewer card reward options | ✅ done (batch 2d) |
+| Cursed Key | chests give a Curse | **blocked** — needs curses in the deck |
 | Philosopher's Stone | all enemies +1 Strength | batch 3 (combat start) |
 | Mark of Pain | 2 Wounds into the draw pile | batch 3 — needs card generation |
 | Velvet Choker | max 6 cards per turn | batch 5 — needs a per-turn play counter and a mask rule |

@@ -283,7 +283,19 @@ void RunState::award_combat_gold(RewardSource source) {
       amount = std::uniform_int_distribution<int>(10, 20)(rng);
       break;
   }
-  // Golden Idol would add 25% here; it is a relic and does not exist yet.
+  // Golden Idol: +25%, rounding the BONUS to nearest and adding it — not
+  // rounding the whole 1.25x product. The two agree on most values and are not
+  // the same operation, so the reference's form is reproduced exactly.
+  if (has_relic(RelicId::GoldenIdol)) {
+    amount += static_cast<int>(
+        std::lround(static_cast<float>(amount) * kGoldenIdolBonus));
+  }
+
+  // Ectoplasm: no gold, at all. Applied LAST so it overrides Golden Idol rather
+  // than racing it — a run holding both gains nothing, which is the only
+  // reading that makes sense of "you can no longer gain Gold".
+  if (has_relic(RelicId::Ectoplasm)) return;
+
   gold += amount;
 }
 
@@ -843,19 +855,39 @@ void RunState::end_combat() {
     award_combat_gold(combat_source);
     const bool elite = combat_source == RewardSource::Elite;
 
-    std::optional<RelicId> elite_relic;
+    // Black Star: an elite drops a SECOND relic. Both are drawn here, before
+    // anything is granted, so neither can influence the other's tier roll or
+    // the rest of the screen.
+    std::vector<RelicId> elite_relics;
     if (elite) {
       std::mt19937 relic_rng =
           make_stream(run_seed, RngStream::Relic, static_cast<uint32_t>(floor));
-      elite_relic = random_relic(relic_tier_standard(relic_rng), relic_rng);
+      const int count = has_relic(RelicId::BlackStar) ? 2 : 1;
+      for (int i = 0; i < count; ++i) {
+        // Excluding what this same screen already drew, so an elite cannot pay
+        // the same relic twice.
+        if (const std::optional<RelicId> drawn = random_relic(
+                relic_tier_standard(relic_rng), relic_rng, elite_relics)) {
+          elite_relics.push_back(*drawn);
+        }
+      }
     }
 
-    const int on_screen = 1 /* gold */ + 1 /* card */ + (elite ? 1 : 0);
+    // Prayer Wheel: normal enemies drop an ADDITIONAL card reward — a second
+    // screen, and explicitly not on elites or bosses.
+    if (combat_source == RewardSource::Monster &&
+        has_relic(RelicId::PrayerWheel)) {
+      pending_extra_card_rewards += 1;
+    }
+
+    const int on_screen = 1 /* gold */ + 1 /* card */ +
+                          static_cast<int>(elite_relics.size()) +
+                          pending_extra_card_rewards;
     roll_potion_drop(on_screen);
     generate_card_reward(combat_source);
 
-    // Collected last, so nothing above could read it.
-    if (elite_relic) obtain_relic(*elite_relic);
+    // Collected last, so nothing above could read them.
+    for (RelicId id : elite_relics) obtain_relic(id);
   }
 }
 
@@ -908,7 +940,17 @@ void RunState::generate_card_reward(RewardSource source) {
   std::mt19937 rng = make_stream(run_seed, RngStream::CardReward,
                                  static_cast<uint32_t>(floor));
 
-  for (int i = 0; i < kCardRewardSize; ++i) {
+  // Question Card adds an option, Busted Crown removes two, and they STACK —
+  // holding both gives 3 + 1 - 2 = 2, which the wiki confirms. Floored at zero
+  // rather than one: nothing in Act 1 can reduce it that far today, but a
+  // negative loop count would be a silent infinite-ish bug rather than an empty
+  // screen.
+  int size = kCardRewardSize;
+  if (has_relic(RelicId::QuestionCard)) size += kQuestionCardExtraCards;
+  if (has_relic(RelicId::BustedCrown)) size -= kBustedCrownFewerCards;
+  if (size < 0) size = 0;
+
+  for (int i = 0; i < size; ++i) {
     const CardRarity rarity = roll_card_rarity(rng, source);
     const std::vector<CardId>& pool = rarity == CardRarity::Rare
                                           ? IRONCLAD_RARE_POOL
@@ -946,6 +988,16 @@ void RunState::take_card_reward(int index) {
 
 void RunState::skip_card_reward() {
   card_reward.clear();
+
+  // Prayer Wheel's extra reward is a SECOND SCREEN, not more cards on the first
+  // — the wiki is explicit ("otherwise functionally identical to a normal card
+  // reward"). So taking or skipping one reward rolls the next instead of
+  // leaving the room, and only the last one exits.
+  if (pending_extra_card_rewards > 0) {
+    --pending_extra_card_rewards;
+    generate_card_reward(combat_source);
+    return;
+  }
   leave_room();
 }
 
