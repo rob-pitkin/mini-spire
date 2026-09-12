@@ -125,6 +125,27 @@ inline constexpr int kHappyFlowerTurns = 3;
 inline constexpr int kStoneCalendarTurn = 7;
 inline constexpr int kStoneCalendarDamage = 52;
 
+// The card-play counter relics come in TWO kinds, and the difference is the
+// whole of their design:
+//
+//   PER TURN  — "3 Attacks in a single turn". The counter resets every turn, so
+//               three Attacks spread over three turns do nothing.
+//   PERSISTENT — "every time you play 10 Attacks", with the wiki stating the
+//               counter "is not reset between turns or combats". Progress
+//               accumulates across the entire run.
+//
+// Both use HeldRelic::counter; the per-turn ones are cleared at each turn
+// boundary and at combat start. Conflating them makes Kunai far too strong and
+// Nunchaku nearly unreachable.
+inline constexpr int kPerTurnCardRelicThreshold = 3;
+inline constexpr int kPersistentCardRelicThreshold = 10;
+
+// True for the relics whose card counter resets every turn.
+inline bool relic_counter_is_per_turn(RelicId id) {
+  return id == RelicId::Kunai || id == RelicId::Shuriken ||
+         id == RelicId::OrnamentalFan || id == RelicId::LetterOpener;
+}
+
 }  // namespace minispire
 
 #endif  // MINISPIRE_RELIC_H

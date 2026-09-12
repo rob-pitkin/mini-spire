@@ -127,6 +127,20 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
 // See docs/design/relic-effects.md for which relic hangs off which hook.
 void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q);
 
+// Hook::CardPlayed, which needs a payload the other hooks do not.
+//
+// Its own entry point rather than a defaulted parameter on the general one.
+// A default would make "no card was played" read as "an Attack was played" at
+// every non-CardPlayed call site, and a CardType::None sentinel would add a
+// value to the enum whose only meaning is "ignore me" — which every switch over
+// CardType would then have to handle. The payload belongs to one hook, so it
+// belongs in that hook's signature.
+//
+// The payload is a CardType, not a CardId: no relic keys off a particular card,
+// only off whether it was an Attack, Skill or Power. Kunai counts Attacks,
+// Letter Opener counts Skills, Bird-Faced Urn watches Powers.
+void fire_relic_card_played(CombatState& state, CardType type, ActionQueue& q);
+
 // As above, but drains after EACH relic instead of batching them.
 //
 // StS applies relics sequentially: a relic's effect has already landed by the

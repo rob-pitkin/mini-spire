@@ -163,6 +163,159 @@ TEST(RelicTriggers, RelicsHeldInTheRunFireInTheRunsFights) {
   EXPECT_EQ(get_status(run.combat.character.powers, Power::Strength), 1);
 }
 
+// ====================================================================== batch 5
+// Card-play relics. Two counter kinds on ONE hook: per-turn and persistent.
+
+namespace {
+
+// The combat action index for playing `id` at `target`. Derived the same way
+// the action space defines it, never as an offset from kEndTurnAction.
+int card_action(CardId id, int target = 0) {
+  return static_cast<int>(id) * kMaxEnemies + target;
+}
+
+// Play `n` Strikes at the first living enemy. Returns false if the fight ended.
+bool play_strikes(CombatState& s, int n) {
+  for (int i = 0; i < n; ++i) {
+    // Refill hand and energy so the play always succeeds — this exercises the
+    // relic counters, not the resource economy.
+    s.current_hand.clear();
+    s.current_hand.push_back(Card{CardId::Strike});
+    s.character.energy = 99;
+    for (Enemy& e : s.enemies) {
+      e.max_hp = 9999;
+      e.hp = 9999;
+    }
+    if (!apply_action(s, card_action(CardId::Strike, 0))) return false;
+    if (s.outcome != Outcome::InProgress) return false;
+  }
+  return true;
+}
+
+}  // namespace
+
+// ------------------------------------------------- per-turn: 3 in ONE turn
+
+TEST(CardPlayRelics, ShurikenGivesStrengthEveryThreeAttacksInATurn) {
+  CombatState s = fight_with({RelicId::Shuriken});
+  ASSERT_TRUE(play_strikes(s, 2));
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 0) << "after 2";
+
+  ASSERT_TRUE(play_strikes(s, 1));
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 1) << "after 3";
+
+  ASSERT_TRUE(play_strikes(s, 3));
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 2) << "after 6";
+}
+
+TEST(CardPlayRelics, KunaiGivesDexterityEveryThreeAttacksInATurn) {
+  CombatState s = fight_with({RelicId::Kunai});
+  ASSERT_TRUE(play_strikes(s, 3));
+  EXPECT_EQ(get_status(s.character.powers, Power::Dexterity), 1);
+}
+
+// The distinguishing test. Three Attacks spread across three turns must do
+// NOTHING — "3 Attacks in a single turn". Without the turn-end reset this
+// passes for Nunchaku's reason and fails the relic.
+TEST(CardPlayRelics, ShurikenResetsBetweenTurns) {
+  CombatState s = fight_with({RelicId::Shuriken});
+  for (int turn = 0; turn < 3; ++turn) {
+    ASSERT_TRUE(play_strikes(s, 2));
+    ASSERT_TRUE(apply_action(s, kEndTurnAction));
+    ASSERT_EQ(s.outcome, Outcome::InProgress);
+  }
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 0)
+      << "two Attacks a turn for three turns triggered a per-turn relic";
+}
+
+TEST(CardPlayRelics, OrnamentalFanGivesBlockEveryThreeAttacks) {
+  CombatState s = fight_with({RelicId::OrnamentalFan});
+  const int before = s.character.current_block;
+  ASSERT_TRUE(play_strikes(s, 3));
+  EXPECT_EQ(s.character.current_block, before + 4);
+}
+
+// ------------------------------------------------- persistent: 10, ever
+
+TEST(CardPlayRelics, NunchakuGivesEnergyEveryTenAttacks) {
+  CombatState s = fight_with({RelicId::Nunchaku});
+  const int energy_before = s.character.energy;
+  ASSERT_TRUE(play_strikes(s, 9));
+  // play_strikes sets energy to 99 before each play, so measure the counter.
+  int counter = -1;
+  for (const HeldRelic& r : s.relics) {
+    if (r.id == RelicId::Nunchaku) counter = r.counter;
+  }
+  EXPECT_EQ(counter, 9) << "after 9 Attacks";
+
+  ASSERT_TRUE(play_strikes(s, 1));
+  for (const HeldRelic& r : s.relics) {
+    if (r.id == RelicId::Nunchaku) counter = r.counter;
+  }
+  EXPECT_EQ(counter, 0) << "the tenth Attack did not reset the counter";
+  (void)energy_before;
+}
+
+// The other half of the distinction: Nunchaku's counter must SURVIVE a turn
+// boundary, where Shuriken's is cleared.
+TEST(CardPlayRelics, NunchakusCounterSurvivesTheTurnBoundary) {
+  CombatState s = fight_with({RelicId::Nunchaku});
+  ASSERT_TRUE(play_strikes(s, 4));
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  ASSERT_EQ(s.outcome, Outcome::InProgress);
+
+  int counter = -1;
+  for (const HeldRelic& r : s.relics) {
+    if (r.id == RelicId::Nunchaku) counter = r.counter;
+  }
+  EXPECT_EQ(counter, 4) << "a persistent counter was cleared at turn end";
+}
+
+// And across COMBATS — the wiki says "not reset between turns or combats".
+TEST(CardPlayRelics, NunchakusCounterSurvivesTheWholeFight) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::Nunchaku);
+  run.begin_combat(EncounterPool::Weak);
+  ASSERT_TRUE(play_strikes(run.combat, 4));
+  run.combat.character.hp = 60;
+  run.end_combat();
+  run.skip_card_reward();
+
+  run.floor = 8;
+  run.begin_combat(EncounterPool::Weak);
+  int counter = -1;
+  for (const HeldRelic& r : run.combat.relics) {
+    if (r.id == RelicId::Nunchaku) counter = r.counter;
+  }
+  EXPECT_EQ(counter, 4) << "the counter reset between combats";
+}
+
+// Ink Bottle counts EVERY card, not just Attacks.
+TEST(CardPlayRelics, InkBottleCountsEveryCardType) {
+  CombatState s = fight_with({RelicId::InkBottle});
+  ASSERT_TRUE(play_strikes(s, 3));
+
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.character.energy = 99;
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend, 0)));
+
+  int counter = -1;
+  for (const HeldRelic& r : s.relics) {
+    if (r.id == RelicId::InkBottle) counter = r.counter;
+  }
+  EXPECT_EQ(counter, 4) << "Ink Bottle ignored a Skill";
+}
+
+// ---------------------------------------------------------- Bird-Faced Urn
+
+TEST(CardPlayRelics, BirdFacedUrnDoesNotHealOnAnAttack) {
+  CombatState s = fight_with({RelicId::BirdFacedUrn});
+  s.character.hp = 40;
+  ASSERT_TRUE(play_strikes(s, 1));
+  EXPECT_EQ(s.character.hp, 40);
+}
+
 // ====================================================================== batch 4
 // Turn-end and combat-end relics.
 

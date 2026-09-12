@@ -526,7 +526,14 @@ namespace {
 // entry points cannot diverge — they differ only in when they drain.
 void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
                     ActionQueue& q);
+void fire_card_played_relic(HeldRelic& relic, CardType type, ActionQueue& q);
 }  // namespace
+
+void fire_relic_card_played(CombatState& state, CardType type, ActionQueue& q) {
+  for (HeldRelic& relic : state.relics) {
+    fire_card_played_relic(relic, type, q);
+  }
+}
 
 void fire_relic_hooks_sequentially(CombatState& state, Hook hook) {
   // Indexed rather than range-based: the drain can push actions that touch the
@@ -551,6 +558,74 @@ void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q) {
 }
 
 namespace {
+
+// One relic's response to a card being played. Split out because the two
+// counter kinds behave differently enough that inlining them into the main
+// switch would obscure which is which.
+void fire_card_played_relic(HeldRelic& relic, CardType type, ActionQueue& q) {
+  // Counts a card of `wanted` type and reports whether the threshold was just
+  // reached, resetting when it was.
+  const auto counted = [&](CardType wanted, int threshold) {
+    if (type != wanted) return false;
+    if (++relic.counter < threshold) return false;
+    relic.counter = 0;
+    return true;
+  };
+
+  switch (relic.id) {
+    // --- PER TURN: "3 Attacks in a SINGLE TURN". The counter is cleared at
+    // every turn boundary, so three Attacks spread over three turns do nothing.
+    case RelicId::Kunai:
+      if (counted(CardType::Attack, kPerTurnCardRelicThreshold)) {
+        push_player_power(q, Power::Dexterity, 1);
+      }
+      break;
+    case RelicId::Shuriken:
+      if (counted(CardType::Attack, kPerTurnCardRelicThreshold)) {
+        push_player_power(q, Power::Strength, 1);
+      }
+      break;
+    case RelicId::OrnamentalFan:
+      if (counted(CardType::Attack, kPerTurnCardRelicThreshold)) {
+        push_player_block(q, 4);
+      }
+      break;
+    case RelicId::LetterOpener:
+      if (counted(CardType::Skill, kPerTurnCardRelicThreshold)) {
+        // NOT attack damage: the wiki states Strength, Vulnerable and The Boot
+        // do not apply. DamageAllEnemies is the fixed-damage path, so that
+        // holds by construction rather than by remembering to exclude them.
+        Action a = make_action(ActionKind::DamageAllEnemies);
+        a.amount = 5;
+        q.push_back(a);
+      }
+      break;
+
+    // --- PERSISTENT: the counter is NOT reset between turns or combats, so
+    // progress accumulates across the whole run (§3.3).
+    case RelicId::Nunchaku:
+      if (counted(CardType::Attack, kPersistentCardRelicThreshold)) {
+        push_player_energy(q, 1);
+      }
+      break;
+    case RelicId::InkBottle:
+      // Counts EVERY card played, not just Attacks — so it cannot use the
+      // type-matching helper above.
+      if (++relic.counter >= kPersistentCardRelicThreshold) {
+        relic.counter = 0;
+        push_draw(q, 1);
+      }
+      break;
+
+    case RelicId::BirdFacedUrn:
+      // No counter at all: every Power heals.
+      if (type == CardType::Power) push_player_heal(q, 2);
+      break;
+
+    default:
+      break;
+  }
+}
 
 void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
                     ActionQueue& q) {
@@ -683,6 +758,11 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
         break;
 
       case Hook::TurnEndPlayer:
+        // Per-turn card counters reset here. This is what separates Kunai from
+        // Nunchaku: both count Attacks on the same hook, and only the clearing
+        // makes one "3 in a single turn" and the other "10, ever".
+        if (relic_counter_is_per_turn(relic.id)) relic.counter = 0;
+
         switch (relic.id) {
           case RelicId::Orichalcum:
             // EXACTLY zero block, not "low" block — 1 point is enough to
@@ -1307,6 +1387,9 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // dealt damage or killed anything (ROB-65). Fires mid-drain, after the
       // card's own effects — the pre-queue 5b position.
       fire_player_power_hooks(state, Hook::CardPlayed, q, a.card);
+      // Relics next. They take the card's TYPE, not its id — the id is
+      // resolved to a type here, once, rather than in each relic arm.
+      fire_relic_card_played(state, CARD_DATABASE.at(a.card).type, q);
       if (CARD_DATABASE.at(a.card).type == CardType::Skill) {
         for (std::size_t i = 0; i < state.enemies.size(); ++i) {
           if (state.enemies[i].hp > 0) {
