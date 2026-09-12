@@ -156,7 +156,7 @@ No combat hook at all; these fire between fights.
 | **Gold change** | 2 | Ectoplasm, MawBank |
 | **Event options** | 4 | BloodVial, GoldenIdol, OddMushroom, WarpedTongs |
 | **Face Trader** | 5 | CultistHeadpiece, FaceOfCleric, GremlinVisage, NlothsHungryFace, SsserpentHead |
-| **Map / room resolution** | 2 | JuzuBracelet, TinyChest *(already implemented)* |
+| **Map / room resolution** | 2 | JuzuBracelet, TinyChest — ⚠️ NOT implemented. The `?`-room drift machinery exists in `resolve_unknown_room`; the relics that modify it do not. An earlier revision of this table claimed otherwise. |
 | **AfterBattle** | 1 | FaceOfCleric |
 | **Neow** | 1 | NeowsLament |
 
@@ -240,6 +240,35 @@ group is not first.
 
 Each batch cross-checks its own effect numbers against the wiki before coding,
 per §1.
+
+---
+
+## 7. Status: 63 of 140 wired
+
+Counted from the source, not estimated — a relic counts as wired when its
+`RelicId` is referenced from code (not from the pool tables or a comment).
+Running the count is what caught the Juzu Bracelet / Tiny Chest error in §3.2.
+
+The 77 remaining are not one backlog. **Most are blocked on engine pieces that
+have nothing to do with relics**, and those blockers are shared:
+
+| blocker | relics waiting | note |
+|---|---|---|
+| **Missing `Power`s** | Bronze Scales (Thorns), Akabeko (Vigor), Incense Burner (Intangible), Fossilized Helix (Buffer), Thread and Needle (Plated Armor), Pen Nib (double-damage) | six relics, six powers — each a real engine addition |
+| **No curse cards** | Omamori, Darkstone Periapt, Blue Candle, and the unreachable halves of Du-Vu Doll and Cursed Key | §6.4 |
+| **No colorless cards** | Toolbox, Prismatic Shard, Orrery, Dolly's Mirror, Cauldron | also blocks the shop's 2 colorless slots |
+| **No events** | Neow's Lament, Odd Mushroom, Warped Tongs, Spirit Poop, and the 5 Face Trader masks | 10 of the special-tier relics |
+| **Hooks not yet wired** | Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle), Toy Ornithopter + Sacred Bark (PotionDrunk) | the hooks exist in the enum; nothing fires them |
+| **No boss encounter** | Pantograph | heals only at the start of a boss fight |
+| **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell | all pause for player input |
+| **Nothing blocking — just unwritten** | ~25, including Maw Bank, Meal Ticket, Ceramic Fish, Old Coin, Horn Cleat, Captain's Wheel, Mercury Hourglass, Tungsten Rod, Torii, Magic Flower, Ice Cream, Unceasing Top, Champion Belt, Charon's Ashes, Self-Forming Clay, Centennial Puzzle, Eternal Feather, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest | the honest remainder |
+
+**What this says about sequencing.** Continuing to batch relics hits diminishing
+returns: the next batch would be ~25 relics of genuine work followed by a wall of
+blockers. The six missing Powers and the curse/colorless card gaps are each
+worth more than the relics behind them — Intangible, Thorns and Plated Armor are
+core mechanics that cards want too, and colorless cards also unblock two shop
+slots that have been empty since §4.3.
 
 ---
 
