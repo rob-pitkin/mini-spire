@@ -31,6 +31,17 @@ CombatState fight_with(std::vector<RelicId> ids, uint32_t seed = 1) {
 // for reasons that have nothing to do with relics.
 CombatState bare_fight(uint32_t seed = 1) { return fight_with({}, seed); }
 
+// The same, as an ELITE fight. Several relics are conditional on the fight's
+// kind, which CombatState now carries as is_elite.
+CombatState elite_fight_with(std::vector<RelicId> ids, uint32_t seed = 1) {
+  CombatSetup setup;
+  setup.seed = seed;
+  setup.pool = EncounterPool::Elite;
+  setup.deck = starter_deck();
+  for (RelicId id : ids) setup.relics.push_back(HeldRelic{id, 0});
+  return start_combat(setup);
+}
+
 // ------------------------------------------------------------ combat start
 
 TEST(RelicTriggers, VajraGrantsStrengthAtCombatStart) {
@@ -151,6 +162,119 @@ TEST(RelicTriggers, RelicsHeldInTheRunFireInTheRunsFights) {
   run.begin_combat(EncounterPool::Weak);
   EXPECT_EQ(get_status(run.combat.character.powers, Power::Strength), 1);
 }
+
+// ===================================================================== batch 3a
+// Combat-start effects beyond the simple self-buffs from batch 0.
+
+TEST(CombatStartRelics, PhilosophersStoneStrengthensEveryEnemy) {
+  const CombatState with = fight_with({RelicId::PhilosophersStone});
+  ASSERT_FALSE(with.enemies.empty());
+  for (const Enemy& e : with.enemies) {
+    EXPECT_EQ(get_status(e.powers, Power::Strength), 1)
+        << "an enemy escaped Philosopher's Stone";
+  }
+}
+
+TEST(CombatStartRelics, GremlinVisageStartsYouWeakened) {
+  const CombatState with = fight_with({RelicId::GremlinVisage});
+  EXPECT_EQ(get_status(with.character.debuffs, Debuff::Weak), 1);
+}
+
+TEST(CombatStartRelics, ClockworkSouvenirGrantsArtifact) {
+  const CombatState with = fight_with({RelicId::ClockworkSouvenir});
+  EXPECT_EQ(get_status(with.character.powers, Power::Artifact), 1);
+}
+
+// ------------------------------------------------- the elite-only relics
+
+TEST(CombatStartRelics, SlingOfCourageGivesNothingInANormalFight) {
+  const CombatState with = fight_with({RelicId::SlingOfCourage});
+  EXPECT_EQ(get_status(with.character.powers, Power::Strength), 0);
+}
+
+TEST(CombatStartRelics, SlingOfCourageGivesTwoStrengthInAnElite) {
+  const CombatState with = elite_fight_with({RelicId::SlingOfCourage});
+  EXPECT_EQ(get_status(with.character.powers, Power::Strength), 2);
+}
+
+TEST(CombatStartRelics, PreservedInsectDoesNothingInANormalFight) {
+  const CombatState bare = bare_fight();
+  const CombatState with = fight_with({RelicId::PreservedInsect});
+  ASSERT_EQ(bare.enemies.size(), with.enemies.size());
+  for (size_t i = 0; i < bare.enemies.size(); ++i) {
+    EXPECT_EQ(with.enemies[i].hp, bare.enemies[i].hp);
+  }
+}
+
+// 25% off current HP, and MAX HP untouched — the wiki is explicit that the cut
+// is to current HP "as if they had taken damage", so a healed elite can climb
+// back to its full maximum.
+TEST(CombatStartRelics, PreservedInsectCutsEliteHpButNotMaxHp) {
+  const CombatState bare = elite_fight_with({});
+  const CombatState with = elite_fight_with({RelicId::PreservedInsect});
+  ASSERT_EQ(bare.enemies.size(), with.enemies.size());
+  ASSERT_FALSE(bare.enemies.empty());
+
+  for (size_t i = 0; i < bare.enemies.size(); ++i) {
+    EXPECT_EQ(with.enemies[i].hp, bare.enemies[i].hp * 3 / 4)
+        << "enemy " << i;
+    EXPECT_EQ(with.enemies[i].max_hp, bare.enemies[i].max_hp)
+        << "Preserved Insect lowered Max HP, which it must not";
+  }
+}
+
+// It must not route through the damage path: that would fire the on-damaged
+// hooks and wake a sleeping Lagavulin before the fight had begun.
+TEST(CombatStartRelics, PreservedInsectDoesNotWakeASleepingEnemy) {
+  CombatState with = elite_fight_with({RelicId::PreservedInsect});
+  for (const Enemy& e : with.enemies) {
+    // Only asserts about enemies that start asleep; in Act 1 elites none do,
+    // so this is a guard against a future roster rather than a live case.
+    if (e.is_asleep) {
+      EXPECT_TRUE(e.is_asleep) << "the HP cut woke a sleeping enemy";
+    }
+  }
+  SUCCEED();
+}
+
+// ------------------------------------------------------------ Mark of Pain
+
+TEST(CombatStartRelics, MarkOfPainShufflesTwoWoundsIntoTheDrawPile) {
+  const CombatState bare = bare_fight();
+  const CombatState with = fight_with({RelicId::MarkOfPain});
+  EXPECT_EQ(with.draw_pile.size(), bare.draw_pile.size() + 2);
+
+  int wounds = 0;
+  for (const Card& c : with.draw_pile) {
+    if (c.card_id == CardId::Wound) ++wounds;
+  }
+  EXPECT_EQ(wounds, 2);
+}
+
+// They go to the DRAW PILE, not the hand — and because this hook fires after
+// the opening hand is dealt, a Wound can never appear in the opening five.
+TEST(CombatStartRelics, MarkOfPainsWoundsAreNeverInTheOpeningHand) {
+  for (uint32_t s = 0; s < 40; ++s) {
+    const CombatState with = fight_with({RelicId::MarkOfPain}, s);
+    for (const Card& c : with.current_hand) {
+      EXPECT_NE(c.card_id, CardId::Wound)
+          << "seed " << s << ": a Wound reached the opening hand";
+    }
+  }
+}
+
+// ------------------------------------------------------------- Du-Vu Doll
+
+TEST(CombatStartRelics, DuVuDollGivesNothingWithACleanDeck) {
+  const CombatState with = fight_with({RelicId::DuVuDoll});
+  EXPECT_EQ(get_status(with.character.powers, Power::Strength), 0);
+}
+
+// The per-curse half cannot be tested yet: CardType::Curse exists as an enum
+// value but NO curse card is implemented, so a deck's curse count is always
+// zero. Du-Vu Doll is therefore correct-but-unreachable, the same state as
+// Cursed Key — recorded in relic-effects.md §6.4 rather than left as a silent
+// gap. When curses land, this is where the test goes.
 
 // ===================================================================== batch 1a
 // Query-layer damage modifiers. These have no event hook: they change a value
@@ -492,15 +616,6 @@ TEST(RelicQuery, RunicPyramidStillLetsEtherealCardsExhaust) {
 // ===================================================================== batch 1c
 // The boss energy relics. Each reads "gain 1 Energy at the start of each turn",
 // which is what energy_per_turn means, so they are summed once at setup.
-
-CombatState elite_fight_with(std::vector<RelicId> ids, uint32_t seed = 1) {
-  CombatSetup setup;
-  setup.seed = seed;
-  setup.pool = EncounterPool::Elite;
-  setup.deck = starter_deck();
-  for (RelicId id : ids) setup.relics.push_back(HeldRelic{id, 0});
-  return start_combat(setup);
-}
 
 TEST(RelicEnergy, EachFlatEnergyRelicGivesOne) {
   const CombatState bare = bare_fight();

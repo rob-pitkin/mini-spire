@@ -857,9 +857,9 @@ CombatState start_combat(CombatSetup setup) {
   // everything else in CombatSetup is: a bonus computed before the relics exist
   // is always zero. Slaver's Collar needs to know the fight's kind, which only
   // the setup has — CombatState does not record it.
-  const bool elite_or_boss = setup.pool == EncounterPool::Elite;
+  state.is_elite = setup.pool == EncounterPool::Elite;
   state.character.energy_per_turn =
-      IRONCLAD_ENERGY_PER_TURN + relic_bonus_energy(state, elite_or_boss);
+      IRONCLAD_ENERGY_PER_TURN + relic_bonus_energy(state, state.is_elite);
   state.character.energy = state.character.energy_per_turn;
 
   // Sample the encounter (each enemy primed with its turn-1 intent).

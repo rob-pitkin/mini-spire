@@ -113,6 +113,17 @@ struct CombatState {
   // is where they live. Relic counters are one run-scoped int each, written
   // back on exit with nothing resetting at the boundary (§3.3).
   std::vector<HeldRelic> relics;
+
+  // Is this an elite (or boss) fight? Several relics are conditional on it —
+  // Sling of Courage's Strength, Preserved Insect's HP cut, Slaver's Collar's
+  // energy — and the hooks fire from inside the fight, where CombatSetup's pool
+  // is long out of scope.
+  //
+  // Not derived from the encounter's contents: an elite roster is a fact about
+  // which POOL was sampled, and Act 1's pools can share enemy kinds. A human
+  // knows which kind of room they walked into, so this is state the fight
+  // carries rather than something to infer.
+  bool is_elite = false;
   std::vector<PotionId> potions;
 
   bool has_relic(RelicId id) const {

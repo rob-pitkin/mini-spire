@@ -295,7 +295,31 @@ Runic Dome is the sharp one: its drawback is an *observation* change (hiding
 intent), so it cannot be fixed in the engine at all and is blocked on the v2
 observation work. It is the one relic here whose parity depends on §5.
 
-### 6.3 Relic counters are loaded but never read at combat start
+### 6.3 Taxonomy corrections found while implementing
+
+Two relics were classified from the reference's `initRelics` and are in the
+wrong row of §3.1. The reference is not wrong — `initRelics` runs at combat
+start, which is also turn 1's start, so a per-turn effect looks identical there.
+Reading the wiki's effect text is what separated them.
+
+| relic | §3.1 said | actually | why it matters |
+|---|---|---|---|
+| **Brimstone** | CombatStart | **TurnStart** — "at the start of your turn, gain 2 Strength and ALL enemies gain 1" | fires every turn, not once. A combat-start reading caps it at +2/+1 for the whole fight. |
+| **Red Skull** | CombatStart | **dynamic on HP change** — "while your HP is at or below 50%, you have 3 additional Strength", gained *and removed* as HP crosses the threshold, even on the enemy's turn | not a grant at all; it needs an HP-change hook and a removal path. |
+
+Both are deferred to batch 4/5 rather than implemented wrongly now.
+
+### 6.4 Du-Vu Doll is correct but unreachable: no curse card exists
+
+`CardType::Curse` is in the enum, but **no curse card is implemented**, so a
+deck's curse count is always zero and Du-Vu Doll always grants 0 Strength. The
+counting logic is right and cannot be tested.
+
+Same state as Cursed Key (§6.2), and the same blocker: curses need to exist as
+cards before either relic does anything. Ascender's Bane is out of scope
+(Ascension is pinned at 0, §15), so the first curses will arrive with events.
+
+### 6.5 Relic counters are loaded but never read at combat start
 
 Five relics branch on their counter *during* setup in the reference — Happy
 Flower, Ink Bottle, Pen Nib, Nunchaku, Incense Burner — e.g. Pen Nib at 9

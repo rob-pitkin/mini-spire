@@ -445,6 +445,19 @@ void push_player_energy(ActionQueue& q, int amount) {
   a.amount = amount;
   q.push_back(a);
 }
+// Buff every LIVING enemy — Philosopher's Stone's drawback.
+void push_power_all_enemies(CombatState& state, ActionQueue& q, Power p,
+                            int amount) {
+  for (int slot = 0; slot < static_cast<int>(state.enemies.size()); ++slot) {
+    if (state.enemies[slot].hp <= 0) continue;
+    Action a = make_action(ActionKind::ApplyPower);
+    a.target = slot;
+    a.power = p;
+    a.amount = amount;
+    q.push_back(a);
+  }
+}
+
 // Debuff every LIVING enemy. Expanded here rather than at execution because the
 // target set cannot change during a combat-start drain — nothing has acted yet.
 void push_debuff_all_enemies(CombatState& state, ActionQueue& q, Debuff d,
@@ -493,6 +506,78 @@ void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q) {
           case RelicId::BagOfMarbles:
             push_debuff_all_enemies(state, q, Debuff::Vulnerable, 1);
             break;
+
+          // Philosopher's Stone's drawback, and the reason it is not free
+          // energy: every enemy is permanently stronger.
+          case RelicId::PhilosophersStone:
+            push_power_all_enemies(state, q, Power::Strength, 1);
+            break;
+
+          // Gremlin Visage starts you Weakened. A drawback relic from the
+          // Face Trader event, not a reward.
+          case RelicId::GremlinVisage: {
+            Action a = make_action(ActionKind::ApplyDebuff);
+            a.target = kPlayerSlot;
+            a.debuff = Debuff::Weak;
+            a.amount = 1;
+            q.push_back(a);
+            break;
+          }
+
+          case RelicId::ClockworkSouvenir:
+            push_player_power(q, Power::Artifact, 1);
+            break;
+
+          case RelicId::SlingOfCourage:
+            // Elites only — the relic is worthless in a normal fight, which is
+            // the whole trade.
+            if (state.is_elite) push_player_power(q, Power::Strength, 2);
+            break;
+
+          case RelicId::DuVuDoll: {
+            // +1 Strength per CURSE in the deck. Counted over the draw pile and
+            // hand, which together are the whole deck at combat start — nothing
+            // has been played or discarded yet.
+            int curses = 0;
+            for (const Card& c : state.draw_pile) {
+              if (CARD_DATABASE.at(c.card_id).type == CardType::Curse) ++curses;
+            }
+            for (const Card& c : state.current_hand) {
+              if (CARD_DATABASE.at(c.card_id).type == CardType::Curse) ++curses;
+            }
+            if (curses > 0) push_player_power(q, Power::Strength, curses);
+            break;
+          }
+
+          case RelicId::MarkOfPain: {
+            // Two Wounds SHUFFLED INTO THE DRAW PILE, and this hook fires after
+            // the opening hand is dealt — which is what the wiki specifies, so
+            // the Wounds can never appear in the opening five.
+            for (int i = 0; i < 2; ++i) {
+              Action a = make_action(ActionKind::AddCardToPile);
+              a.card = CardId::Wound;
+              a.amount = static_cast<int>(GeneratedPile::ShuffleDraw);
+              q.push_back(a);
+            }
+            break;
+          }
+
+          case RelicId::PreservedInsect: {
+            // Elite enemies start at 75% HP. MAX HP is untouched — the wiki is
+            // explicit that current HP drops "as if they had taken damage", so
+            // a healed elite can climb back to its full maximum.
+            //
+            // Applied directly rather than as damage: routing it through
+            // DealDamage would fire the on-damaged hooks and wake a sleeping
+            // Lagavulin before the fight began.
+            if (!state.is_elite) break;
+            for (Enemy& e : state.enemies) {
+              if (e.hp <= 0) continue;
+              e.hp = e.hp * 3 / 4;
+              if (e.hp < 1) e.hp = 1;
+            }
+            break;
+          }
           case RelicId::Girya:
             // The counter IS the Strength: one per Lift spent at a campfire,
             // carried across fights by the run-scoped counter (§3.3). A relic
