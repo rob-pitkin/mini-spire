@@ -69,6 +69,15 @@ inline constexpr int kNumRestOptions = 5;
 // Fraction of max HP a campfire restores. Truncated, as the game does.
 inline constexpr float kRestHealFraction = 0.30f;
 
+// Girya's Lift can be used three times in a run, for +3 Strength total. The cap
+// is on USES, not on Strength, which is the same thing only because each Lift
+// gives exactly 1.
+inline constexpr int kGiryaMaxUses = 3;
+
+// Regal Pillow's extra healing — a FLAT bonus added after the percentage, not a
+// change to the fraction.
+inline constexpr int kRegalPillowHeal = 15;
+
 // Which tier a relic reward comes from for MOST sources, elites included:
 // 50% common, 33% uncommon, 17% rare (wiki-confirmed).
 //
@@ -393,6 +402,18 @@ struct RunState {
   // a fight's write-back, which is why a mid-combat Armaments upgrade and this
   // do not need telling apart at the handoff (§3.2).
   void rest_smith(int index);
+
+  // Girya: +1 permanent Strength, up to kGiryaMaxUses times. The relic's own
+  // counter holds how many Lifts have been spent, and combat start reads it —
+  // there is no separate permanent-Strength field to keep in sync.
+  void rest_lift();
+  int girya_uses() const;
+
+  // Peace Pipe: remove `index` from the master deck.
+  void rest_toke(int index);
+
+  // Shovel: dig up a relic, on the standard tier roll (not the chest's).
+  void rest_dig();
 
   // Which master-deck indices Smith may target.
   std::vector<int> smithable_cards() const;

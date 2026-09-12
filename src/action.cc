@@ -493,6 +493,15 @@ void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q) {
           case RelicId::BagOfMarbles:
             push_debuff_all_enemies(state, q, Debuff::Vulnerable, 1);
             break;
+          case RelicId::Girya:
+            // The counter IS the Strength: one per Lift spent at a campfire,
+            // carried across fights by the run-scoped counter (§3.3). A relic
+            // held but never lifted is worth nothing, so a zero counter must
+            // push nothing rather than a zero-stack power.
+            if (relic.counter > 0) {
+              push_player_power(q, Power::Strength, relic.counter);
+            }
+            break;
           case RelicId::BagOfPreparation:
             // Resolves after the opening hand is already dealt, so this is a
             // SECOND draw of 2 rather than a 7-card opening draw. The

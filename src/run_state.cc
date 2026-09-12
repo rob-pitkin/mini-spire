@@ -302,30 +302,102 @@ std::vector<RestOption> RunState::rest_options() const {
   std::vector<RestOption> options;
   if (phase != Phase::Rest) return options;
 
-  options.push_back(RestOption::Rest);
-  // Smith drops out when there is nothing left to upgrade — the one condition
-  // that can actually remove it in Act 1 without relics.
-  if (!smithable_cards().empty()) options.push_back(RestOption::Smith);
+  // Coffee Dripper removes Rest outright — the only thing that can, and the
+  // reason this is not unconditional.
+  if (!has_relic(RelicId::CoffeeDripper)) options.push_back(RestOption::Rest);
 
-  // Lift / Toke / Dig need Girya / Peace Pipe / Shovel. Reachable in Act 1, but
-  // relics do not exist yet, so they are never offered.
+  // Smith drops out when there is nothing left to upgrade, or when Fusion
+  // Hammer forbids it.
+  if (!has_relic(RelicId::FusionHammer) && !smithable_cards().empty()) {
+    options.push_back(RestOption::Smith);
+  }
+
+  // Lift / Toke / Dig are unlocked by Girya / Peace Pipe / Shovel. Girya is
+  // additionally capped: three uses, tracked on the relic's own counter.
+  if (has_relic(RelicId::Girya) && girya_uses() < kGiryaMaxUses) {
+    options.push_back(RestOption::Lift);
+  }
+  if (has_relic(RelicId::PeacePipe) && !master_deck.empty()) {
+    options.push_back(RestOption::Toke);
+  }
+  if (has_relic(RelicId::Shovel)) options.push_back(RestOption::Dig);
+
   return options;
+}
+
+int RunState::girya_uses() const {
+  for (const HeldRelic& r : relics) {
+    if (r.id == RelicId::Girya) return r.counter;
+  }
+  return 0;
 }
 
 void RunState::rest_heal() {
   if (phase != Phase::Rest) return;
-  const int healed =
-      static_cast<int>(static_cast<float>(max_hp) * kRestHealFraction);
+  if (has_relic(RelicId::CoffeeDripper)) return;  // not an option at all
+
+  int healed = static_cast<int>(static_cast<float>(max_hp) * kRestHealFraction);
+  // Regal Pillow: a FLAT extra 15, added after the percentage rather than
+  // folded into it. Scaling the fraction instead would make the bonus depend on
+  // Max HP, which it does not.
+  if (has_relic(RelicId::RegalPillow)) healed += kRegalPillowHeal;
   hp = std::min(max_hp, hp + healed);
+
+  // Dream Catcher fires on REST specifically, not on any campfire option — the
+  // wiki is explicit, and it is why this sits here rather than in leave_room.
+  // The card reward is generated before leaving, so the room exits into the
+  // reward screen the way a fight does.
+  if (has_relic(RelicId::DreamCatcher)) {
+    generate_card_reward(RewardSource::Monster);
+    return;  // leave_room happens when the reward is taken or skipped
+  }
   leave_room();
 }
 
 void RunState::rest_smith(int index) {
   if (phase != Phase::Rest) return;
+  if (has_relic(RelicId::FusionHammer)) return;
   if (index < 0 || index >= static_cast<int>(master_deck.size())) return;
   // Mutates the master deck directly: a campfire smith is permanent and never
   // passes through a fight, which is why it needs no write-back machinery.
   if (!upgrade_card_in_place(master_deck[index])) return;
+  leave_room();
+}
+
+void RunState::rest_lift() {
+  if (phase != Phase::Rest) return;
+  if (!has_relic(RelicId::Girya) || girya_uses() >= kGiryaMaxUses) return;
+
+  // The counter IS the Strength. Girya grants "1 Strength at the start of every
+  // combat" per Lift used, so the relic's run-scoped counter is read at combat
+  // start rather than a separate permanent-Strength field being kept in sync.
+  for (HeldRelic& r : relics) {
+    if (r.id == RelicId::Girya) ++r.counter;
+  }
+  leave_room();
+}
+
+void RunState::rest_toke(int index) {
+  if (phase != Phase::Rest) return;
+  if (!has_relic(RelicId::PeacePipe)) return;
+  if (index < 0 || index >= static_cast<int>(master_deck.size())) return;
+  master_deck.erase(master_deck.begin() + index);
+  leave_room();
+}
+
+void RunState::rest_dig() {
+  if (phase != Phase::Rest) return;
+  if (!has_relic(RelicId::Shovel)) return;
+
+  // Dig gives a relic on the standard tier roll, the same distribution an elite
+  // pays — NOT the chest's size-based one (§4.0.1), which is a different
+  // mechanic that happens to share three numbers.
+  std::mt19937 rng =
+      make_stream(run_seed, RngStream::Relic, static_cast<uint32_t>(floor));
+  if (const std::optional<RelicId> drawn =
+          random_relic(relic_tier_standard(rng), rng)) {
+    obtain_relic(*drawn);
+  }
   leave_room();
 }
 
