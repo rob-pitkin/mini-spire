@@ -817,7 +817,7 @@ int compute_attack_damage(
     int base, const std::unordered_map<Power, int>& attacker_powers,
     const std::unordered_map<Debuff, int>& attacker_debuffs,
     const std::unordered_map<Debuff, int>& defender_debuffs,
-    int strength_mult) {
+    int strength_mult, float vulnerable_mult) {
   // Float-internal, truncated once at the end (per the STS wiki rounding rule).
   // strength_mult is Heavy Blade's "Strength affects this 3x/5x" (Stage 4b);
   // 1 for everything else.
@@ -825,7 +825,7 @@ int compute_attack_damage(
             static_cast<float>(
                 get_status(attacker_powers, Power::Strength) * strength_mult);
   if (get_status(attacker_debuffs, Debuff::Weak) > 0) d *= 0.75f;
-  if (get_status(defender_debuffs, Debuff::Vulnerable) > 0) d *= 1.5f;
+  if (get_status(defender_debuffs, Debuff::Vulnerable) > 0) d *= vulnerable_mult;
   int result = static_cast<int>(std::floor(d));
   return result < 0 ? 0 : result;
 }

@@ -106,7 +106,43 @@ int instance_card_damage(const CombatState& state, const Card& card) {
   }
   // Rampage's accumulated bonus rides on the instance; every other rule is
   // type-level.
-  return base_card_damage(state, card.card_id) + card.bonus_damage;
+  int damage = base_card_damage(state, card.card_id) + card.bonus_damage;
+
+  // Strike Dummy: +3 to any card with "Strike" in its NAME — the same
+  // name-based test Perfected Strike uses, not a card-type or id check. Applied
+  // to the card's damage (so Strength and Vulnerable then scale the boosted
+  // number), which is what makes it a query-layer modifier rather than a hook.
+  if (state.has_relic(RelicId::StrikeDummy) && is_strike_named(card.card_id)) {
+    damage += 3;
+  }
+  return damage;
+}
+
+float vulnerable_damage_multiplier(const CombatState& state) {
+  // Paper Phrog: Vulnerable enemies take 75% more rather than 50%
+  // (wiki-confirmed). A multiplier rather than a flag, because the two are the
+  // same rule at different magnitudes.
+  return state.has_relic(RelicId::PaperPhrog) ? 1.75f : 1.5f;
+}
+
+int boot_adjusted_damage(const CombatState& state, int unblocked) {
+  // The Boot: raise 4-or-less UNBLOCKED attack damage to 5.
+  //
+  // Three details the wiki is explicit about and all of which are easy to get
+  // wrong:
+  //   1. It applies to the damage remaining AFTER block, not to the card's
+  //      damage — an attack fully absorbed by block stays absorbed.
+  //   2. Zero is excluded. An attack reduced to 0 (negative Strength, or fully
+  //      blocked) is NOT raised to 5, so the range is [1, 4].
+  //   3. It applies after Intangible-style damage limits, so a 1-damage cap
+  //      still becomes 5.
+  //
+  // sts_lightspeed does not implement this relic at all (relic-effects.md
+  // §2.2), so the wiki is the only source and there is nothing to cross-check
+  // it against.
+  if (!state.has_relic(RelicId::TheBoot)) return unblocked;
+  if (unblocked <= 0 || unblocked >= 5) return unblocked;
+  return 5;
 }
 
 int strength_multiplier(CardId card) {

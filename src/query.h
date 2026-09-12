@@ -45,6 +45,16 @@ int instance_card_damage(const CombatState& state, const Card& card);
 // base_card_damage because Strength is applied inside compute_attack_damage.
 int strength_multiplier(CardId card);
 
+// How much extra damage a Vulnerable enemy takes: 1.5 normally, 1.75 with Paper
+// Phrog. Read by compute_attack_damage's caller rather than by the function
+// itself, which takes status maps and cannot see relics.
+float vulnerable_damage_multiplier(const CombatState& state);
+
+// The Boot: raise 4-or-less UNBLOCKED attack damage to 5. Takes the damage
+// remaining after block and returns what should actually reach HP. Zero is NOT
+// raised — see the implementation for why, and for the two other edge cases.
+int boot_adjusted_damage(const CombatState& state, int unblocked);
+
 // Is this card playable at all, ignoring energy and targeting? Covers the
 // unplayable flag (Dazed), Entangle's attack lock, and Clash (only legal when
 // every other card in hand is an Attack).

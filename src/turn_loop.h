@@ -24,11 +24,17 @@ constexpr int HAND_SIZE_LIMIT = 10;
 // attack damage (Strength-modified, etc.) rather than the raw move.damage.
 // `strength_mult` multiplies the attacker's Strength contribution (Heavy
 // Blade's 3x/5x, Stage 4b); it defaults to the normal 1x.
+// `vulnerable_mult` is how much extra a Vulnerable defender takes: 1.5
+// normally, 1.75 when the PLAYER holds Paper Phrog. It is a parameter rather
+// than a state lookup because this function takes status maps, not a
+// CombatState, and is used for enemy attacks on the player too — where Paper
+// Phrog must NOT apply. Callers use query.h's vulnerable_damage_multiplier for
+// the player's own attacks and leave the default everywhere else.
 int compute_attack_damage(
     int base, const std::unordered_map<Power, int>& attacker_powers,
     const std::unordered_map<Debuff, int>& attacker_debuffs,
     const std::unordered_map<Debuff, int>& defender_debuffs,
-    int strength_mult = 1);
+    int strength_mult = 1, float vulnerable_mult = 1.5f);
 
 // The Ironclad starter deck: 5 Strike + 4 Defend + 1 Bash (unshuffled).
 std::vector<Card> starter_deck();

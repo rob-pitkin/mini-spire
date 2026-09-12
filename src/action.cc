@@ -695,12 +695,20 @@ void player_attack_enemy(CombatState& state, int slot, int base,
   if (!valid_enemy_slot(state, slot)) return;
   if (state.enemies[slot].hp <= 0) return;
   const int hp_before = state.enemies[slot].hp;
-  const int dmg = compute_attack_damage(base, state.character.powers,
-                                        state.character.debuffs,
-                                        state.enemies[slot].debuffs,
-                                        strength_mult);
-  apply_damage_to_hp_block(state.enemies[slot].hp,
-                           state.enemies[slot].current_block, dmg);
+  const int dmg = compute_attack_damage(
+      base, state.character.powers, state.character.debuffs,
+      state.enemies[slot].debuffs, strength_mult,
+      vulnerable_damage_multiplier(state));
+
+  // The Boot acts on what is left AFTER block, so the block subtraction is
+  // done here rather than inside apply_damage_to_hp_block: the relic needs to
+  // see the unblocked remainder to decide, and a fully-absorbed attack must
+  // stay absorbed.
+  const int blocked = std::min(dmg, state.enemies[slot].current_block);
+  state.enemies[slot].current_block -= blocked;
+  const int to_hp = boot_adjusted_damage(state, dmg - blocked);
+  state.enemies[slot].hp -= to_hp;
+  if (state.enemies[slot].hp < 0) state.enemies[slot].hp = 0;
   // Track what actually reached HP — Reaper heals the unblocked total.
   ctx.unblocked_damage_dealt += hp_before - state.enemies[slot].hp;
   if (state.enemies[slot].hp < hp_before) {
