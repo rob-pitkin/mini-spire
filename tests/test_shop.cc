@@ -437,5 +437,129 @@ TEST(Shop, LeavingClearsEveryShelfNotJustTheCards) {
   EXPECT_TRUE(run.shop_potions.empty()) << "stale potion offers survived the shop";
 }
 
+// ============================================= shop discount relics (batch 2c)
+
+namespace {
+
+RunState at_a_shop_with(std::vector<RelicId> ids, uint64_t seed = 1) {
+  RunState run = RunState::start(seed);
+  run.floor = 5;
+  run.gold = 500;
+  for (RelicId id : ids) run.obtain_relic(id);
+  run.phase = Phase::Shop;
+  run.generate_shop();
+  return run;
+}
+
+}  // namespace
+
+TEST(ShopDiscounts, NoRelicsMeansNoDiscount) {
+  EXPECT_FLOAT_EQ(at_a_shop_with({}).shop_price_multiplier(), 1.0f);
+}
+
+TEST(ShopDiscounts, MembershipCardHalvesPrices) {
+  EXPECT_FLOAT_EQ(
+      at_a_shop_with({RelicId::MembershipCard}).shop_price_multiplier(), 0.5f);
+}
+
+TEST(ShopDiscounts, TheCourierTakesTwentyPercent) {
+  EXPECT_FLOAT_EQ(at_a_shop_with({RelicId::TheCourier}).shop_price_multiplier(),
+                  0.8f);
+}
+
+// The two MULTIPLY. Holding both is x0.40 — a 60% reduction, which is what the
+// wiki states. Adding the discounts would give 70% off, a different and wrong
+// number that a careless reading produces.
+TEST(ShopDiscounts, MembershipCardAndCourierMultiplyToSixtyPercentOff) {
+  const RunState run =
+      at_a_shop_with({RelicId::MembershipCard, RelicId::TheCourier});
+  EXPECT_FLOAT_EQ(run.shop_price_multiplier(), 0.4f);
+  EXPECT_EQ(run.discounted_price(100), 40) << "additive stacking would give 30";
+}
+
+// Rounding is to nearest, halves UP.
+TEST(ShopDiscounts, PricesRoundToNearestWithHalvesUp) {
+  const RunState run = at_a_shop_with({RelicId::MembershipCard});
+  EXPECT_EQ(run.discounted_price(75), 38);  // 37.5 -> 38
+  EXPECT_EQ(run.discounted_price(51), 26);  // 25.5 -> 26
+  EXPECT_EQ(run.discounted_price(50), 25);
+}
+
+// Every shelf is discounted, not just the cards.
+TEST(ShopDiscounts, EveryShelfIsCheaperWithMembershipCard) {
+  const RunState full = at_a_shop_with({});
+  const RunState cheap = at_a_shop_with({RelicId::MembershipCard});
+
+  ASSERT_EQ(full.shop_cards.size(), cheap.shop_cards.size());
+  for (size_t i = 0; i < full.shop_cards.size(); ++i) {
+    EXPECT_LT(cheap.shop_cards[i].price, full.shop_cards[i].price) << "card " << i;
+  }
+  ASSERT_EQ(full.shop_relics.size(), cheap.shop_relics.size());
+  for (size_t i = 0; i < full.shop_relics.size(); ++i) {
+    EXPECT_LT(cheap.shop_relics[i].price, full.shop_relics[i].price)
+        << "relic " << i;
+  }
+  ASSERT_EQ(full.shop_potions.size(), cheap.shop_potions.size());
+  for (size_t i = 0; i < full.shop_potions.size(); ++i) {
+    EXPECT_LT(cheap.shop_potions[i].price, full.shop_potions[i].price)
+        << "potion " << i;
+  }
+}
+
+TEST(ShopDiscounts, CardRemovalIsDiscountedToo) {
+  const RunState full = at_a_shop_with({});
+  const RunState cheap = at_a_shop_with({RelicId::MembershipCard});
+  EXPECT_LT(cheap.shop_remove_price, full.shop_remove_price);
+}
+
+// ------------------------------------------------------------ Smiling Mask
+
+TEST(ShopDiscounts, SmilingMaskPinsRemovalAtFifty) {
+  RunState run = at_a_shop_with({RelicId::SmilingMask});
+  EXPECT_EQ(run.shop_remove_price, kSmilingMaskRemovalPrice);
+}
+
+// Smiling Mask holds at 50 even once the base price has climbed past it.
+TEST(ShopDiscounts, SmilingMaskHoldsAsTheBasePriceClimbs) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::SmilingMask);
+  run.shop_remove_count = 5;  // base would be 75 + 125 = 200
+  EXPECT_EQ(run.removal_price(), kSmilingMaskRemovalPrice);
+}
+
+// The disagreement, pinned by a test so the decision cannot drift silently.
+//
+// sts_lightspeed sets the cost to 50 and THEN applies the discount factors,
+// which gives 25 with Membership Card. The wiki says price-reduction effects do
+// not affect removal at all when Smiling Mask is held — "always 50 Gold even if
+// its price would otherwise be lower". CLAUDE.md's rule 2 corollary makes the
+// wiki the check, so 50 is what ships.
+TEST(ShopDiscounts, SmilingMaskOverridesTheDiscountRelics) {
+  RunState run = at_a_shop_with(
+      {RelicId::SmilingMask, RelicId::MembershipCard, RelicId::TheCourier});
+  EXPECT_EQ(run.shop_remove_price, kSmilingMaskRemovalPrice)
+      << "the discount relics reached a Smiling Mask removal price "
+         "(sts_lightspeed's reading, which the wiki contradicts)";
+}
+
+// The discounts still apply to everything else while Smiling Mask is held —
+// the override is scoped to removal alone.
+TEST(ShopDiscounts, SmilingMaskDoesNotProtectTheOtherShelves) {
+  const RunState full = at_a_shop_with({RelicId::SmilingMask});
+  const RunState cheap =
+      at_a_shop_with({RelicId::SmilingMask, RelicId::MembershipCard});
+  ASSERT_FALSE(full.shop_cards.empty());
+  EXPECT_LT(cheap.shop_cards[0].price, full.shop_cards[0].price);
+}
+
+// Buying still works against the discounted price, not the undiscounted one.
+TEST(ShopDiscounts, APurchaseChargesTheDiscountedPrice) {
+  RunState run = at_a_shop_with({RelicId::MembershipCard});
+  const int price = run.shop_cards[0].price;
+  const int gold_before = run.gold;
+  run.buy_card(0);
+  EXPECT_EQ(run.gold, gold_before - price);
+}
+
 }  // namespace
 }  // namespace minispire

@@ -487,8 +487,12 @@ void RunState::generate_shop() {
     item.card = Card{draw_distinct(slot_types[i], rarity)};
     item.rarity = rarity;
     const float jitter = std::uniform_real_distribution<float>(0.9f, 1.1f)(rng);
-    item.price = static_cast<int>(
-        static_cast<float>(kCardRarityPrices[static_cast<int>(rarity)]) * jitter);
+    // Jitter first, then the relic discount — the discount applies to the price
+    // the shop actually set, and rolling it in before the jitter would let the
+    // random factor scale the discount too.
+    item.price = discounted_price(static_cast<int>(
+        static_cast<float>(kCardRarityPrices[static_cast<int>(rarity)]) *
+        jitter));
     shop_cards.push_back(item);
   }
 
@@ -497,7 +501,8 @@ void RunState::generate_shop() {
   shop_cards[sale].price /= 2;
   shop_cards[sale].on_sale = true;
 
-  shop_remove_price = kBaseRemovePrice + kRemovePriceIncrease * shop_remove_count;
+  // Relic-aware: Smiling Mask pins it, the discount relics scale it.
+  shop_remove_price = removal_price();
 
   // Three relics. The first two roll a tier; the THIRD is always Shop tier,
   // which is what makes shop-exclusive relics obtainable at all.
@@ -518,8 +523,8 @@ void RunState::generate_shop() {
     ShopRelic offer;
     offer.id = *drawn;
     const float jitter = std::uniform_real_distribution<float>(0.95f, 1.05f)(rng);
-    offer.price = static_cast<int>(
-        static_cast<float>(kRelicTierPrices[static_cast<int>(tier)]) * jitter);
+    offer.price = discounted_price(static_cast<int>(
+        static_cast<float>(kRelicTierPrices[static_cast<int>(tier)]) * jitter));
     shop_relics.push_back(offer);
   }
 
@@ -534,13 +539,52 @@ void RunState::generate_shop() {
     ShopPotion offer;
     offer.id = pool[std::uniform_int_distribution<size_t>(0, pool.size() - 1)(rng)];
     const float jitter = std::uniform_real_distribution<float>(0.95f, 1.05f)(rng);
-    offer.price = static_cast<int>(
+    offer.price = discounted_price(static_cast<int>(
         static_cast<float>(kPotionRarityPrices[static_cast<int>(rarity)]) *
-        jitter);
+        jitter));
     shop_potions.push_back(offer);
   }
 
   // Still unstocked: the 2 colorless card slots, which need colorless cards.
+}
+
+float RunState::shop_price_multiplier() const {
+  // MULTIPLICATIVE, not additive. Membership Card is x0.50 and The Courier
+  // x0.80, so holding both is x0.40 — which the wiki states as "totalling a 60%
+  // reduction". Adding the discounts (50 + 20 = 70% off) would be a different
+  // and wrong number.
+  float m = 1.0f;
+  if (has_relic(RelicId::MembershipCard)) m *= kMembershipCardFactor;
+  if (has_relic(RelicId::TheCourier)) m *= kCourierFactor;
+  return m;
+}
+
+int RunState::discounted_price(int base) const {
+  // Rounded to nearest, halves UP, per the wiki's stated rounding.
+  const float p = static_cast<float>(base) * shop_price_multiplier();
+  const int rounded = static_cast<int>(std::floor(p + 0.5f));
+  return rounded < 0 ? 0 : rounded;
+}
+
+int RunState::removal_price() const {
+  // Smiling Mask pins the removal service at a flat 50 and is IMMUNE to the
+  // discount relics.
+  //
+  // sts_lightspeed DISAGREES: its Shop::getRemoveCost sets the cost to 50 and
+  // then applies the Courier/Membership factors, giving 25 with Membership
+  // Card. The wiki is explicit the other way — "Price-reduction effects will
+  // not affect the price of card removals if the player possesses Smiling Mask.
+  // It will always set the price of the card removal service to 50 Gold even if
+  // its price would otherwise be lower." Per CLAUDE.md's rule 2 corollary the
+  // wiki is the check, so the wiki's reading is what ships. Logged in
+  // v2-spec.md §15 as a live disagreement rather than a settled fact.
+  if (has_relic(RelicId::SmilingMask)) return kSmilingMaskRemovalPrice;
+
+  // Deliberately does NOT read shop_remove_price, which carries the per-visit
+  // "already used here" sentinel (-1). This answers "what does removal cost at
+  // this point in the run", and generate_shop stores the answer.
+  return discounted_price(kBaseRemovePrice +
+                          kRemovePriceIncrease * shop_remove_count);
 }
 
 void RunState::buy_relic(int index) {

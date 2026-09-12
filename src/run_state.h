@@ -118,6 +118,14 @@ inline constexpr int kCardRarityPrices[] = {50, 75, 150};
 inline constexpr int kBaseRemovePrice = 75;
 inline constexpr int kRemovePriceIncrease = 25;
 
+// Shop discount relics. MULTIPLICATIVE: holding both is 0.5 * 0.8 = 0.4, which
+// the wiki states as "totalling a 60% reduction". Adding them would give 70%.
+inline constexpr float kMembershipCardFactor = 0.50f;
+inline constexpr float kCourierFactor = 0.80f;
+
+// Smiling Mask pins card removal here, immune to the two factors above.
+inline constexpr int kSmilingMaskRemovalPrice = 50;
+
 // A shop's five class-card slots. Two attacks, two skills, one power, and the
 // power slot promotes a COMMON roll to UNCOMMON.
 inline constexpr int kShopCardSlots = 5;
@@ -387,6 +395,17 @@ struct RunState {
 
   // Leaves the shop.
   void leave_shop();
+
+  // Combined shop discount: Membership Card and The Courier, multiplied.
+  float shop_price_multiplier() const;
+  // `base` with that discount applied, rounded to nearest (halves up).
+  int discounted_price(int base) const;
+  // What card removal costs at this point in the RUN, relic-aware. Does not
+  // know about the per-visit "already used" sentinel that shop_remove_price
+  // carries — generate_shop stores this into that field. Smiling Mask pins it
+  // at 50 and overrides the discounts; see the implementation for a live
+  // disagreement with sts_lightspeed on exactly that point.
+  int removal_price() const;
 
   // --- campfire (§8) ---
 
