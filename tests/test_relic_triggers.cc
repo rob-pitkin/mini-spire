@@ -41,6 +41,18 @@ int card_action(CardId id, int target = 0) {
   return static_cast<int>(id) * kMaxEnemies + target;
 }
 
+// Deal `amount` fixed damage to the player through the real executor path, so
+// block, Intangible, Plated Armor and Buffer all see it as they would in play.
+void hit_player(CombatState& s, int amount) {
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::DealFixedDamage};
+  a.target = kPlayerSlot;
+  a.amount = amount;
+  q.push_back(a);
+  drain(s, q, ctx);
+}
+
 CombatState elite_fight_with(std::vector<RelicId> ids, uint32_t seed = 1) {
   CombatSetup setup;
   setup.seed = seed;
@@ -171,24 +183,106 @@ TEST(RelicTriggers, RelicsHeldInTheRunFireInTheRunsFights) {
   EXPECT_EQ(get_status(run.combat.character.powers, Power::Strength), 1);
 }
 
+// ===================================================================== batch A3
+// Thorns and Plated Armor.
+
+TEST(ThornsPower, RetaliatesWhenAttacked) {
+  CombatState s = fight_with({RelicId::BronzeScales});
+  ASSERT_EQ(get_status(s.character.powers, Power::Thorns), 3);
+  ASSERT_FALSE(s.enemies.empty());
+
+  const int enemy_hp = s.enemies[0].hp;
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  ASSERT_EQ(s.outcome, Outcome::InProgress);
+  EXPECT_LT(s.enemies[0].hp, enemy_hp)
+      << "the attacker took no Thorns damage";
+}
+
+// Thorns keys on BEING ATTACKED, not on being hurt — so it fires through full
+// block, the same as Flame Barrier.
+TEST(ThornsPower, FiresEvenWhenTheAttackIsFullyBlocked) {
+  CombatState s = fight_with({RelicId::BronzeScales});
+  s.character.current_block = 500;  // nothing will get through
+  const int hp = s.character.hp;
+  ASSERT_FALSE(s.enemies.empty());
+  const int enemy_hp = s.enemies[0].hp;
+
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  ASSERT_EQ(s.outcome, Outcome::InProgress);
+  EXPECT_EQ(s.character.hp, hp) << "the hit should have been fully blocked";
+  EXPECT_LT(s.enemies[0].hp, enemy_hp)
+      << "Thorns did not fire through block";
+}
+
+// Permanent, unlike Flame Barrier — it does not expire at the next turn start.
+TEST(ThornsPower, DoesNotExpire) {
+  CombatState s = fight_with({RelicId::BronzeScales});
+  for (int turn = 0; turn < 2; ++turn) {
+    ASSERT_TRUE(apply_action(s, kEndTurnAction));
+    ASSERT_EQ(s.outcome, Outcome::InProgress);
+  }
+  EXPECT_EQ(get_status(s.character.powers, Power::Thorns), 3);
+}
+
+// ---------------------------------------------------------- Plated Armor
+
+TEST(PlatedArmorPower, GrantsBlockAtEndOfTurn) {
+  CombatState s = fight_with({RelicId::ThreadAndNeedle});
+  ASSERT_EQ(get_status(s.character.powers, Power::PlatedArmor), 4);
+
+  CombatState bare = bare_fight();
+  const int bare_hp_before = bare.character.hp;
+  const int s_hp_before = s.character.hp;
+  ASSERT_TRUE(apply_action(bare, kEndTurnAction));
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  ASSERT_EQ(s.outcome, Outcome::InProgress);
+
+  // The block lands before the enemy phase, so the armoured run takes less.
+  EXPECT_LE(s_hp_before - s.character.hp, bare_hp_before - bare.character.hp)
+      << "Plated Armor's block did not absorb anything";
+}
+
+// Dexterity and Frail do NOT modify it — it is not card block.
+TEST(PlatedArmorPower, IsNotModifiedByDexterity) {
+  CombatState plain = fight_with({RelicId::ThreadAndNeedle});
+  CombatState dex = fight_with({RelicId::ThreadAndNeedle});
+  dex.character.powers[Power::Dexterity] = 5;
+  plain.character.current_block = 0;
+  dex.character.current_block = 0;
+
+  // Drive only the end-of-turn power hooks, so the enemy phase does not spend
+  // the block before it can be compared.
+  ActionQueue pq, dq;
+  ResolutionContext pctx, dctx;
+  fire_player_power_hooks(plain, Hook::TurnEndPlayer, pq);
+  fire_player_power_hooks(dex, Hook::TurnEndPlayer, dq);
+  drain(plain, pq, pctx);
+  drain(dex, dq, dctx);
+
+  EXPECT_EQ(plain.character.current_block, 4);
+  EXPECT_EQ(dex.character.current_block, 4)
+      << "Dexterity modified Plated Armor's block";
+}
+
+// Loses a stack to UNBLOCKED damage only.
+TEST(PlatedArmorPower, LosesAStackToUnblockedDamage) {
+  CombatState s = fight_with({RelicId::ThreadAndNeedle});
+  s.character.current_block = 0;
+  hit_player(s, 10);
+  EXPECT_EQ(get_status(s.character.powers, Power::PlatedArmor), 3);
+}
+
+TEST(PlatedArmorPower, KeepsItsStackWhenFullyBlocked) {
+  CombatState s = fight_with({RelicId::ThreadAndNeedle});
+  s.character.current_block = 50;
+  hit_player(s, 10);
+  EXPECT_EQ(get_status(s.character.powers, Power::PlatedArmor), 4)
+      << "a fully blocked hit cost a Plated Armor stack";
+}
+
 // ===================================================================== batch A2
 // Buffer: prevent the next N times you would LOSE HP. A counter, not a
 // duration — it does not tick, and only an actual HP loss spends a stack.
-
-namespace {
-
-// Deal `amount` fixed damage to the player through the real executor path.
-void hit_player(CombatState& s, int amount) {
-  ActionQueue q;
-  ResolutionContext ctx;
-  Action a{ActionKind::DealFixedDamage};
-  a.target = kPlayerSlot;
-  a.amount = amount;
-  q.push_back(a);
-  drain(s, q, ctx);
-}
-
-}  // namespace
 
 TEST(BufferPower, BufferPreventsOneHpLoss) {
   CombatState s = bare_fight();

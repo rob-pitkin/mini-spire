@@ -66,6 +66,14 @@ enum class Power {
   Vigor,         // next Attack deals `stacks` additional damage PER HIT.
                  // Additive with Strength, so Weak and Vulnerable scale it too.
                  // Akabeko grants 8 at combat start.
+  Thorns,        // when receiving ATTACK damage, deal `stacks` back to the
+                 // attacker. Fires even when the attack is fully blocked, like
+                 // Flame Barrier — it keys on being attacked, not on being
+                 // hurt. Permanent: unlike Flame Barrier it does not expire.
+                 // The retaliation is FIXED damage, unscaled by Strength or
+                 // Vulnerable.
+  PlatedArmor,   // end of turn: gain `stacks` Block, NOT modified by Dexterity
+                 // or Frail. Loses one stack on receiving unblocked damage.
   Intangible,    // reduce ALL incoming damage and HP loss to 1.
                  //
                  // THE ONE POWER THAT TICKS (Rob, 2026-09-12). The rule below
@@ -106,7 +114,7 @@ enum class Power {
 // powers) because two of five is not worth a second table.
 inline constexpr int kNumDebuffs = 5;
 inline constexpr int kNumEnemyPowers = 6;
-inline constexpr int kNumPlayerPowers = 26;
+inline constexpr int kNumPlayerPowers = 28;
 
 // FUTURE (multi-enemy): Target { Character, Enemy } collapses any "the enemy"
 // to a single entity, which is unambiguous in v1 with one enemy. Multi-enemy

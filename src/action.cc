@@ -83,6 +83,18 @@ bool damage_player(CombatState& state, int amount) {
   state.character.current_block -= blocked;
   const int to_hp = amount - blocked;
   if (to_hp <= 0) return false;  // fully blocked: Buffer is not spent
+
+  // Plated Armor loses a stack on receiving UNBLOCKED damage — which is what
+  // getting past block means, so it is decided here rather than at the HP
+  // write. Deliberately before Buffer: the damage was still unblocked, and
+  // Buffer preventing the HP loss does not un-receive it.
+  {
+    auto it = state.character.powers.find(Power::PlatedArmor);
+    if (it != state.character.powers.end() && it->second > 0) {
+      if (--it->second <= 0) state.character.powers.erase(it);
+    }
+  }
+
   if (buffer_absorbs_hp_loss(state)) return false;
   state.character.hp -= to_hp;
   if (state.character.hp < 0) state.character.hp = 0;
@@ -803,6 +815,14 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
             }
             break;
           }
+          case RelicId::BronzeScales:
+            push_player_power(q, Power::Thorns, 3);
+            break;
+
+          case RelicId::ThreadAndNeedle:
+            push_player_power(q, Power::PlatedArmor, 4);
+            break;
+
           case RelicId::FossilizedHelix:
             push_player_power(q, Power::Buffer, 1);
             break;
@@ -927,6 +947,8 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
   const int berserk = get_status(powers, Power::Berserk);
   const int metallicize = get_status(powers, Power::Metallicize);
   const int strength_down = get_status(powers, Power::StrengthDown);
+  const int thorns = get_status(powers, Power::Thorns);
+  const int plated_armor = get_status(powers, Power::PlatedArmor);
 
   switch (hook) {
     case Hook::TurnStartPlayer:
@@ -961,6 +983,10 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
         q.push_back(a);
       }
       if (metallicize > 0) push_player_block(q, metallicize);
+      // Plated Armor's block is NOT card block: Dexterity and Frail do not
+      // modify it. push_player_block leaves card_block false, so that holds by
+      // construction rather than by remembering to exclude them.
+      if (plated_armor > 0) push_player_block(q, plated_armor);
       // Rage lasts only the player's own turn.
       if (rage > 0) push_remove_player_power(q, Power::Rage);
       // Double Tap's charges are "this turn" too — unused ones are lost.
@@ -1019,6 +1045,16 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
         Action a = make_action(ActionKind::DealFixedDamage);
         a.target = attacker_slot;
         a.amount = flame_barrier;
+        q.push_back(a);
+      }
+      // Thorns is Flame Barrier's shape with a different lifetime: it keys on
+      // BEING ATTACKED, not on being hurt, so it fires through full block — and
+      // unlike Flame Barrier it never expires. Fixed damage, so Strength and
+      // Vulnerable do not scale it.
+      if (thorns > 0 && attacker_slot >= 0) {
+        Action a = make_action(ActionKind::DealFixedDamage);
+        a.target = attacker_slot;
+        a.amount = thorns;
         q.push_back(a);
       }
       break;
