@@ -83,6 +83,9 @@ enum class ActionKind {
   CardPlayedHook,  // fire Hook::CardPlayed listeners for `card` (Enrage, Rage)
   CheckDeath,      // process deaths recorded this resolution (on-death,
                    // became-last) — replaces the hand-rolled died_slots deferral
+  ShuffleDiscardIntoDraw,  // Deep Breath. Distinct from draw_one's automatic
+                           // reshuffle, which fires only when the draw pile has
+                           // run dry; this happens regardless.
   DiscardHand,     // end of turn: ethereal cards exhaust, the rest discard
                    // (routed through the executors so Feel No Pain / Dark
                    // Embrace see the exhausts)

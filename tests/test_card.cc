@@ -264,8 +264,9 @@ TEST(CardUpgrades, KnownPairsAreCorrect) {
   EXPECT_EQ(upgraded_card(CardId::DemonForm), CardId::DemonFormPlus);
   EXPECT_EQ(upgraded_card(CardId::Corruption), CardId::CorruptionPlus);
   // 74 base pairs + 11 ROB-87 ladder edges (5 Searing Blow rungs, 6 grown
-  // Rampage rungs crossing to their Rampage+ counterparts).
-  EXPECT_EQ(CARD_UPGRADES.size(), 85u);
+  // Rampage rungs crossing to their Rampage+ counterparts) + the colorless
+  // block, one pair per card as each is added.
+  EXPECT_EQ(CARD_UPGRADES.size(), 105u);
   // Status cards: not upgradable (StS).
   EXPECT_FALSE(is_upgradable(CardId::Slimed));
   EXPECT_FALSE(is_upgradable(CardId::Dazed));

@@ -243,12 +243,65 @@ enum class CardId {
   RampagePlus38,
   RampagePlus39,
   RampagePlus40,
+
+  // --- Colorless (v2). 35 cards, 70 ids. ---
+  //
+  // APPENDED, never inserted. A card's action index is `id * kMaxEnemies`, so
+  // inserting here would renumber every card after it and invalidate any
+  // trained policy's card mapping. Appending leaves all 189 existing indices
+  // byte-identical and only moves kEndTurnAction, which is derived.
+  //
+  // Reachable in Act 1 via the shop's 2 colorless slots and Neow's colorless
+  // blessings — neither implemented yet, so nothing can obtain these today.
+  // Cards whose effects need machinery that does not exist are marked
+  // `unplayable` in CARD_DATABASE, the same gate Dazed uses, so they occupy a
+  // stable action index without being a playable no-op.
+  BandageUp,
+  BandageUpPlus,
+  Blind,
+  BlindPlus,
+  DarkShackles,
+  DarkShacklesPlus,
+  DeepBreath,
+  DeepBreathPlus,
+  Discovery,
+  DiscoveryPlus,
+  DramaticEntrance,
+  DramaticEntrancePlus,
+  Enlightenment,
+  EnlightenmentPlus,
+  Finesse,
+  FinessePlus,
+  FlashOfSteel,
+  FlashOfSteelPlus,
+  GoodInstincts,
+  GoodInstinctsPlus,
+  Forethought,
+  ForethoughtPlus,
+  Impatience,
+  ImpatiencePlus,
+  JackOfAllTrades,
+  JackOfAllTradesPlus,
+  Madness,
+  MadnessPlus,
+  MindBlast,
+  MindBlastPlus,
+  Panacea,
+  PanaceaPlus,
+  PanicButton,
+  PanicButtonPlus,
+  Purity,
+  PurityPlus,
+  SwiftStrike,
+  SwiftStrikePlus,
+  Trip,
+  TripPlus,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
 // action-space size (card x target). Update CARD_DATABASE + kObsCardOrder in
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
-inline constexpr int kNumCardTypes = 189;
+inline constexpr int kNumCardTypes = 229;
 
 // A card's inherent StS type. This is a real property, NOT inferable from
 // damage/block: an Attack can gain block (Body Slam) and a Skill can deal
@@ -319,6 +372,9 @@ enum class GeneratedPile {
 enum class DamageRule {
   Normal,           // use CardData::damage
   EqualToBlock,     // Body Slam: the player's current block
+  EqualToDrawPile,  // Mind Blast: damage = cards left in the draw pile, read at
+                    // resolution. The card has already left the hand by then,
+                    // so it never counts itself.
   PerStrikeInDeck,  // Perfected Strike: + amount per "Strike"-named card
   // Searing Blow: damage = n(n+7)/2 + 12 at n upgrades (wiki-verified against
   // the published progression 12/16/21/27/34/...). Read from the card
@@ -467,6 +523,21 @@ struct CardData {
   bool plays_top_of_draw = false;
   // Infernal Blade: add a random Attack to hand, costing 0 this turn.
   bool generates_random_attack = false;
+  // --- Colorless cards (v2). Appended, never inserted: every field below sits
+  // AFTER the existing ones so all 189 positional CARD_DATABASE initialisers
+  // stay valid and untouched — the same reason Card::uid was declared last. ---
+  //
+  // Bandage Up: flat healing, unrelated to damage dealt (that is
+  // heals_unblocked_damage, above, which is Reaper's).
+  int heal = 0;
+  // Deep Breath: shuffle the discard pile into the draw pile. Distinct from the
+  // automatic reshuffle inside draw_one, which only fires when the draw pile has
+  // run dry — this one happens regardless, which is the whole card.
+  bool shuffles_discard_into_draw = false;
+  // Impatience: `draw` only happens when the hand holds no Attacks. Checked at
+  // TRANSLATION time, when the card has already left the hand — so Impatience
+  // never counts itself, and it is a Skill anyway.
+  bool draw_needs_no_attacks_in_hand = false;
 };
 
 // What a card becomes when upgraded (Armaments; v2's rest-site smith).
@@ -539,6 +610,27 @@ inline const std::unordered_map<CardId, CardId> CARD_UPGRADES = {
     {CardId::Exhume, CardId::ExhumePlus},
     {CardId::DualWield, CardId::DualWieldPlus},
     {CardId::Rampage, CardId::RampagePlus},
+    // --- Colorless (v2) ---
+    {CardId::BandageUp, CardId::BandageUpPlus},
+    {CardId::Blind, CardId::BlindPlus},
+    {CardId::DarkShackles, CardId::DarkShacklesPlus},
+    {CardId::DeepBreath, CardId::DeepBreathPlus},
+    {CardId::Discovery, CardId::DiscoveryPlus},
+    {CardId::DramaticEntrance, CardId::DramaticEntrancePlus},
+    {CardId::Enlightenment, CardId::EnlightenmentPlus},
+    {CardId::Finesse, CardId::FinessePlus},
+    {CardId::FlashOfSteel, CardId::FlashOfSteelPlus},
+    {CardId::GoodInstincts, CardId::GoodInstinctsPlus},
+    {CardId::Forethought, CardId::ForethoughtPlus},
+    {CardId::Impatience, CardId::ImpatiencePlus},
+    {CardId::JackOfAllTrades, CardId::JackOfAllTradesPlus},
+    {CardId::Madness, CardId::MadnessPlus},
+    {CardId::MindBlast, CardId::MindBlastPlus},
+    {CardId::Panacea, CardId::PanaceaPlus},
+    {CardId::PanicButton, CardId::PanicButtonPlus},
+    {CardId::Purity, CardId::PurityPlus},
+    {CardId::SwiftStrike, CardId::SwiftStrikePlus},
+    {CardId::Trip, CardId::TripPlus},
     {CardId::WildStrike, CardId::WildStrikePlus},
     {CardId::PowerThrough, CardId::PowerThroughPlus},
     {CardId::Immolate, CardId::ImmolatePlus},
@@ -754,6 +846,27 @@ struct PendingChoice {
 inline CardId upgraded_card(CardId id) {
   auto it = CARD_UPGRADES.find(id);
   return it == CARD_UPGRADES.end() ? id : it->second;
+}
+
+// Base CardData for a colorless card, filled in by NAME rather than position.
+//
+// The 189 existing rows are positional, which reads fine for the fields near the
+// front and badly for anything late in the struct — Reaper's row spells out
+// thirty fields to reach one bool at the end. The colorless block adds seventy
+// rows and several of them touch late fields, so they are built with named
+// assignment instead. C++17 has no designated initialisers, hence the
+// immediately-invoked lambda at each row.
+//
+// Existing rows are deliberately NOT converted: rewriting 189 working
+// initialisers to gain nothing is how transcription errors get introduced.
+inline CardData colorless(const char* name, int cost, CardType type,
+                          CardTarget target = CardTarget::None) {
+  CardData d{};
+  d.name = name;
+  d.cost = cost;
+  d.type = type;
+  d.target = target;
+  return d;
 }
 
 // CardData row order: name, cost, damage, hits, block, target, debuffs, powers,
@@ -1036,6 +1149,349 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     {CardId::RampagePlus38, {"Rampage+ 46", 1, 46, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
     {CardId::RampagePlus39, {"Rampage+ 47", 1, 47, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
     {CardId::RampagePlus40, {"Rampage+ 48", 1, 48, 1, 0, CardTarget::Enemy, {}, {}, CardType::Attack, false, false, false, 0, 0, 0, false, DamageRule::Normal, 0, 1, false, false, false, false, false, false, ChoiceKind::None, false, 1, /*bonus_damage_per_play=*/8}},
+
+    // ================================================== COLORLESS (v2) =====
+    // Built with `colorless()` + named assignment; see the note above the
+    // helper. Each card's cost, type and numbers are wiki-verified before the
+    // row is written.
+
+    // Bandage Up: "Heal 4 HP. Exhaust." A flat heal, unrelated to damage dealt
+    // — that is Reaper's heals_unblocked_damage, a different field.
+    {CardId::BandageUp, [] {
+       CardData d = colorless("Bandage Up", 0, CardType::Skill);
+       d.exhaust = true;
+       d.heal = 4;
+       return d;
+     }()},
+    {CardId::BandageUpPlus, [] {
+       CardData d = colorless("Bandage Up+", 0, CardType::Skill);
+       d.exhaust = true;
+       d.heal = 6;
+       return d;
+     }()},
+
+    // Blind: "Apply 2 Weak." The upgrade changes the TARGET, not the amount —
+    // 2 Weak either way, but to ALL enemies. One of the few cards whose upgrade
+    // is a targeting change, so the two rows differ in CardTarget.
+    {CardId::Blind, [] {
+       CardData d = colorless("Blind", 0, CardType::Skill, CardTarget::Enemy);
+       d.applies_debuffs = {{Debuff::Weak, 2, Target::Enemy}};
+       return d;
+     }()},
+    {CardId::BlindPlus, [] {
+       CardData d =
+           colorless("Blind+", 0, CardType::Skill, CardTarget::AllEnemies);
+       d.applies_debuffs = {{Debuff::Weak, 2, Target::Enemy}};
+       return d;
+     }()},
+
+    // Dark Shackles: "Enemy loses 9 Strength this turn. Exhaust."
+    //
+    // UNPLAYABLE for now. Temporary Strength loss on an ENEMY needs the
+    // enemy-side analogue of Power::StrengthDown — the enemy restores the
+    // Strength at the end of its own turn — and fire_enemy_power_hooks handles
+    // only Ritual and Metallicize today. Data and action index are correct; the
+    // effect is not wired, so the mask keeps it unplayable rather than letting
+    // it resolve as a no-op.
+    {CardId::DarkShackles, [] {
+       CardData d =
+           colorless("Dark Shackles", 0, CardType::Skill, CardTarget::Enemy);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::DarkShacklesPlus, [] {
+       CardData d =
+           colorless("Dark Shackles+", 0, CardType::Skill, CardTarget::Enemy);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Deep Breath: "Shuffle your discard pile into your draw pile. Draw 1."
+    // The shuffle happens whether or not the draw pile is empty, which is what
+    // separates it from draw_one's automatic reshuffle.
+    {CardId::DeepBreath, [] {
+       CardData d = colorless("Deep Breath", 0, CardType::Skill);
+       d.shuffles_discard_into_draw = true;
+       d.draw = 1;
+       return d;
+     }()},
+    {CardId::DeepBreathPlus, [] {
+       CardData d = colorless("Deep Breath+", 0, CardType::Skill);
+       d.shuffles_discard_into_draw = true;
+       d.draw = 2;
+       return d;
+     }()},
+
+    // Discovery: "Choose 1 of 3 random cards to add into your hand. It costs 0
+    // this turn. Exhaust." The upgrade REMOVES the Exhaust rather than changing
+    // a number — so the two rows differ in a flag, not a value.
+    //
+    // UNPLAYABLE: needs a choice over three GENERATED cards. The choice
+    // machinery exists (ChoiceKind), but not a choice whose options are rolled
+    // rather than drawn from a pile.
+    {CardId::Discovery, [] {
+       CardData d = colorless("Discovery", 1, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::DiscoveryPlus, [] {
+       CardData d = colorless("Discovery+", 1, CardType::Skill);
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Dramatic Entrance: "Deal 8 damage to ALL enemies. Innate. Exhaust."
+    {CardId::DramaticEntrance, [] {
+       CardData d = colorless("Dramatic Entrance", 0, CardType::Attack,
+                              CardTarget::AllEnemies);
+       d.damage = 8;
+       d.innate = true;
+       d.exhaust = true;
+       return d;
+     }()},
+    {CardId::DramaticEntrancePlus, [] {
+       CardData d = colorless("Dramatic Entrance+", 0, CardType::Attack,
+                              CardTarget::AllEnemies);
+       d.damage = 12;
+       d.innate = true;
+       d.exhaust = true;
+       return d;
+     }()},
+
+    // Enlightenment: "Reduce the cost of all cards in your hand to 1 this
+    // turn." The upgrade changes the DURATION — this turn becomes this combat.
+    //
+    // UNPLAYABLE: needs a cost override that applies to the hand for a
+    // duration. free_this_turn is per-card-id and means "costs 0 once", which
+    // is a different thing from "everything costs at most 1 until the fight
+    // ends".
+    {CardId::Enlightenment, [] {
+       CardData d = colorless("Enlightenment", 0, CardType::Skill);
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::EnlightenmentPlus, [] {
+       CardData d = colorless("Enlightenment+", 0, CardType::Skill);
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Finesse: "Gain 2 Block. Draw 1 card."
+    {CardId::Finesse, [] {
+       CardData d = colorless("Finesse", 0, CardType::Skill);
+       d.block = 2;
+       d.draw = 1;
+       return d;
+     }()},
+    {CardId::FinessePlus, [] {
+       CardData d = colorless("Finesse+", 0, CardType::Skill);
+       d.block = 4;
+       d.draw = 1;
+       return d;
+     }()},
+
+    // Flash of Steel: "Deal 3 damage. Draw 1 card."
+    {CardId::FlashOfSteel, [] {
+       CardData d =
+           colorless("Flash of Steel", 0, CardType::Attack, CardTarget::Enemy);
+       d.damage = 3;
+       d.draw = 1;
+       return d;
+     }()},
+    {CardId::FlashOfSteelPlus, [] {
+       CardData d =
+           colorless("Flash of Steel+", 0, CardType::Attack, CardTarget::Enemy);
+       d.damage = 6;
+       d.draw = 1;
+       return d;
+     }()},
+
+    // Good Instincts: "Gain 6 Block."
+    {CardId::GoodInstincts, [] {
+       CardData d = colorless("Good Instincts", 0, CardType::Skill);
+       d.block = 6;
+       return d;
+     }()},
+    {CardId::GoodInstinctsPlus, [] {
+       CardData d = colorless("Good Instincts+", 0, CardType::Skill);
+       d.block = 9;
+       return d;
+     }()},
+
+    // Forethought: "Put a card from your hand to the bottom of your draw pile.
+    // It costs 0 until played." The upgrade makes it ANY NUMBER — a
+    // single-select becoming a multi-select, which is a shape change, not a
+    // number.
+    //
+    // UNPLAYABLE: needs a hand choice that moves to the BOTTOM of the draw pile
+    // and a per-instance "costs 0 until played" marker that survives being
+    // drawn again. free_this_turn is keyed by card id and expires at end of
+    // turn, so it is the wrong tool for both halves.
+    {CardId::Forethought, [] {
+       CardData d = colorless("Forethought", 0, CardType::Skill);
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::ForethoughtPlus, [] {
+       CardData d = colorless("Forethought+", 0, CardType::Skill);
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Impatience: "If you have no Attacks in your hand, draw 2 cards."
+    {CardId::Impatience, [] {
+       CardData d = colorless("Impatience", 0, CardType::Skill);
+       d.draw = 2;
+       d.draw_needs_no_attacks_in_hand = true;
+       return d;
+     }()},
+    {CardId::ImpatiencePlus, [] {
+       CardData d = colorless("Impatience+", 0, CardType::Skill);
+       d.draw = 3;
+       d.draw_needs_no_attacks_in_hand = true;
+       return d;
+     }()},
+
+    // Jack of All Trades: "Add 1 random Colorless card into your hand.
+    // Exhaust."
+    //
+    // UNPLAYABLE: needs generation from the colorless pool, which is only
+    // partly populated while this block is being added one card at a time.
+    // Wiring it before the pool is complete would make the card's randomness
+    // depend on how far through the list we happened to be.
+    {CardId::JackOfAllTrades, [] {
+       CardData d = colorless("Jack of All Trades", 0, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::JackOfAllTradesPlus, [] {
+       CardData d = colorless("Jack of All Trades+", 0, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Madness: "Reduce the cost of a random card in your hand to 0 this combat.
+    // Exhaust." The upgrade changes only the CARD'S OWN COST, 1 to 0 — the
+    // effect text is identical.
+    //
+    // UNPLAYABLE: "this combat" is a PERMANENT cost override on one card
+    // INSTANCE. free_this_turn is keyed by card id and expires at end of turn,
+    // so it is wrong on both counts — it would make every copy of that id free,
+    // and only until the turn ended.
+    {CardId::Madness, [] {
+       CardData d = colorless("Madness", 1, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::MadnessPlus, [] {
+       CardData d = colorless("Madness+", 0, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Mind Blast: "Deal damage equal to the number of cards in your draw pile.
+    // Innate." The upgrade changes only the cost, 2 to 1.
+    {CardId::MindBlast, [] {
+       CardData d =
+           colorless("Mind Blast", 2, CardType::Attack, CardTarget::Enemy);
+       d.damage_rule = DamageRule::EqualToDrawPile;
+       d.innate = true;
+       return d;
+     }()},
+    {CardId::MindBlastPlus, [] {
+       CardData d =
+           colorless("Mind Blast+", 1, CardType::Attack, CardTarget::Enemy);
+       d.damage_rule = DamageRule::EqualToDrawPile;
+       d.innate = true;
+       return d;
+     }()},
+
+    // Panacea: "Gain 1 Artifact. Exhaust."
+    {CardId::Panacea, [] {
+       CardData d = colorless("Panacea", 0, CardType::Skill);
+       d.applies_powers = {{Power::Artifact, 1, Target::Character}};
+       d.exhaust = true;
+       return d;
+     }()},
+    {CardId::PanaceaPlus, [] {
+       CardData d = colorless("Panacea+", 0, CardType::Skill);
+       d.applies_powers = {{Power::Artifact, 2, Target::Character}};
+       d.exhaust = true;
+       return d;
+     }()},
+
+    // Panic Button: "Gain 30 Block. You cannot gain Block from cards for 2
+    // turns. Exhaust."
+    //
+    // UNPLAYABLE: the drawback needs a 2-turn "no block FROM CARDS" state.
+    // Shipping the 30 Block without it would be a strictly-better card, which
+    // is worse than shipping nothing — the block half is the upside.
+    {CardId::PanicButton, [] {
+       CardData d = colorless("Panic Button", 0, CardType::Skill);
+       d.block = 30;
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::PanicButtonPlus, [] {
+       CardData d = colorless("Panic Button+", 0, CardType::Skill);
+       d.block = 40;
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Purity: "Exhaust up to 3 cards in your hand. Exhaust."
+    //
+    // UNPLAYABLE: "up to N" is a multi-select with an optional count, which
+    // §9 defers — the choice machinery answers one option at a time.
+    {CardId::Purity, [] {
+       CardData d = colorless("Purity", 0, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::PurityPlus, [] {
+       CardData d = colorless("Purity+", 0, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Swift Strike: "Deal 7 damage."
+    {CardId::SwiftStrike, [] {
+       CardData d =
+           colorless("Swift Strike", 0, CardType::Attack, CardTarget::Enemy);
+       d.damage = 7;
+       return d;
+     }()},
+    {CardId::SwiftStrikePlus, [] {
+       CardData d =
+           colorless("Swift Strike+", 0, CardType::Attack, CardTarget::Enemy);
+       d.damage = 10;
+       return d;
+     }()},
+
+    // Trip: "Apply 2 Vulnerable." Like Blind, the upgrade changes the TARGET
+    // rather than the amount.
+    {CardId::Trip, [] {
+       CardData d = colorless("Trip", 0, CardType::Skill, CardTarget::Enemy);
+       d.applies_debuffs = {{Debuff::Vulnerable, 2, Target::Enemy}};
+       return d;
+     }()},
+    {CardId::TripPlus, [] {
+       CardData d =
+           colorless("Trip+", 0, CardType::Skill, CardTarget::AllEnemies);
+       d.applies_debuffs = {{Debuff::Vulnerable, 2, Target::Enemy}};
+       return d;
+     }()},
 };
 
 // Whether a card needs the player to PICK a specific enemy slot (ROB-80). Only

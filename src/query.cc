@@ -138,6 +138,11 @@ int base_card_damage(const CombatState& state, CardId card) {
     case DamageRule::EqualToBlock:
       // Body Slam: damage = the player's current block at resolution time.
       return state.character.current_block;
+    case DamageRule::EqualToDrawPile:
+      // Mind Blast: damage = cards left in the draw pile. Read at resolution,
+      // after the card has left the hand — so playing it never changes its own
+      // number, and any draw earlier in the same turn already shrank the pile.
+      return static_cast<int>(state.draw_pile.size());
     case DamageRule::PerStrikeInDeck:
       // Perfected Strike: base + bonus per "Strike"-named card. +1 counts the
       // card being played, which is in flight (out of hand) at this point.

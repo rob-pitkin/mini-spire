@@ -356,6 +356,14 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     a.amount = data.lose_hp;
     q.push_back(a);
   }
+  // Bandage Up: flat healing. Queued like every other effect, so it cannot heal
+  // above max HP and is visible to anything watching the Heal executor.
+  if (data.heal > 0) {
+    Action a;
+    a.kind = ActionKind::Heal;
+    a.amount = data.heal;
+    q.push_back(a);
+  }
   // Limit Break: multiply the player's Strength.
   if (data.strength_multiply > 0) {
     Action a;
@@ -431,6 +439,14 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
   // Double Tap's second copy enters NO pile ("not added to your draw or
   // discard pile, and not Exhausted unless the card would Exhaust normally" —
   // the first copy already handled that).
+  // Deep Breath: the reshuffle happens while this card is still IN FLIGHT, so
+  // it must be queued before the card's own pile move below. Queued after, the
+  // card would shuffle ITSELF back into the draw pile — a test caught exactly
+  // that. In StS a played card is in flight for its whole resolution and only
+  // then lands in the discard, which is what this ordering reproduces.
+  if (data.shuffles_discard_into_draw) {
+    q.push_back(Action{ActionKind::ShuffleDiscardIntoDraw});
+  }
   if (data.type != CardType::Power && ctx_play.enters_pile) {
     // Corruption also EXHAUSTS every Skill played (not just making them free).
     const bool corrupted_skill =
@@ -491,7 +507,20 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
 
   if (choice_before_draw) queue_choice();
 
-  if (data.draw > 0) {
+  // Impatience: the draw is conditional on the hand holding no Attacks. Checked
+  // HERE, at translation, rather than inside the executor — the card has already
+  // left the hand by this point, so it cannot count itself, and the condition
+  // reads the hand as the player sees it when they play the card.
+  bool draw_allowed = true;
+  if (data.draw_needs_no_attacks_in_hand) {
+    for (const Card& c : state.current_hand) {
+      if (CARD_DATABASE.at(c.card_id).type == CardType::Attack) {
+        draw_allowed = false;
+        break;
+      }
+    }
+  }
+  if (data.draw > 0 && draw_allowed) {
     Action a;
     a.kind = ActionKind::DrawCards;
     a.amount = data.draw;

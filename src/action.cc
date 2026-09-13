@@ -1610,6 +1610,17 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       }
       break;
     }
+    case ActionKind::ShuffleDiscardIntoDraw:
+      // Deep Breath. Shuffles with the combat RNG, so the resulting draw order
+      // is reproducible from the seed like every other shuffle.
+      if (!state.discard_pile.empty()) {
+        state.draw_pile.insert(state.draw_pile.end(),
+                               state.discard_pile.begin(),
+                               state.discard_pile.end());
+        state.discard_pile.clear();
+        std::shuffle(state.draw_pile.begin(), state.draw_pile.end(), state.rng);
+      }
+      break;
     case ActionKind::DiscardHand: {
       // End of the player's turn: unplayed Ethereal cards exhaust (ROB-65
       // Dazed), the rest discard. Routed through the executors so an ethereal
