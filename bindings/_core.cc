@@ -352,6 +352,8 @@ PYBIND11_MODULE(_core, m) {
       .value("Corruption", Power::Corruption)
       .value("Barricade", Power::Barricade)
       .value("DoubleTap", Power::DoubleTap)
+      .value("Vigor", Power::Vigor)
+      .value("PenNibCharge", Power::PenNibCharge)
       .value("StrengthDown", Power::StrengthDown);
 
   py::enum_<Target>(m, "Target")

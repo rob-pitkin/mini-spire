@@ -829,8 +829,17 @@ int compute_attack_damage(
   float d = static_cast<float>(base) +
             static_cast<float>(
                 get_status(attacker_powers, Power::Strength) * strength_mult);
+  // Vigor is ADDITIVE, alongside Strength — "X additional damage per hit" — so
+  // Weak and Vulnerable scale it like any other base damage. Adding it after
+  // the multipliers would make it immune to Weak, which it is not.
+  d += static_cast<float>(get_status(attacker_powers, Power::Vigor));
   if (get_status(attacker_debuffs, Debuff::Weak) > 0) d *= 0.75f;
   if (get_status(defender_debuffs, Debuff::Vulnerable) > 0) d *= vulnerable_mult;
+  // Pen Nib doubles. Position in this chain does not matter arithmetically —
+  // everything is float until the single floor below — but it sits last because
+  // that is where it reads in the game's own description: the final number is
+  // doubled.
+  if (get_status(attacker_powers, Power::PenNibCharge) > 0) d *= 2.0f;
   int result = static_cast<int>(std::floor(d));
   return result < 0 ? 0 : result;
 }

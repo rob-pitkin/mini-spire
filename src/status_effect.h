@@ -60,6 +60,16 @@ enum class Power {
   Corruption,    // Skills cost 0 and exhaust when played
   Barricade,     // block is not removed at the start of your turn
   DoubleTap,     // this turn, the next `stacks` Attacks are played twice
+  // --- Next-attack modifiers. Both are read inside compute_attack_damage and
+  // CONSUMED when the attack card finishes resolving, not per hit: a multi-hit
+  // card gets the benefit on every hit and spends the power once. ---
+  Vigor,         // next Attack deals `stacks` additional damage PER HIT.
+                 // Additive with Strength, so Weak and Vulnerable scale it too.
+                 // Akabeko grants 8 at combat start.
+  PenNibCharge,  // next Attack deals DOUBLE damage, on every hit of that card.
+                 // Named for the relic that grants it (Pen Nib, every 10th
+                 // Attack) rather than "Double Damage", because the relic's
+                 // counter and this charge are one mechanism.
   // --- Turn-scoped bookkeeping power. ---
   StrengthDown,  // turn end: lose `stacks` Strength, then remove self. StS
                  // models temporary Strength (Flex) as a Strength gain paired
@@ -79,7 +89,7 @@ enum class Power {
 // powers) because two of five is not worth a second table.
 inline constexpr int kNumDebuffs = 5;
 inline constexpr int kNumEnemyPowers = 6;
-inline constexpr int kNumPlayerPowers = 22;
+inline constexpr int kNumPlayerPowers = 24;
 
 // FUTURE (multi-enemy): Target { Character, Enemy } collapses any "the enemy"
 // to a single entity, which is unambiguous in v1 with one enemy. Multi-enemy

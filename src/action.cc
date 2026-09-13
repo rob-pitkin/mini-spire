@@ -617,6 +617,18 @@ void fire_card_played_relic(HeldRelic& relic, CardType type, ActionQueue& q) {
       }
       break;
 
+    case RelicId::PenNib:
+      // Every 10th Attack is doubled, and the counter persists across turns and
+      // combats like Nunchaku's. The tenth Attack must be doubled ITSELF, not
+      // the one after it — so the charge is granted on the ninth, ready for the
+      // tenth to consume. Granting it on the tenth would boost the eleventh.
+      if (type == CardType::Attack &&
+          ++relic.counter >= kPersistentCardRelicThreshold - 1) {
+        relic.counter = 0;
+        push_player_power(q, Power::PenNibCharge, 1);
+      }
+      break;
+
     case RelicId::BirdFacedUrn:
       // No counter at all: every Power heals.
       if (type == CardType::Power) push_player_heal(q, 2);
@@ -732,6 +744,13 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
             }
             break;
           }
+          case RelicId::Akabeko:
+            // 8 Vigor at combat start, so the FIRST Attack of the fight hits
+            // for +8 per hit. It is a one-shot: the charge is spent by that
+            // card, not refreshed each turn.
+            push_player_power(q, Power::Vigor, 8);
+            break;
+
           case RelicId::Girya:
             // The counter IS the Strength: one per Lift spent at a campfire,
             // carried across fights by the run-scoped counter (§3.3). A relic
@@ -1387,6 +1406,24 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // dealt damage or killed anything (ROB-65). Fires mid-drain, after the
       // card's own effects — the pre-queue 5b position.
       fire_player_power_hooks(state, Hook::CardPlayed, q, a.card);
+
+      // Next-attack modifiers are spent HERE, once per card, rather than per
+      // hit. Both say "your next attack", and the wiki is explicit that a
+      // multi-hit card gets the benefit on every hit — so a per-hit removal
+      // would give a 3-hit card one boosted hit and two plain ones.
+      //
+      // This runs after the card's damage has already resolved (the hits are
+      // queued ahead of this hook), so every hit read the power before it is
+      // removed.
+      if (CARD_DATABASE.at(a.card).type == CardType::Attack) {
+        if (get_status(state.character.powers, Power::Vigor) > 0) {
+          push_remove_player_power(q, Power::Vigor);
+        }
+        if (get_status(state.character.powers, Power::PenNibCharge) > 0) {
+          push_remove_player_power(q, Power::PenNibCharge);
+        }
+      }
+
       // Relics next. They take the card's TYPE, not its id — the id is
       // resolved to a type here, once, rather than in each relic arm.
       fire_relic_card_played(state, CARD_DATABASE.at(a.card).type, q);

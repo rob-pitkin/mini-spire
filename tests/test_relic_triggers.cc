@@ -33,6 +33,14 @@ CombatState bare_fight(uint32_t seed = 1) { return fight_with({}, seed); }
 
 // The same, as an ELITE fight. Several relics are conditional on the fight's
 // kind, which CombatState now carries as is_elite.
+// The combat action index for playing `id` at `target`. Derived the same way
+// the action space defines it, never as an offset from kEndTurnAction — the
+// option-slot channel sits after the combat block, so the last index is
+// decline, not end-turn.
+int card_action(CardId id, int target = 0) {
+  return static_cast<int>(id) * kMaxEnemies + target;
+}
+
 CombatState elite_fight_with(std::vector<RelicId> ids, uint32_t seed = 1) {
   CombatSetup setup;
   setup.seed = seed;
@@ -163,16 +171,129 @@ TEST(RelicTriggers, RelicsHeldInTheRunFireInTheRunsFights) {
   EXPECT_EQ(get_status(run.combat.character.powers, Power::Strength), 1);
 }
 
+// ===================================================================== batch A1
+// Vigor and Pen Nib's charge: next-attack modifiers, consumed PER CARD.
+
+namespace {
+
+// Damage the first enemy takes from one Strike, with the fight's state as given.
+int strike_damage(CombatState& s) {
+  for (Enemy& e : s.enemies) {
+    e.max_hp = 9999;
+    e.hp = 9999;
+    e.current_block = 0;
+  }
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.character.energy = 99;
+  const int before = s.enemies[0].hp;
+  EXPECT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+  return before - s.enemies[0].hp;
+}
+
+}  // namespace
+
+TEST(NextAttackPowers, VigorAddsToTheNextAttack) {
+  CombatState bare = bare_fight();
+  const int base = strike_damage(bare);
+
+  CombatState s = bare_fight();
+  s.character.powers[Power::Vigor] = 8;
+  EXPECT_EQ(strike_damage(s), base + 8);
+}
+
+// Consumed after ONE card, not carried to the next.
+TEST(NextAttackPowers, VigorIsSpentByTheFirstAttack) {
+  CombatState bare = bare_fight();
+  const int base = strike_damage(bare);
+
+  CombatState s = bare_fight();
+  s.character.powers[Power::Vigor] = 8;
+  ASSERT_EQ(strike_damage(s), base + 8);
+  EXPECT_EQ(strike_damage(s), base) << "Vigor survived the attack that spent it";
+  EXPECT_EQ(get_status(s.character.powers, Power::Vigor), 0);
+}
+
+// Vigor is ADDITIVE with Strength, so Weak and Vulnerable scale it. Applying it
+// after the multipliers would make it immune to Weak.
+TEST(NextAttackPowers, VigorIsScaledByWeak) {
+  CombatState plain = bare_fight();
+  plain.character.powers[Power::Vigor] = 8;
+  const int unweakened = strike_damage(plain);
+
+  CombatState weak = bare_fight();
+  weak.character.powers[Power::Vigor] = 8;
+  weak.character.debuffs[Debuff::Weak] = 1;
+  EXPECT_LT(strike_damage(weak), unweakened)
+      << "Weak did not scale the Vigor portion";
+}
+
+// A Skill must not spend it — "your next ATTACK".
+TEST(NextAttackPowers, VigorSurvivesASkill) {
+  CombatState s = bare_fight();
+  s.character.powers[Power::Vigor] = 8;
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.character.energy = 99;
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend, 0)));
+  EXPECT_EQ(get_status(s.character.powers, Power::Vigor), 8)
+      << "a Skill spent a next-ATTACK power";
+}
+
+TEST(NextAttackPowers, PenNibChargeDoublesTheNextAttack) {
+  CombatState bare = bare_fight();
+  const int base = strike_damage(bare);
+
+  CombatState s = bare_fight();
+  s.character.powers[Power::PenNibCharge] = 1;
+  EXPECT_EQ(strike_damage(s), base * 2);
+}
+
+TEST(NextAttackPowers, PenNibChargeIsSpentByTheFirstAttack) {
+  CombatState bare = bare_fight();
+  const int base = strike_damage(bare);
+
+  CombatState s = bare_fight();
+  s.character.powers[Power::PenNibCharge] = 1;
+  ASSERT_EQ(strike_damage(s), base * 2);
+  EXPECT_EQ(strike_damage(s), base);
+}
+
+// ---------------------------------------------------------- the two relics
+
+TEST(NextAttackPowers, AkabekoGrantsEightVigorAtCombatStart) {
+  const CombatState s = fight_with({RelicId::Akabeko});
+  EXPECT_EQ(get_status(s.character.powers, Power::Vigor), 8);
+}
+
+TEST(NextAttackPowers, AkabekoBoostsOnlyTheFirstAttack) {
+  CombatState bare = bare_fight();
+  const int base = strike_damage(bare);
+
+  CombatState s = fight_with({RelicId::Akabeko});
+  ASSERT_EQ(strike_damage(s), base + 8);
+  EXPECT_EQ(strike_damage(s), base) << "Akabeko boosted a second Attack";
+}
+
+// The TENTH Attack must be doubled itself, not the eleventh. The charge is
+// granted on the ninth so the tenth can consume it — granting on the tenth
+// would boost the one after.
+TEST(NextAttackPowers, PenNibDoublesTheTenthAttackNotTheEleventh) {
+  CombatState bare = bare_fight();
+  const int base = strike_damage(bare);
+
+  CombatState s = fight_with({RelicId::PenNib});
+  for (int i = 1; i <= 9; ++i) {
+    EXPECT_EQ(strike_damage(s), base) << "attack " << i << " was boosted";
+  }
+  EXPECT_EQ(strike_damage(s), base * 2) << "the tenth Attack was not doubled";
+  EXPECT_EQ(strike_damage(s), base) << "the eleventh Attack was doubled";
+}
+
 // ====================================================================== batch 5
 // Card-play relics. Two counter kinds on ONE hook: per-turn and persistent.
 
 namespace {
-
-// The combat action index for playing `id` at `target`. Derived the same way
-// the action space defines it, never as an offset from kEndTurnAction.
-int card_action(CardId id, int target = 0) {
-  return static_cast<int>(id) * kMaxEnemies + target;
-}
 
 // Play `n` Strikes at the first living enemy. Returns false if the fight ended.
 bool play_strikes(CombatState& s, int n) {
