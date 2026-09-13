@@ -243,7 +243,7 @@ per §1.
 
 ---
 
-## 7. Status: 63 of 140 wired
+## 7. Status: 69 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -254,7 +254,7 @@ have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
 |---|---|---|
-| **Missing `Power`s** | Bronze Scales (Thorns), Akabeko (Vigor), Incense Burner (Intangible), Fossilized Helix (Buffer), Thread and Needle (Plated Armor), Pen Nib (double-damage) | six relics, six powers — each a real engine addition |
+| ~~**Missing `Power`s**~~ | ~~Bronze Scales, Akabeko, Incense Burner, Fossilized Helix, Thread and Needle, Pen Nib~~ | ✅ **done.** All six Powers exist: Vigor, PenNibCharge, Intangible, Buffer, Thorns, PlatedArmor. Intangible is the one power that ticks — a named exception to the status model (Rob, 2026-09-12). |
 | **No curse cards** | Omamori, Darkstone Periapt, Blue Candle, and the unreachable halves of Du-Vu Doll and Cursed Key | §6.4 |
 | **No colorless cards** | Toolbox, Prismatic Shard, Orrery, Dolly's Mirror, Cauldron | also blocks the shop's 2 colorless slots |
 | **No events** | Neow's Lament, Odd Mushroom, Warped Tongs, Spirit Poop, and the 5 Face Trader masks | 10 of the special-tier relics |
