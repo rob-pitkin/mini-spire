@@ -18,6 +18,15 @@ namespace {
 
 // Debuffs decrement by 1 at end of the bearer's turn; remove at 0. Powers never
 // tick — decrement-ness is now the TYPE, so no per-effect denylist.
+// Intangible loses one stack at the end of the player's turn. The only power
+// that decrements — everything else is either permanent for the fight or
+// removed wholesale at a named hook (Flame Barrier, Rage).
+void tick_intangible(std::unordered_map<Power, int>& powers) {
+  auto it = powers.find(Power::Intangible);
+  if (it == powers.end()) return;
+  if (--it->second <= 0) powers.erase(it);
+}
+
 void tick_debuffs(std::unordered_map<Debuff, int>& debuffs) {
   for (auto it = debuffs.begin(); it != debuffs.end();) {
     it->second -= 1;
@@ -698,8 +707,16 @@ void handle_end_turn(CombatState& state) {
     check_enemy_terminal(state);
     if (state.outcome != Outcome::InProgress) return;
   }
-  // 1b. Tick character debuffs (powers never tick)
+  // 1b. Tick character debuffs, and the ONE power that ticks.
+  //
+  // Intangible is a deliberate, named exception to "powers never tick" (Rob,
+  // 2026-09-12; see status_effect.h). It is a duration BUFF in StS — beneficial,
+  // so it cannot live in the debuff map, which would put it in the wrong
+  // observation block and route it through Artifact. Handled here explicitly
+  // rather than by a per-power tick list, so the exception stays one line and
+  // one name instead of becoming a general mechanism.
   tick_debuffs(state.character.debuffs);
+  tick_intangible(state.character.powers);
   // 1c. Discard leftover energy
   state.character.energy = 0;
 

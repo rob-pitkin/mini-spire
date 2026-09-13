@@ -353,6 +353,8 @@ PYBIND11_MODULE(_core, m) {
       .value("Barricade", Power::Barricade)
       .value("DoubleTap", Power::DoubleTap)
       .value("Vigor", Power::Vigor)
+      .value("Intangible", Power::Intangible)
+      .value("Buffer", Power::Buffer)
       .value("PenNibCharge", Power::PenNibCharge)
       .value("StrengthDown", Power::StrengthDown);
 

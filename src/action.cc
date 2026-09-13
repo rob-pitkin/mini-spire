@@ -35,10 +35,58 @@ void gain_block(CombatState& state, int slot, int amount) {
   }
 }
 
+// Buffer: prevent the next `stacks` times you would LOSE HP. Spends one stack,
+// and only when HP would actually be lost — a fully blocked hit or a 0-damage
+// attack spends nothing, which the wiki calls out as a deliberate fix.
+//
+// Returns true if the loss was absorbed.
+bool buffer_absorbs_hp_loss(CombatState& state) {
+  auto it = state.character.powers.find(Power::Buffer);
+  if (it == state.character.powers.end() || it->second <= 0) return false;
+  if (--it->second <= 0) state.character.powers.erase(it);
+  return true;
+}
+
+// Intangible caps ANY incoming damage or HP loss at 1. Applied BEFORE block, so
+// 20 damage into 5 block becomes 1 damage that the block then absorbs entirely
+// — the cap is on the incoming number, not on what reaches HP.
+int intangible_capped(const CombatState& state, int amount) {
+  if (amount <= 0) return amount;
+  if (get_status(state.character.powers, Power::Intangible) <= 0) return amount;
+  return 1;
+}
+
 void lose_player_hp(CombatState& state, int amount) {
   if (amount <= 0) return;
+  amount = intangible_capped(state, amount);
+  if (buffer_absorbs_hp_loss(state)) return;
   state.character.hp -= amount;
   if (state.character.hp < 0) state.character.hp = 0;
+}
+
+// Damage TO the player: block absorbs first, then Buffer eats whatever would
+// have reached HP. Block is still spent either way.
+//
+// The single path for damage aimed at the player, so a new damage source cannot
+// quietly skip Buffer — there are three call sites (enemy attacks, fixed damage
+// like Burn, and direct HP loss) and getting one of them wrong is invisible
+// until the relic exists.
+//
+// Returns true if HP was actually lost.
+bool damage_player(CombatState& state, int amount) {
+  if (amount <= 0) return false;
+  // Intangible first: it caps the incoming number, and block then absorbs the
+  // capped 1. Capping AFTER block would let a 20-damage hit chew through 20
+  // block before being reduced.
+  amount = intangible_capped(state, amount);
+  const int blocked = std::min(amount, state.character.current_block);
+  state.character.current_block -= blocked;
+  const int to_hp = amount - blocked;
+  if (to_hp <= 0) return false;  // fully blocked: Buffer is not spent
+  if (buffer_absorbs_hp_loss(state)) return false;
+  state.character.hp -= to_hp;
+  if (state.character.hp < 0) state.character.hp = 0;
+  return true;
 }
 
 void gain_energy(CombatState& state, int amount) {
@@ -496,6 +544,17 @@ void fire_turn_start_relic(CombatState& state, HeldRelic& relic,
       push_power_all_enemies(state, q, Power::Strength, 1);
       break;
 
+    case RelicId::IncenseBurner:
+      // Same shape as Happy Flower: a run-scoped turn counter that fires on
+      // reaching its threshold and resets. 1 Intangible, which then ticks away
+      // at the end of that same turn — so it protects the enemy phase that
+      // follows, which is the point of it.
+      if (++relic.counter >= kIncenseBurnerTurns) {
+        relic.counter = 0;
+        push_player_power(q, Power::Intangible, 1);
+      }
+      break;
+
     case RelicId::HappyFlower:
       // The counter is incremented at the START of the player's turn and is NOT
       // reset between combats — so a counter left at 2 fires on the first turn
@@ -744,6 +803,10 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
             }
             break;
           }
+          case RelicId::FossilizedHelix:
+            push_player_power(q, Power::Buffer, 1);
+            break;
+
           case RelicId::Akabeko:
             // 8 Vigor at combat start, so the FIRST Attack of the fight hits
             // for +8 per hit. It is a one-shot: the charge is spent by that
@@ -1090,12 +1153,9 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         const int dmg = compute_attack_damage(
             a.amount, state.enemies[a.actor].powers,
             state.enemies[a.actor].debuffs, state.character.debuffs);
-        const int hp_before = state.character.hp;
-        apply_damage_to_hp_block(state.character.hp,
-                                 state.character.current_block, dmg);
         // Blood for Blood counts HP-loss events from ANY source, so unblocked
         // enemy damage counts too (Rupture, by contrast, does not fire here).
-        if (state.character.hp < hp_before) state.character.hp_loss_events += 1;
+        if (damage_player(state, dmg)) state.character.hp_loss_events += 1;
         // Flame Barrier retaliates on being attacked, even if fully blocked.
         fire_player_power_hooks(state, Hook::PlayerAttacked, q, a.card,
                                 a.actor);
@@ -1118,13 +1178,8 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       if (a.target == kPlayerSlot) {
         // Fixed damage TO the player (Burn's end-of-turn tick). Blockable,
         // and it is damage rather than HP loss, so Rupture does not fire.
-        if (a.amount > 0) {
-          const int hp_before = state.character.hp;
-          apply_damage_to_hp_block(state.character.hp,
-                                   state.character.current_block, a.amount);
-          if (state.character.hp < hp_before) {
-            state.character.hp_loss_events += 1;  // Blood for Blood counts it
-          }
+        if (damage_player(state, a.amount)) {
+          state.character.hp_loss_events += 1;  // Blood for Blood counts it
         }
         break;
       }

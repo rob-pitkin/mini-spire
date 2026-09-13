@@ -66,6 +66,23 @@ enum class Power {
   Vigor,         // next Attack deals `stacks` additional damage PER HIT.
                  // Additive with Strength, so Weak and Vulnerable scale it too.
                  // Akabeko grants 8 at combat start.
+  Intangible,    // reduce ALL incoming damage and HP loss to 1.
+                 //
+                 // THE ONE POWER THAT TICKS (Rob, 2026-09-12). The rule below
+                 // — powers never decrement, decrement-ness is the TYPE — holds
+                 // for everything else; Intangible is a duration buff in StS
+                 // and loses a stack at the end of the player's turn. It is not
+                 // modelled as a Debuff because it is beneficial: putting it in
+                 // the debuff map would show it in the wrong observation block
+                 // and route it through Artifact, which negates debuffs.
+                 //
+                 // The exception is narrow and named, not a general denylist.
+                 // Flame Barrier and Rage are NOT counterexamples: they are
+                 // one-turn flags removed wholesale at a named hook.
+  Buffer,        // prevent the next `stacks` times you would LOSE HP. A
+                 // COUNTER, not a duration: it does not tick, and a stack is
+                 // spent only when HP would actually be lost — a fully blocked
+                 // hit or a 0-damage attack spends nothing.
   PenNibCharge,  // next Attack deals DOUBLE damage, on every hit of that card.
                  // Named for the relic that grants it (Pen Nib, every 10th
                  // Attack) rather than "Double Damage", because the relic's
@@ -89,7 +106,7 @@ enum class Power {
 // powers) because two of five is not worth a second table.
 inline constexpr int kNumDebuffs = 5;
 inline constexpr int kNumEnemyPowers = 6;
-inline constexpr int kNumPlayerPowers = 24;
+inline constexpr int kNumPlayerPowers = 26;
 
 // FUTURE (multi-enemy): Target { Character, Enemy } collapses any "the enemy"
 // to a single entity, which is unambiguous in v1 with one enemy. Multi-enemy

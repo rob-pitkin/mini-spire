@@ -171,6 +171,207 @@ TEST(RelicTriggers, RelicsHeldInTheRunFireInTheRunsFights) {
   EXPECT_EQ(get_status(run.combat.character.powers, Power::Strength), 1);
 }
 
+// ===================================================================== batch A2
+// Buffer: prevent the next N times you would LOSE HP. A counter, not a
+// duration — it does not tick, and only an actual HP loss spends a stack.
+
+namespace {
+
+// Deal `amount` fixed damage to the player through the real executor path.
+void hit_player(CombatState& s, int amount) {
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::DealFixedDamage};
+  a.target = kPlayerSlot;
+  a.amount = amount;
+  q.push_back(a);
+  drain(s, q, ctx);
+}
+
+}  // namespace
+
+TEST(BufferPower, BufferPreventsOneHpLoss) {
+  CombatState s = bare_fight();
+  s.character.current_block = 0;
+  s.character.powers[Power::Buffer] = 1;
+  const int hp = s.character.hp;
+
+  hit_player(s, 20);
+  EXPECT_EQ(s.character.hp, hp) << "Buffer did not absorb the hit";
+  EXPECT_EQ(get_status(s.character.powers, Power::Buffer), 0);
+
+  hit_player(s, 20);
+  EXPECT_EQ(s.character.hp, hp - 20) << "a spent Buffer still absorbed";
+}
+
+TEST(BufferPower, StacksAbsorbOneInstanceEach) {
+  CombatState s = bare_fight();
+  s.character.current_block = 0;
+  s.character.powers[Power::Buffer] = 2;
+  const int hp = s.character.hp;
+
+  hit_player(s, 5);
+  hit_player(s, 5);
+  EXPECT_EQ(s.character.hp, hp);
+  hit_player(s, 5);
+  EXPECT_EQ(s.character.hp, hp - 5);
+}
+
+// A fully blocked hit must NOT spend a stack — the wiki calls this out as a
+// deliberate fix ("no longer lost when hit by 0 damage attacks"). Block is
+// still consumed.
+TEST(BufferPower, AFullyBlockedHitDoesNotSpendAStack) {
+  CombatState s = bare_fight();
+  s.character.current_block = 20;
+  s.character.powers[Power::Buffer] = 1;
+  const int hp = s.character.hp;
+
+  hit_player(s, 5);
+  EXPECT_EQ(s.character.hp, hp);
+  EXPECT_EQ(s.character.current_block, 15) << "block should still be spent";
+  EXPECT_EQ(get_status(s.character.powers, Power::Buffer), 1)
+      << "a blocked hit spent a Buffer stack";
+}
+
+// Block absorbs first, and only what would have reached HP is buffered.
+TEST(BufferPower, BlockAppliesBeforeBuffer) {
+  CombatState s = bare_fight();
+  s.character.current_block = 5;
+  s.character.powers[Power::Buffer] = 1;
+  const int hp = s.character.hp;
+
+  hit_player(s, 12);
+  EXPECT_EQ(s.character.hp, hp) << "the 7 that got past block was not buffered";
+  EXPECT_EQ(s.character.current_block, 0);
+  EXPECT_EQ(get_status(s.character.powers, Power::Buffer), 0);
+}
+
+// It covers direct HP loss too, not just damage — "the next time you would
+// lose HP", from any source.
+TEST(BufferPower, BufferCoversDirectHpLoss) {
+  CombatState s = bare_fight();
+  s.character.powers[Power::Buffer] = 1;
+  const int hp = s.character.hp;
+
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::LoseHp};
+  a.amount = 9;
+  q.push_back(a);
+  drain(s, q, ctx);
+
+  EXPECT_EQ(s.character.hp, hp) << "Buffer did not cover direct HP loss";
+}
+
+// A counter, not a duration: it survives turn boundaries untouched.
+TEST(BufferPower, BufferDoesNotTickDown) {
+  CombatState s = bare_fight();
+  s.character.powers[Power::Buffer] = 2;
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  ASSERT_EQ(s.outcome, Outcome::InProgress);
+  EXPECT_GE(get_status(s.character.powers, Power::Buffer), 1)
+      << "Buffer ticked like a duration effect";
+}
+
+TEST(BufferPower, FossilizedHelixGrantsBufferAtCombatStart) {
+  const CombatState s = fight_with({RelicId::FossilizedHelix});
+  EXPECT_EQ(get_status(s.character.powers, Power::Buffer), 1);
+}
+
+// ------------------------------------------------------------- Intangible
+
+TEST(IntangiblePower, AllDamageBecomesOne) {
+  CombatState s = bare_fight();
+  s.character.current_block = 0;
+  s.character.powers[Power::Intangible] = 1;
+  const int hp = s.character.hp;
+  hit_player(s, 30);
+  EXPECT_EQ(s.character.hp, hp - 1);
+}
+
+// The cap is on the INCOMING number, applied before block — so a 30-damage hit
+// becomes 1 and the block absorbs it entirely, spending 1 block rather than 30.
+TEST(IntangiblePower, TheCapAppliesBeforeBlock) {
+  CombatState s = bare_fight();
+  s.character.current_block = 5;
+  s.character.powers[Power::Intangible] = 1;
+  const int hp = s.character.hp;
+
+  hit_player(s, 30);
+  EXPECT_EQ(s.character.hp, hp) << "the capped 1 should have been blocked";
+  EXPECT_EQ(s.character.current_block, 4)
+      << "block was chewed through before the cap applied";
+}
+
+// It covers HP LOSS too, not just damage.
+TEST(IntangiblePower, DirectHpLossIsAlsoCappedAtOne) {
+  CombatState s = bare_fight();
+  s.character.powers[Power::Intangible] = 1;
+  const int hp = s.character.hp;
+
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::LoseHp};
+  a.amount = 25;
+  q.push_back(a);
+  drain(s, q, ctx);
+
+  EXPECT_EQ(s.character.hp, hp - 1);
+}
+
+// THE exception: it ticks at end of turn, and it is the only power that does.
+TEST(IntangiblePower, TicksDownAtEndOfTurn) {
+  CombatState s = bare_fight();
+  s.character.powers[Power::Intangible] = 2;
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  ASSERT_EQ(s.outcome, Outcome::InProgress);
+  EXPECT_EQ(get_status(s.character.powers, Power::Intangible), 1);
+
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  ASSERT_EQ(s.outcome, Outcome::InProgress);
+  EXPECT_EQ(get_status(s.character.powers, Power::Intangible), 0)
+      << "Intangible did not expire";
+}
+
+// And no OTHER power ticks — the exception must stay an exception.
+//
+// Block is stacked high deliberately: the enemy attacks during the turn
+// boundary, and an unblocked hit would SPEND a Buffer stack. That is correct
+// behaviour and would look exactly like a tick here, so the two are separated
+// rather than left to coincide.
+TEST(IntangiblePower, OtherPowersStillDoNotTick) {
+  CombatState s = bare_fight();
+  s.character.powers[Power::Strength] = 3;
+  s.character.powers[Power::Buffer] = 2;
+  s.character.current_block = 500;
+
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  ASSERT_EQ(s.outcome, Outcome::InProgress);
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 3);
+  EXPECT_EQ(get_status(s.character.powers, Power::Buffer), 2)
+      << "Buffer ticked like a duration effect";
+}
+
+// One stack protects the enemy phase that follows, then expires — which is what
+// makes Incense Burner worth holding.
+TEST(IntangiblePower, IncenseBurnerFiresEverySixthTurn) {
+  CombatState s = fight_with({RelicId::IncenseBurner});
+  ASSERT_EQ(get_status(s.character.powers, Power::Intangible), 0)
+      << "turn 1 should not fire";
+
+  for (int turn = 2; turn <= 5; ++turn) {
+    ASSERT_TRUE(apply_action(s, kEndTurnAction));
+    ASSERT_EQ(s.outcome, Outcome::InProgress);
+    EXPECT_EQ(get_status(s.character.powers, Power::Intangible), 0)
+        << "turn " << turn << " should not fire";
+  }
+
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));  // turn 6
+  ASSERT_EQ(s.outcome, Outcome::InProgress);
+  EXPECT_EQ(get_status(s.character.powers, Power::Intangible), 1)
+      << "Incense Burner did not fire on turn 6";
+}
+
 // ===================================================================== batch A1
 // Vigor and Pen Nib's charge: next-attack modifiers, consumed PER CARD.
 
