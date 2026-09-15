@@ -266,7 +266,7 @@ TEST(CardUpgrades, KnownPairsAreCorrect) {
   // 74 base pairs + 11 ROB-87 ladder edges (5 Searing Blow rungs, 6 grown
   // Rampage rungs crossing to their Rampage+ counterparts) + the colorless
   // block, one pair per card as each is added.
-  EXPECT_EQ(CARD_UPGRADES.size(), 105u);
+  EXPECT_EQ(CARD_UPGRADES.size(), 120u);
   // Status cards: not upgradable (StS).
   EXPECT_FALSE(is_upgradable(CardId::Slimed));
   EXPECT_FALSE(is_upgradable(CardId::Dazed));

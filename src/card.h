@@ -296,12 +296,44 @@ enum class CardId {
   SwiftStrikePlus,
   Trip,
   TripPlus,
+
+  // --- Colorless, rare pool (15 cards) ---
+  Apotheosis,
+  ApotheosisPlus,
+  HandOfGreed,
+  HandOfGreedPlus,
+  MasterOfStrategy,
+  MasterOfStrategyPlus,
+  Violence,
+  ViolencePlus,
+  Chrysalis,
+  ChrysalisPlus,
+  Metamorphosis,
+  MetamorphosisPlus,
+  Transmutation,
+  TransmutationPlus,
+  Magnetism,
+  MagnetismPlus,
+  Mayhem,
+  MayhemPlus,
+  Panache,
+  PanachePlus,
+  SadisticNature,
+  SadisticNaturePlus,
+  SecretTechnique,
+  SecretTechniquePlus,
+  SecretWeapon,
+  SecretWeaponPlus,
+  TheBomb,
+  TheBombPlus,
+  ThinkingAhead,
+  ThinkingAheadPlus,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
 // action-space size (card x target). Update CARD_DATABASE + kObsCardOrder in
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
-inline constexpr int kNumCardTypes = 229;
+inline constexpr int kNumCardTypes = 259;
 
 // A card's inherent StS type. This is a real property, NOT inferable from
 // damage/block: an Attack can gain block (Body Slam) and a Skill can deal
@@ -631,6 +663,22 @@ inline const std::unordered_map<CardId, CardId> CARD_UPGRADES = {
     {CardId::Purity, CardId::PurityPlus},
     {CardId::SwiftStrike, CardId::SwiftStrikePlus},
     {CardId::Trip, CardId::TripPlus},
+    // --- Colorless, rare pool ---
+    {CardId::Apotheosis, CardId::ApotheosisPlus},
+    {CardId::HandOfGreed, CardId::HandOfGreedPlus},
+    {CardId::MasterOfStrategy, CardId::MasterOfStrategyPlus},
+    {CardId::Violence, CardId::ViolencePlus},
+    {CardId::Chrysalis, CardId::ChrysalisPlus},
+    {CardId::Metamorphosis, CardId::MetamorphosisPlus},
+    {CardId::Transmutation, CardId::TransmutationPlus},
+    {CardId::Magnetism, CardId::MagnetismPlus},
+    {CardId::Mayhem, CardId::MayhemPlus},
+    {CardId::Panache, CardId::PanachePlus},
+    {CardId::SadisticNature, CardId::SadisticNaturePlus},
+    {CardId::SecretTechnique, CardId::SecretTechniquePlus},
+    {CardId::SecretWeapon, CardId::SecretWeaponPlus},
+    {CardId::TheBomb, CardId::TheBombPlus},
+    {CardId::ThinkingAhead, CardId::ThinkingAheadPlus},
     {CardId::WildStrike, CardId::WildStrikePlus},
     {CardId::PowerThrough, CardId::PowerThroughPlus},
     {CardId::Immolate, CardId::ImmolatePlus},
@@ -729,6 +777,34 @@ inline const std::vector<CardId> IRONCLAD_RARE_POOL = {
     CardId::Brutality,  CardId::Juggernaut, CardId::Impervious, CardId::Berserk,
     CardId::FiendFire,  CardId::Barricade, CardId::Corruption, CardId::LimitBreak,
     CardId::Feed,       CardId::Bludgeon,  CardId::DemonForm,  CardId::DoubleTap,
+};
+
+// The colorless pool, split {0 common, 20 uncommon, 15 rare} — the same shape
+// sts_lightspeed's ColorlessRarityCardPool declares, and each row here was
+// wiki-verified as it was written rather than transcribed in bulk.
+//
+// There is deliberately NO common tier: colorless has none, which is why the
+// shop's colorless slots and Neow's blessings roll only these two.
+//
+// Only the UNUPGRADED ids. A pool is what can be OFFERED; the upgraded forms
+// are reached by upgrading. (Transmutation+ generates upgraded colorless cards,
+// which is a transform of this list rather than a second pool.)
+inline const std::vector<CardId> COLORLESS_UNCOMMON_POOL = {
+    CardId::BandageUp,       CardId::Blind,        CardId::DarkShackles,
+    CardId::DeepBreath,      CardId::Discovery,    CardId::DramaticEntrance,
+    CardId::Enlightenment,   CardId::Finesse,      CardId::FlashOfSteel,
+    CardId::Forethought,     CardId::GoodInstincts, CardId::Impatience,
+    CardId::JackOfAllTrades, CardId::Madness,      CardId::MindBlast,
+    CardId::Panacea,         CardId::PanicButton,  CardId::Purity,
+    CardId::SwiftStrike,     CardId::Trip,
+};
+
+inline const std::vector<CardId> COLORLESS_RARE_POOL = {
+    CardId::Apotheosis,     CardId::Chrysalis,    CardId::HandOfGreed,
+    CardId::Magnetism,      CardId::MasterOfStrategy, CardId::Mayhem,
+    CardId::Metamorphosis,  CardId::Panache,      CardId::SadisticNature,
+    CardId::SecretTechnique, CardId::SecretWeapon, CardId::TheBomb,
+    CardId::ThinkingAhead,  CardId::Transmutation, CardId::Violence,
 };
 
 // What a card BECOMES after being played, for cards that grow (ROB-87). Growth
@@ -1490,6 +1566,255 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
        CardData d =
            colorless("Trip+", 0, CardType::Skill, CardTarget::AllEnemies);
        d.applies_debuffs = {{Debuff::Vulnerable, 2, Target::Enemy}};
+       return d;
+     }()},
+
+    // ------------------------------------------------ colorless, rare pool ---
+
+    // Apotheosis: "Upgrade ALL your cards for the rest of combat. Exhaust."
+    // The upgrade changes only the cost, 2 to 1.
+    //
+    // UNPLAYABLE: UpgradeHand exists (Armaments+) but touches only the hand.
+    // This upgrades hand, draw, discard AND exhaust piles, does not upgrade
+    // itself, and does not reach cards generated afterwards — three conditions
+    // a hand-only action does not express.
+    {CardId::Apotheosis, [] {
+       CardData d = colorless("Apotheosis", 2, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::ApotheosisPlus, [] {
+       CardData d = colorless("Apotheosis+", 1, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Hand of Greed: "Deal 20 damage. If Fatal, gain 20 Gold."
+    //
+    // UNPLAYABLE, and the reason is STRUCTURAL rather than a missing effect:
+    // gold lives in RunState and combat has no channel to it. Every effect so
+    // far has stayed inside CombatState. Feed's max_hp_on_kill shows the
+    // if-Fatal detection already exists — what is missing is somewhere for the
+    // gold to go. See relic-effects.md for the same shape in Runic Dome, whose
+    // drawback lives in the observation.
+    {CardId::HandOfGreed, [] {
+       CardData d =
+           colorless("Hand of Greed", 2, CardType::Attack, CardTarget::Enemy);
+       d.damage = 20;
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::HandOfGreedPlus, [] {
+       CardData d =
+           colorless("Hand of Greed+", 2, CardType::Attack, CardTarget::Enemy);
+       d.damage = 25;
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Master of Strategy: "Draw 3 cards. Exhaust."
+    {CardId::MasterOfStrategy, [] {
+       CardData d = colorless("Master of Strategy", 0, CardType::Skill);
+       d.draw = 3;
+       d.exhaust = true;
+       return d;
+     }()},
+    {CardId::MasterOfStrategyPlus, [] {
+       CardData d = colorless("Master of Strategy+", 0, CardType::Skill);
+       d.draw = 4;
+       d.exhaust = true;
+       return d;
+     }()},
+
+    // Violence: "Put 3 random Attacks from your draw pile into your hand.
+    // Exhaust."
+    //
+    // UNPLAYABLE: needs a move of N random cards MATCHING A TYPE from the draw
+    // pile to the hand. Nothing moves cards draw->hand selectively today; the
+    // draw path takes from the top without filtering.
+    {CardId::Violence, [] {
+       CardData d = colorless("Violence", 0, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::ViolencePlus, [] {
+       CardData d = colorless("Violence+", 0, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Chrysalis / Metamorphosis: "Shuffle 3 random Skills [Attacks] into your
+    // draw pile. They cost 0 this combat. Exhaust." Mirror images of each
+    // other, differing only in the card type they generate.
+    //
+    // UNPLAYABLE: generation into the draw pile, plus a per-instance "costs 0
+    // this combat" marker on cards that do not exist yet. Both halves are the
+    // same gaps Madness and Forethought hit.
+    {CardId::Chrysalis, [] {
+       CardData d = colorless("Chrysalis", 2, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::ChrysalisPlus, [] {
+       CardData d = colorless("Chrysalis+", 2, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::Metamorphosis, [] {
+       CardData d = colorless("Metamorphosis", 2, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::MetamorphosisPlus, [] {
+       CardData d = colorless("Metamorphosis+", 2, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Transmutation: "Add X random Colorless cards into your hand. They cost 0
+    // this turn. Exhaust." The upgrade generates UPGRADED colorless cards — a
+    // change to what is generated, not how many.
+    //
+    // UNPLAYABLE: colorless generation, and the pool is still being populated.
+    {CardId::Transmutation, [] {
+       CardData d = colorless("Transmutation", kXCost, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::TransmutationPlus, [] {
+       CardData d = colorless("Transmutation+", kXCost, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Magnetism: "At the start of your turn, add a random Colorless card into
+    // your hand." The only colorless POWER, and the upgrade changes only the
+    // cost, 2 to 1.
+    //
+    // UNPLAYABLE: a turn-start power that generates. The power registry can
+    // hold it, but the generation it needs does not exist.
+    {CardId::Magnetism, [] {
+       CardData d = colorless("Magnetism", 2, CardType::Power);
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::MagnetismPlus, [] {
+       CardData d = colorless("Magnetism+", 1, CardType::Power);
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Mayhem: "At the start of your turn, play the top card of your draw pile."
+    // UNPLAYABLE: Havoc's plays_top_of_draw exists as a CARD effect; this needs
+    // it as a recurring POWER, fired at turn start.
+    {CardId::Mayhem, [] {
+       CardData d = colorless("Mayhem", 2, CardType::Power);
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::MayhemPlus, [] {
+       CardData d = colorless("Mayhem+", 1, CardType::Power);
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Panache: "Every time you play 5 cards in a single turn, deal 10 damage to
+    // ALL enemies."
+    // UNPLAYABLE: a POWER with a per-turn play counter. The relic counters
+    // (Kunai, Shuriken) are the same shape, but powers have no counter field —
+    // their stacks are the effect's magnitude, not a tally.
+    {CardId::Panache, [] {
+       CardData d = colorless("Panache", 0, CardType::Power);
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::PanachePlus, [] {
+       CardData d = colorless("Panache+", 0, CardType::Power);
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Sadistic Nature: "Whenever you apply a debuff to an enemy, they take 5
+    // damage."
+    // UNPLAYABLE: needs an on-debuff-APPLIED hook. apply_debuff is a mutator,
+    // not a trigger site, and adding one there touches every debuff in the game.
+    {CardId::SadisticNature, [] {
+       CardData d = colorless("Sadistic Nature", 0, CardType::Power);
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::SadisticNaturePlus, [] {
+       CardData d = colorless("Sadistic Nature+", 0, CardType::Power);
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Secret Technique / Secret Weapon: "Put a Skill [Attack] from your draw
+    // pile into your hand. Exhaust." Mirror images, and BOTH upgrades remove
+    // the Exhaust rather than changing a number.
+    // UNPLAYABLE: a choice whose options are the draw pile FILTERED BY TYPE.
+    {CardId::SecretTechnique, [] {
+       CardData d = colorless("Secret Technique", 0, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::SecretTechniquePlus, [] {
+       CardData d = colorless("Secret Technique+", 0, CardType::Skill);
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::SecretWeapon, [] {
+       CardData d = colorless("Secret Weapon", 0, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::SecretWeaponPlus, [] {
+       CardData d = colorless("Secret Weapon+", 0, CardType::Skill);
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // The Bomb: "At the end of 3 turns, deal 40 damage to ALL enemies."
+    // UNPLAYABLE: a DELAYED effect — the only card in the block that schedules
+    // something for a future turn. Nothing in the engine defers an effect
+    // across turn boundaries today.
+    {CardId::TheBomb, [] {
+       CardData d = colorless("The Bomb", 2, CardType::Skill);
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::TheBombPlus, [] {
+       CardData d = colorless("The Bomb+", 2, CardType::Skill);
+       d.unplayable = true;
+       return d;
+     }()},
+
+    // Thinking Ahead: "Draw 2 cards. Put a card from your hand on top of your
+    // draw pile. Exhaust." The upgrade removes the Exhaust.
+    // UNPLAYABLE: the hand-to-top-of-draw choice. ChoiceKind::HandToTopOfDraw
+    // exists, but this card pairs it with a draw that must resolve FIRST — the
+    // card put back can be one just drawn.
+    {CardId::ThinkingAhead, [] {
+       CardData d = colorless("Thinking Ahead", 0, CardType::Skill);
+       d.exhaust = true;
+       d.unplayable = true;
+       return d;
+     }()},
+    {CardId::ThinkingAheadPlus, [] {
+       CardData d = colorless("Thinking Ahead+", 0, CardType::Skill);
+       d.unplayable = true;
        return d;
      }()},
 };

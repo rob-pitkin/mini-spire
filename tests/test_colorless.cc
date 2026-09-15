@@ -487,4 +487,78 @@ TEST(Colorless, TheNotYetPlayableUncommonsAreExactlyTheseSeven) {
   }
 }
 
+// ================================================ all 35, as a complete block
+
+// The pools are the authority on what exists. sts_lightspeed's
+// ColorlessRarityCardPool declares {0 common, 20 uncommon, 15 rare}; these
+// match, card for card.
+TEST(Colorless, ThePoolsAreTwentyAndFifteen) {
+  EXPECT_EQ(COLORLESS_UNCOMMON_POOL.size(), 20u);
+  EXPECT_EQ(COLORLESS_RARE_POOL.size(), 15u);
+}
+
+// There is no common colorless tier — worth pinning, because a shop or Neow
+// roll that assumed three tiers would silently offer nothing.
+TEST(Colorless, EveryPoolCardIsRealAndUpgradableAndDescribed) {
+  for (const std::vector<CardId>* pool :
+       {&COLORLESS_UNCOMMON_POOL, &COLORLESS_RARE_POOL}) {
+    for (CardId id : *pool) {
+      EXPECT_NE(CARD_DATABASE.find(id), CARD_DATABASE.end()) << card_name(id);
+      EXPECT_FALSE(card_description(id).empty()) << card_name(id);
+      ASSERT_TRUE(is_upgradable(id)) << card_name(id) << " has no upgrade";
+      const CardId up = upgraded_card(id);
+      EXPECT_NE(up, id) << card_name(id);
+      EXPECT_FALSE(card_description(up).empty()) << card_name(up);
+    }
+  }
+}
+
+// A pool holds only UNUPGRADED ids — what can be offered. An upgraded form
+// leaking in would let a shop sell a "+" card directly.
+TEST(Colorless, PoolsHoldOnlyUnupgradedCards) {
+  for (const std::vector<CardId>* pool :
+       {&COLORLESS_UNCOMMON_POOL, &COLORLESS_RARE_POOL}) {
+    for (CardId id : *pool) {
+      EXPECT_NE(upgraded_card(id), id)
+          << card_name(id) << " is already an upgraded form";
+    }
+  }
+}
+
+// The two pools are disjoint, and together they are the whole colorless set.
+TEST(Colorless, TheTwoPoolsAreDisjoint) {
+  for (CardId rare : COLORLESS_RARE_POOL) {
+    EXPECT_EQ(std::find(COLORLESS_UNCOMMON_POOL.begin(),
+                        COLORLESS_UNCOMMON_POOL.end(), rare),
+              COLORLESS_UNCOMMON_POOL.end())
+        << card_name(rare) << " is in both pools";
+  }
+}
+
+// Of the 35, these are the ones whose effects are wired. The rest hold correct
+// data and a stable action index and are masked out. A card leaving this list
+// means an effect landed; one joining means something regressed.
+TEST(Colorless, ExactlyTwelveOfThirtyFiveArePlayable) {
+  const CardId playable[] = {
+      CardId::BandageUp,    CardId::Blind,         CardId::DeepBreath,
+      CardId::DramaticEntrance, CardId::Finesse,   CardId::FlashOfSteel,
+      CardId::GoodInstincts, CardId::Impatience,   CardId::MindBlast,
+      CardId::Panacea,      CardId::SwiftStrike,   CardId::Trip,
+      CardId::MasterOfStrategy};
+
+  int wired = 0;
+  for (const std::vector<CardId>* pool :
+       {&COLORLESS_UNCOMMON_POOL, &COLORLESS_RARE_POOL}) {
+    for (CardId id : *pool) {
+      if (!CARD_DATABASE.at(id).unplayable) ++wired;
+    }
+  }
+  EXPECT_EQ(wired, static_cast<int>(std::size(playable)));
+
+  for (CardId id : playable) {
+    EXPECT_FALSE(CARD_DATABASE.at(id).unplayable)
+        << card_name(id) << " regressed to unplayable";
+  }
+}
+
 }  // namespace minispire
