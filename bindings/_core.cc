@@ -340,7 +340,19 @@ PYBIND11_MODULE(_core, m) {
       .value("TheBomb", CardId::TheBomb)
       .value("TheBombPlus", CardId::TheBombPlus)
       .value("ThinkingAhead", CardId::ThinkingAhead)
-      .value("ThinkingAheadPlus", CardId::ThinkingAheadPlus);
+      .value("ThinkingAheadPlus", CardId::ThinkingAheadPlus)
+      // --- Curses (v2). No upgraded forms: curses cannot be upgraded. ---
+      .value("Clumsy", CardId::Clumsy)
+      .value("Decay", CardId::Decay)
+      .value("Doubt", CardId::Doubt)
+      .value("Injury", CardId::Injury)
+      .value("Normality", CardId::Normality)
+      .value("Pain", CardId::Pain)
+      .value("Parasite", CardId::Parasite)
+      .value("Regret", CardId::Regret)
+      .value("Shame", CardId::Shame)
+      .value("Writhe", CardId::Writhe)
+      .value("CurseOfTheBell", CardId::CurseOfTheBell);
 
   // EnemyKind (ROB-79) — so the TUI can name per-slot enemies via enemy_kinds().
   py::enum_<EnemyKind>(m, "EnemyKind")

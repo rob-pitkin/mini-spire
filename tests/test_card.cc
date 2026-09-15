@@ -89,10 +89,17 @@ bool name_is_upgraded(const CardData& d) {
 }  // namespace
 
 TEST(CardUpgrades, EveryBaseCardIsUpgradable) {
-  // Every card that is neither already-upgraded nor a Status card must have an
-  // upgrade. Catches a card added to CARD_DATABASE but forgotten here.
+  // Every card that is neither already-upgraded nor a Status nor a Curse must
+  // have an upgrade. Catches a card added to CARD_DATABASE but forgotten here.
+  //
+  // Curses are exempt for the same reason Statuses are: StS does not let you
+  // upgrade them. That is why the curse block is 11 ids rather than 22, and why
+  // CARDS is 270 rather than 281.
   for (const auto& [id, d] : CARD_DATABASE) {
-    if (name_is_upgraded(d) || d.type == CardType::Status) continue;
+    if (name_is_upgraded(d) || d.type == CardType::Status ||
+        d.type == CardType::Curse) {
+      continue;
+    }
     EXPECT_TRUE(is_upgradable(id)) << "no upgrade for base card: " << d.name;
   }
 }
@@ -104,7 +111,8 @@ TEST(CardUpgrades, UpgradedAndStatusCardsAreNotUpgradable) {
   // instance counter — so every one of its rungs stays upgradable by design.
   for (const auto& [id, d] : CARD_DATABASE) {
     if (searing_blow_rung(id) > 0) continue;  // a rung, not a dead end
-    if (name_is_upgraded(d) || d.type == CardType::Status) {
+    if (name_is_upgraded(d) || d.type == CardType::Status ||
+        d.type == CardType::Curse) {
       EXPECT_FALSE(is_upgradable(id)) << "should not be upgradable: " << d.name;
     }
   }

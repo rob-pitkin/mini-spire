@@ -227,3 +227,16 @@
     {CardId::TheBombPlus, "At the end of 3 turns, deal 50 damage to ALL enemies."},
     {CardId::ThinkingAhead, "Draw 2 cards. Put a card from your hand on top of your draw pile. Exhaust."},
     {CardId::ThinkingAheadPlus, "Draw 2 cards. Put a card from your hand on top of your draw pile."},
+
+    // ----------------------------------------------------------- curses ---
+    {CardId::Clumsy, "Unplayable. Ethereal."},
+    {CardId::Decay, "Unplayable. At the end of your turn, take 2 damage."},
+    {CardId::Doubt, "Unplayable. At the end of your turn, gain 1 Weak."},
+    {CardId::Injury, "Unplayable."},
+    {CardId::Normality, "Unplayable. While in hand, you cannot play more than 3 cards this turn."},
+    {CardId::Pain, "Unplayable. While in hand, lose 1 HP when other cards are played."},
+    {CardId::Parasite, "Unplayable. If transformed or removed from your deck, lose 3 Max HP."},
+    {CardId::Regret, "Unplayable. At the end of your turn, lose 1 HP for each card in your hand."},
+    {CardId::Shame, "Unplayable. At the end of your turn, gain 1 Frail."},
+    {CardId::Writhe, "Unplayable. Innate."},
+    {CardId::CurseOfTheBell, "Unplayable. Cannot be removed from your deck."},

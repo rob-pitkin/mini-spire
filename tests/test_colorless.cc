@@ -561,4 +561,119 @@ TEST(Colorless, ExactlyTwelveOfThirtyFiveArePlayable) {
   }
 }
 
+// ===================================================================== curses
+
+// Ten in the random pool, matching sts_lightspeed's curseCardPool. Curse of the
+// Bell is excluded: it comes only from the Calling Bell relic, never a roll.
+TEST(Curses, ThePoolIsTenAndExcludesCurseOfTheBell) {
+  EXPECT_EQ(CURSE_POOL.size(), 10u);
+  EXPECT_EQ(std::find(CURSE_POOL.begin(), CURSE_POOL.end(),
+                      CardId::CurseOfTheBell),
+            CURSE_POOL.end())
+      << "Curse of the Bell is not a rollable curse";
+}
+
+// Every curse is Unplayable BY RULE — not as a "not implemented" marker. A
+// curse that became playable would be a parity bug, not progress.
+TEST(Curses, EveryCurseIsUnplayableAndTyped) {
+  const CardId all[] = {CardId::Clumsy,    CardId::Decay,    CardId::Doubt,
+                        CardId::Injury,    CardId::Normality, CardId::Pain,
+                        CardId::Parasite,  CardId::Regret,   CardId::Shame,
+                        CardId::Writhe,    CardId::CurseOfTheBell};
+  EXPECT_EQ(std::size(all), 11u);
+
+  for (CardId id : all) {
+    const CardData& d = CARD_DATABASE.at(id);
+    EXPECT_EQ(d.type, CardType::Curse) << card_name(id);
+    EXPECT_TRUE(d.unplayable) << card_name(id) << " is playable";
+    EXPECT_FALSE(card_description(id).empty()) << card_name(id);
+  }
+}
+
+// Curses cannot be upgraded — which is why the block is 11 ids, not 22, and
+// why CARDS lands on 270.
+TEST(Curses, CursesAreNotUpgradable) {
+  for (CardId id : CURSE_POOL) {
+    EXPECT_FALSE(is_upgradable(id)) << card_name(id) << " gained an upgrade";
+  }
+  EXPECT_FALSE(is_upgradable(CardId::CurseOfTheBell));
+}
+
+// A curse in hand must never be offered to the agent.
+TEST(Curses, ACurseInHandIsMaskedOut) {
+  CombatState s = fight_holding(CardId::Injury);
+  const std::vector<bool> mask = valid_actions(s);
+  EXPECT_FALSE(mask[static_cast<size_t>(card_action(CardId::Injury, 0))])
+      << "a curse was offered as a playable action";
+}
+
+// Decay shares Burn's field and therefore Burn's behaviour: damage at end of
+// turn, and it leaves the hand as it fires.
+TEST(Curses, DecayDealsTwoAtEndOfTurnAndLeavesTheHand) {
+  CombatState s = fight_holding(CardId::Decay);
+  s.character.current_block = 0;
+  const int hp = s.character.hp;
+
+  ActionQueue q;
+  ResolutionContext ctx;
+  q.push_back(Action{ActionKind::DiscardHand});
+  drain(s, q, ctx);
+
+  EXPECT_EQ(s.character.hp, hp - 2) << "Decay dealt no end-of-turn damage";
+  EXPECT_TRUE(s.current_hand.empty());
+}
+
+// Clumsy exhausts rather than discarding — Ethereal, so it is gone for the
+// fight rather than cycling back.
+TEST(Curses, ClumsyExhaustsAtEndOfTurn) {
+  CombatState s = fight_holding(CardId::Clumsy);
+  ActionQueue q;
+  ResolutionContext ctx;
+  q.push_back(Action{ActionKind::DiscardHand});
+  drain(s, q, ctx);
+
+  EXPECT_EQ(s.exhaust_pile.size(), 1u) << "Clumsy did not exhaust";
+  EXPECT_TRUE(s.discard_pile.empty());
+}
+
+// Writhe is Innate: it costs a card slot on turn 1 of every fight, which IS its
+// effect.
+TEST(Curses, WritheStartsInTheOpeningHand) {
+  EXPECT_TRUE(CARD_DATABASE.at(CardId::Writhe).innate);
+
+  CombatSetup setup;
+  setup.seed = 1;
+  setup.deck = starter_deck();
+  setup.deck.push_back(Card{CardId::Writhe});
+  const CombatState s = start_combat(std::move(setup));
+
+  bool in_hand = false;
+  for (const Card& c : s.current_hand) {
+    if (c.card_id == CardId::Writhe) in_hand = true;
+  }
+  EXPECT_TRUE(in_hand);
+}
+
+// The data for the curses whose effects are not yet wired is still correct and
+// distinguishable — these are the fields a later pass will read.
+TEST(Curses, TheUnwiredCursesCarryTheirData) {
+  EXPECT_EQ(CARD_DATABASE.at(CardId::Doubt).end_of_turn_self_debuff,
+            Debuff::Weak);
+  EXPECT_EQ(CARD_DATABASE.at(CardId::Shame).end_of_turn_self_debuff,
+            Debuff::Frail);
+  EXPECT_TRUE(CARD_DATABASE.at(CardId::Regret)
+                  .end_of_turn_hp_loss_per_card_in_hand);
+  EXPECT_EQ(CARD_DATABASE.at(CardId::Pain).hp_loss_in_hand_per_card_played, 1);
+  EXPECT_EQ(CARD_DATABASE.at(CardId::Normality).cards_playable_cap_in_hand, 3);
+  EXPECT_EQ(CARD_DATABASE.at(CardId::Parasite).max_hp_loss_on_removal, 3);
+  EXPECT_TRUE(CARD_DATABASE.at(CardId::CurseOfTheBell).cannot_be_removed);
+}
+
+// CARDS = 270: 189 Ironclad + 70 colorless + 11 curses. The figure §5.1 commits
+// to, and the width the v2 action space is sized against.
+TEST(Curses, TheCardVocabularyIsNowTwoHundredAndSeventy) {
+  EXPECT_EQ(kNumCardTypes, 270);
+  EXPECT_EQ(CARD_DATABASE.size(), 270u);
+}
+
 }  // namespace minispire

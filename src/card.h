@@ -328,12 +328,35 @@ enum class CardId {
   TheBombPlus,
   ThinkingAhead,
   ThinkingAheadPlus,
+
+  // --- Curses (11). NO upgraded forms: curses cannot be upgraded, which is why
+  // this block is 11 ids and not 22, and why CARDS is 270 rather than 281.
+  //
+  // Ascender's Bane is deliberately absent — it only appears at Ascension 10+,
+  // and Ascension is pinned at 0 (§15 correction #8), so it would be a dead
+  // index.
+  //
+  // All are Unplayable by design. Unlike the colorless block's `unplayable`,
+  // which marks "not implemented yet", here it is the card's actual rule.
+  Clumsy,
+  Decay,
+  Doubt,
+  Injury,
+  Normality,
+  Pain,
+  Parasite,
+  Regret,
+  Shame,
+  Writhe,
+  CurseOfTheBell,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
 // action-space size (card x target). Update CARD_DATABASE + kObsCardOrder in
 // lockstep — a static_assert in combat_env.cc enforces the count matches.
-inline constexpr int kNumCardTypes = 259;
+// 189 Ironclad (v1.0.0) + 70 colorless + 11 curses = 270, which is the figure
+// §5.1 commits to and the width the v2 action space is sized against.
+inline constexpr int kNumCardTypes = 270;
 
 // A card's inherent StS type. This is a real property, NOT inferable from
 // damage/block: an Attack can gain block (Body Slam) and a Skill can deal
@@ -570,6 +593,25 @@ struct CardData {
   // TRANSLATION time, when the card has already left the hand — so Impatience
   // never counts itself, and it is a Skill anyway.
   bool draw_needs_no_attacks_in_hand = false;
+  // Regret: at end of turn, lose HP equal to the number of cards in hand. HP
+  // LOSS, not damage — block does not absorb it. Counts the whole hand
+  // including Regret itself, which is why holding several is quadratic.
+  bool end_of_turn_hp_loss_per_card_in_hand = false;
+  // Doubt / Shame: at end of turn, gain this debuff. The card discards itself
+  // at the same moment, exactly as Burn and Decay do.
+  Debuff end_of_turn_self_debuff = Debuff::None;
+  int end_of_turn_self_debuff_amount = 0;
+  // Pain: while in hand, lose 1 HP whenever ANOTHER card is played — before
+  // that card resolves.
+  int hp_loss_in_hand_per_card_played = 0;
+  // Normality: while in hand, caps how many cards may be played this turn.
+  // 0 = no cap.
+  int cards_playable_cap_in_hand = 0;
+  // Parasite: lose this much Max HP if the card is transformed or REMOVED from
+  // the deck. Not on exhaust — Blue Candle dodges it.
+  int max_hp_loss_on_removal = 0;
+  // Curse of the Bell: cannot be removed or transformed, by any means.
+  bool cannot_be_removed = false;
 };
 
 // What a card becomes when upgraded (Armaments; v2's rest-site smith).
@@ -799,6 +841,18 @@ inline const std::vector<CardId> COLORLESS_UNCOMMON_POOL = {
     CardId::SwiftStrike,     CardId::Trip,
 };
 
+// The random curse pool — what an event or relic rolls when it says "gain a
+// curse". Ten cards, matching sts_lightspeed's curseCardPool.
+//
+// Curse of the Bell is NOT in it: it comes only from the Calling Bell relic,
+// never from a roll. Ascender's Bane is absent too — Ascension 10+ content,
+// and Ascension is pinned at 0 (§15 correction #8).
+inline const std::vector<CardId> CURSE_POOL = {
+    CardId::Regret,  CardId::Injury, CardId::Shame, CardId::Parasite,
+    CardId::Normality, CardId::Doubt, CardId::Writhe, CardId::Pain,
+    CardId::Decay,   CardId::Clumsy,
+};
+
 inline const std::vector<CardId> COLORLESS_RARE_POOL = {
     CardId::Apotheosis,     CardId::Chrysalis,    CardId::HandOfGreed,
     CardId::Magnetism,      CardId::MasterOfStrategy, CardId::Mayhem,
@@ -942,6 +996,20 @@ inline CardData colorless(const char* name, int cost, CardType type,
   d.cost = cost;
   d.type = type;
   d.target = target;
+  return d;
+}
+
+// A curse. Always Unplayable and untargeted — and here `unplayable` is the
+// card's REAL RULE, not the colorless block's "not implemented yet" marker.
+// Cost is irrelevant to an unplayable card; it is 0 so nothing reads a
+// meaningful number out of it.
+inline CardData curse(const char* name) {
+  CardData d{};
+  d.name = name;
+  d.cost = 0;
+  d.type = CardType::Curse;
+  d.target = CardTarget::None;
+  d.unplayable = true;
   return d;
 }
 
@@ -1815,6 +1883,99 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     {CardId::ThinkingAheadPlus, [] {
        CardData d = colorless("Thinking Ahead+", 0, CardType::Skill);
        d.unplayable = true;
+       return d;
+     }()},
+
+    // ============================================================ CURSES =====
+    // All Unplayable by rule. Several act from INSIDE the hand, which is a
+    // shape no Ironclad card has except Burn.
+
+    // Clumsy: "Unplayable. Ethereal." No effect at all — it exhausts itself at
+    // end of turn, so it clogs exactly one hand.
+    {CardId::Clumsy, [] {
+       CardData d = curse("Clumsy");
+       d.ethereal = true;
+       return d;
+     }()},
+
+    // Decay: "Unplayable. At the end of your turn, take 2 damage." Same field
+    // and same self-discarding behaviour as Burn — the wiki notes it leaves the
+    // hand at end of turn along with the damage, which is why it is in the
+    // family that bypasses Runic Pyramid (relic batch 1b).
+    {CardId::Decay, [] {
+       CardData d = curse("Decay");
+       d.end_of_turn_damage_in_hand = 2;
+       return d;
+     }()},
+
+    // Injury: "Unplayable." Nothing else. The purest clog in the game.
+    {CardId::Injury, [] { return curse("Injury"); }()},
+
+    // Regret: "Unplayable. At the end of your turn, lose HP equal to the number
+    // of cards in your hand." HP LOSS, so block does not absorb it — and the
+    // count includes Regret itself.
+    {CardId::Regret, [] {
+       CardData d = curse("Regret");
+       d.end_of_turn_hp_loss_per_card_in_hand = true;
+       return d;
+     }()},
+
+    // Doubt / Shame: "Unplayable. At the end of your turn, gain 1 Weak
+    // [Frail]." Mirror images. Both discard themselves as they fire, like Burn
+    // and Decay.
+    {CardId::Doubt, [] {
+       CardData d = curse("Doubt");
+       d.end_of_turn_self_debuff = Debuff::Weak;
+       d.end_of_turn_self_debuff_amount = 1;
+       return d;
+     }()},
+    {CardId::Shame, [] {
+       CardData d = curse("Shame");
+       d.end_of_turn_self_debuff = Debuff::Frail;
+       d.end_of_turn_self_debuff_amount = 1;
+       return d;
+     }()},
+
+    // Pain: "Unplayable. While in hand, lose 1 HP when other cards are played."
+    // Fires BEFORE the played card resolves, and once per play — so a card
+    // played twice costs 2 HP.
+    {CardId::Pain, [] {
+       CardData d = curse("Pain");
+       d.hp_loss_in_hand_per_card_played = 1;
+       return d;
+     }()},
+
+    // Writhe: "Unplayable. Innate." No effect beyond starting in your hand
+    // every fight, which is the effect — it costs a card slot on turn 1.
+    {CardId::Writhe, [] {
+       CardData d = curse("Writhe");
+       d.innate = true;
+       return d;
+     }()},
+
+    // Normality: "Unplayable. While in hand, you cannot play more than 3 cards
+    // this turn." A restriction on the MASK rather than an effect.
+    {CardId::Normality, [] {
+       CardData d = curse("Normality");
+       d.cards_playable_cap_in_hand = 3;
+       return d;
+     }()},
+
+    // Parasite: "Unplayable. If transformed or removed from your deck, lose 3
+    // Max HP." Fires on removal, NOT on exhaust — Blue Candle exhausts it for
+    // free, which is the intended out.
+    {CardId::Parasite, [] {
+       CardData d = curse("Parasite");
+       d.max_hp_loss_on_removal = 3;
+       return d;
+     }()},
+
+    // Curse of the Bell: "Unplayable. Cannot be removed from your deck." The
+    // wiki adds that it cannot be TRANSFORMED either, which the in-game text
+    // omits — so the flag covers both.
+    {CardId::CurseOfTheBell, [] {
+       CardData d = curse("Curse of the Bell");
+       d.cannot_be_removed = true;
        return d;
      }()},
 };
