@@ -543,14 +543,14 @@ TEST(TurnLoop, DeadEnemyDoesNotAct) {
 
 TEST(TurnLoop, MaskCoversCombatBlockPlusOptionSlotChannel) {
   // Stage 4c widened the space: the combat block (card x target + end-turn) is
-  // unchanged and still starts at index 0, followed by the option-slot channel.
+  // unchanged and still starts at index 0, followed by the v2 run-layer blocks
+  // (v2-spec.md §6).
   CombatState s = make_minimal_state(0);
   auto mask = valid_actions(s);
   EXPECT_EQ(mask.size(), static_cast<std::size_t>(kTotalActions));
   EXPECT_EQ(kEndTurnAction,
             static_cast<int>(CARD_DATABASE.size()) * minispire::kMaxEnemies);
-  EXPECT_EQ(mask.size(), static_cast<std::size_t>(
-                             kEndTurnAction + 1 + kNumOptionSlots + 1));
+  EXPECT_EQ(kTotalActions, 2135);
 }
 
 TEST(TurnLoop, EndTurnAlwaysLegalWhileInProgress) {

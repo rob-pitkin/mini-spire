@@ -124,7 +124,19 @@ Checked in the code, not assumed — several overturned earlier assumptions:
 
 ## 5. The accepted design: the Option Slot Channel
 
-> **As built.** The worked numbers throughout this document are the 102-card
+> ⚠️ **SUPERSEDED IN v2 — see `v2-spec.md` §6.2.** The positional option-slot
+> channel described in this section is gone. Card choices are now
+> **entity-indexed**: the action that picks a card is that card's own index in
+> the card-selection block, not its rank in the offer. The names this section
+> tells you to read from the code — `kFirstOptionSlot` in particular — no longer
+> exist. The v2 layout is published in `src/turn_loop.h` as block constants plus
+> `encode_action` / `decode_action`, which are the only code allowed to add or
+> subtract a block offset.
+>
+> Kept as the record of the v1.0.0 decision and its reasoning, not as a
+> description of the current interface. §5.3 is amended in place below.
+
+> **As built (v1.0.0).** The worked numbers throughout this document are the 102-card
 > pool it was written against. They are kept as written — they are the reasoning
 > that produced the decision, and rewriting them would destroy the record while
 > guaranteeing a fresh drift.

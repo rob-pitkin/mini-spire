@@ -20,6 +20,21 @@ using minispire::testing::make_minimal_state;
 // Warcry, Headbutt, Exhume, Dual Wield — live further down.
 constexpr CardId kSourceStandIn = CardId::Strike;
 
+// The action that selects the i-th OFFERED option.
+//
+// Choices are ENTITY-INDEXED now (v2-spec.md §6.2): the action index is the
+// chosen card's CardId, not its rank in the offer list. These tests still think
+// in terms of "the second option", which is the right thing for them to express
+// — this resolves that intent against the new space rather than rewriting every
+// assertion to name a card.
+//
+// It also documents the change: anywhere this helper is called, v1.0.0 used
+// `kFirstOptionSlot + i` and the index meant something different in every state.
+inline int option_action(const CombatState& s, int i) {
+  return encode_action(ActionBlock::CardSelect,
+                       static_cast<int>(s.pending_choice.options[i].card_id));
+}
+
 // ============================================================================
 // Stage 4c step 2: the pause/resume mechanism, driven directly.
 // ============================================================================
@@ -354,29 +369,85 @@ TEST(Choice, TerminalOutcomeDiscardsAPendingChoice) {
 // These pin the RL interface — the part that is expensive to change later.
 // ============================================================================
 
-TEST(ChoiceEncoding, CombatIndicesAreUnchangedByTheSlotChannel) {
-  // The whole point of appending the channel: a policy's learned mapping for
-  // playing cards must survive. Index arithmetic for the combat block is
-  // exactly what it was pre-4c.
+TEST(ChoiceEncoding, TheV2LayoutIsTheSpecdOne) {
+  // The combat block still starts at 0 and end-turn still closes it, so a
+  // policy's learned card-playing mapping survives the v2 layout landing.
+  EXPECT_EQ(kCombatBlock, 0);
   EXPECT_EQ(kEndTurnAction, kNumCardTypes * kMaxEnemies);
-  EXPECT_EQ(kFirstOptionSlot, kEndTurnAction + 1);
-  EXPECT_EQ(kDeclineAction, kFirstOptionSlot + kNumOptionSlots);
-  EXPECT_EQ(kTotalActions, kDeclineAction + 1);
-  // A Strike at enemy slot 2 is still index (Strike * 5 + 2).
-  EXPECT_EQ(static_cast<int>(CardId::Strike) * kMaxEnemies + 2,
-            static_cast<int>(CardId::Strike) * kMaxEnemies + 2);
+
+  // Every block sits where v2-spec.md §6 says, in order and without gaps.
+  EXPECT_EQ(kMapBlock, kEndTurnAction + 1);
+  EXPECT_EQ(kCardSelectBlock, kMapBlock + kNumMapNodes);
+  EXPECT_EQ(kRelicSelectBlock, kCardSelectBlock + kNumCardTypes);
+  EXPECT_EQ(kPotionUseBlock, kRelicSelectBlock + kNumRelics);
+  EXPECT_EQ(kPotionDiscardBlock, kPotionUseBlock + kNumPotions * kMaxEnemies);
+  EXPECT_EQ(kEventOptionBlock, kPotionDiscardBlock + kNumPotions);
+  EXPECT_EQ(kRestOptionBlock, kEventOptionBlock + kNumEventOptions);
+  EXPECT_EQ(kPurposeBlock, kRestOptionBlock + kRestOptionBlockSize);
+  EXPECT_EQ(kTakeMaxHpAction, kPurposeBlock + kNumPurposes);
+  EXPECT_EQ(kDeclineAction, kTakeMaxHpAction + 1);
+
+  // The published total. §6's table sums to this.
+  EXPECT_EQ(kTotalActions, 2135);
 }
 
-TEST(ChoiceEncoding, SlotsAreMaskedOffDuringNormalCombat) {
+// The guard that makes the layout non-brittle. Every one of the 2,135 indices
+// decodes to a block and entity that encode back to exactly that index, and
+// blocks appear in layout order with no backtracking. A table row whose size or
+// stride drifts from its constant fails here at every index it touches.
+TEST(ChoiceEncoding, EveryActionRoundTripsThroughEncodeAndDecode) {
+  ActionBlock previous = ActionBlock::Combat;
+  for (int a = 0; a < kTotalActions; ++a) {
+    const DecodedAction d = decode_action(a);
+    EXPECT_EQ(encode_action(d.block, d.entity, d.target), a) << "action " << a;
+    EXPECT_GE(static_cast<int>(d.block), static_cast<int>(previous))
+        << "blocks went backwards at action " << a;
+    previous = d.block;
+  }
+  EXPECT_EQ(decode_action(0).block, ActionBlock::Combat);
+  EXPECT_EQ(decode_action(kTotalActions - 1).block, ActionBlock::Decline);
+}
+
+// The published landmarks decode to the blocks their names claim, and a card
+// play decodes back to its card and target.
+TEST(ChoiceEncoding, LandmarksDecodeToTheirBlocks) {
+  EXPECT_EQ(decode_action(kEndTurnAction).block, ActionBlock::EndTurn);
+  EXPECT_EQ(decode_action(kMapBlock).block, ActionBlock::Map);
+  EXPECT_EQ(decode_action(kCardSelectBlock).block, ActionBlock::CardSelect);
+  EXPECT_EQ(decode_action(kPotionUseBlock).block, ActionBlock::PotionUse);
+  EXPECT_EQ(decode_action(kDeclineAction).block, ActionBlock::Decline);
+
+  const DecodedAction strike_at_2 = decode_action(
+      encode_action(ActionBlock::Combat, static_cast<int>(CardId::Strike), 2));
+  EXPECT_EQ(strike_at_2.block, ActionBlock::Combat);
+  EXPECT_EQ(strike_at_2.card(), CardId::Strike);
+  EXPECT_EQ(strike_at_2.target, 2);
+}
+
+// Non-combat blocks are rejected by BLOCK, not by index position — so a
+// run-layer action is refused in combat regardless of where its block sits.
+TEST(ChoiceEncoding, RunLayerBlocksAreRejectedInCombat) {
+  CombatState s = make_minimal_state(0);
+  s.current_hand.push_back(Card{CardId::Strike});
+  for (ActionBlock b : {ActionBlock::Map, ActionBlock::RelicSelect,
+                        ActionBlock::PotionUse, ActionBlock::PotionDiscard,
+                        ActionBlock::EventOption, ActionBlock::RestOption,
+                        ActionBlock::Purpose, ActionBlock::TakeMaxHp}) {
+    EXPECT_FALSE(apply_action(s, encode_action(b)))
+        << "block " << static_cast<int>(b) << " accepted during combat";
+  }
+}
+
+TEST(ChoiceEncoding, NonCombatBlocksAreMaskedOffDuringNormalCombat) {
   CombatState s = make_minimal_state(0);
   s.current_hand.push_back(Card{CardId::Strike});
   const auto mask = valid_actions(s);
 
   ASSERT_FALSE(s.pending_choice.active());
-  for (int i = 0; i < kNumOptionSlots; ++i) {
-    EXPECT_FALSE(mask[kFirstOptionSlot + i]) << "slot " << i;
+  // Everything past end-turn belongs to a phase that is not active.
+  for (int a = kEndTurnAction + 1; a < kTotalActions; ++a) {
+    EXPECT_FALSE(mask[a]) << "action " << a << " legal during normal combat";
   }
-  EXPECT_FALSE(mask[kDeclineAction]);
   EXPECT_TRUE(mask[kEndTurnAction]);  // combat still legal
 }
 
@@ -394,10 +465,17 @@ TEST(ChoiceEncoding, CombatIsMaskedOffDuringAPendingChoice) {
   for (int i = 0; i <= kEndTurnAction; ++i) {
     EXPECT_FALSE(mask[i]) << "combat action " << i << " legal during a choice";
   }
-  // Exactly the offered slots are legal.
-  for (int i = 0; i < kNumOptionSlots; ++i) {
-    EXPECT_EQ(mask[kFirstOptionSlot + i], i < s.pending_choice.num_options)
-        << "slot " << i;
+  // Exactly the OFFERED CARDS are legal in the card-selection block, indexed by
+  // CardId — and nothing else in the block is.
+  for (int c = 0; c < kNumCardTypes; ++c) {
+    bool offered = false;
+    for (int i = 0; i < s.pending_choice.num_options; ++i) {
+      if (static_cast<int>(s.pending_choice.options[i].card_id) == c) {
+        offered = true;
+      }
+    }
+    EXPECT_EQ(mask[kCardSelectBlock + c], offered)
+        << "card id " << c << " (" << card_name(static_cast<CardId>(c)) << ")";
   }
 }
 
@@ -419,7 +497,7 @@ TEST(ChoiceEncoding, ApplyActionRoutesSlotIndicesToResolveChoice) {
                                   kSourceStandIn);
   ASSERT_EQ(s.pending_choice.num_options, 1);
 
-  EXPECT_TRUE(apply_action(s, kFirstOptionSlot + 0));
+  EXPECT_TRUE(apply_action(s, option_action(s, 0)));
 
   EXPECT_FALSE(s.pending_choice.active());
   EXPECT_EQ(s.current_hand[0].card_id, CardId::StrikePlus);
@@ -442,8 +520,12 @@ TEST(ChoiceEncoding, ApplyActionRejectsSlotActionsWhenNoChoicePends) {
   s.current_hand.push_back(Card{CardId::Strike});
   ASSERT_FALSE(s.pending_choice.active());
 
-  EXPECT_FALSE(apply_action(s, kFirstOptionSlot));
-  EXPECT_FALSE(apply_action(s, kDeclineAction));
+  // A card selection with no choice open is refused — even for a card that IS
+  // in hand, which is what makes this a phase check rather than an "is it on
+  // offer" check.
+  EXPECT_FALSE(apply_action(
+      s, encode_action(ActionBlock::CardSelect, static_cast<int>(CardId::Strike))));
+  EXPECT_FALSE(apply_action(s, encode_action(ActionBlock::Decline)));
 }
 
 TEST(ChoiceEncoding, ApplyActionRejectsUnofferedSlots) {
@@ -453,8 +535,9 @@ TEST(ChoiceEncoding, ApplyActionRejectsUnofferedSlots) {
                                   kSourceStandIn);
   ASSERT_EQ(s.pending_choice.num_options, 1);
 
-  // Slot 1 exists in the action space but is not offered.
-  EXPECT_FALSE(apply_action(s, kFirstOptionSlot + 1));
+  // Defend has a card-selection index, but only the Strike is on offer.
+  EXPECT_FALSE(apply_action(
+      s, encode_action(ActionBlock::CardSelect, static_cast<int>(CardId::Defend))));
   EXPECT_TRUE(s.pending_choice.active());
 }
 
@@ -535,15 +618,34 @@ TEST(ChoiceEncoding, ObsAndMaskAgreeOnWhichSlotsAreOffered) {
   s.pending_choice = build_choice(s, ChoiceKind::HandToTopOfDraw,
                                   kSourceStandIn);
 
+  // Captured before the move: the env owns the state from here on.
+  const PendingChoice offered = s.pending_choice;
   CombatEnv env(std::move(s), 0.0f);
   const auto obs = env.obs();
   const auto mask = env.action_mask();
   const int stride = CombatEnv::kChoiceSlotStride;
 
+  // The OBSERVATION still describes the offer positionally (slot i = the i-th
+  // offered card), but the ACTION is entity-indexed (§6.2). So agreement is now
+  // "every occupied obs slot's card is legal at its CardId", not "slot i is
+  // legal at action i".
+  //
+  // Unoccupied slots are checked separately and only against the obs: their
+  // PendingChoice::options entry is a value-initialised Card, whose card_id is
+  // 0 (Strike) — comparing that against the mask would test whether a Strike
+  // happens to be on offer elsewhere, which is not what this asserts.
+  const int n = offered.num_options;
   for (int i = 0; i < kNumOptionSlots; ++i) {
     const bool occupied = obs[kSlotBase + i * stride + 0] > 0.5f;
-    const bool legal = mask[kFirstOptionSlot + i] != 0;
-    EXPECT_EQ(occupied, legal) << "obs/mask disagree at slot " << i;
+    if (i < n) {
+      EXPECT_TRUE(occupied) << "offered option " << i << " not shown in the obs";
+      const int action = encode_action(
+          ActionBlock::CardSelect, static_cast<int>(offered.options[i].card_id));
+      EXPECT_TRUE(mask[action] != 0)
+          << "obs shows option " << i << " but its card is not legal";
+    } else {
+      EXPECT_FALSE(occupied) << "obs shows a slot past the offer at " << i;
+    }
   }
 }
 
@@ -576,7 +678,7 @@ TEST(ChoiceCards, ArmamentsGainsBlockAndUpgradesTheChosenCard) {
 
   // Answer via the action space, as an agent would.
   ASSERT_EQ(s.pending_choice.options[0].card_id, CardId::Strike);
-  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 0));
+  ASSERT_TRUE(apply_action(s, option_action(s, 0)));
 
   EXPECT_FALSE(s.pending_choice.active());
   EXPECT_EQ(s.current_hand[0].card_id, CardId::StrikePlus);
@@ -624,7 +726,7 @@ TEST(ChoiceCards, WarcryExhaustsItself) {
 
   ASSERT_TRUE(play(s, CardId::Warcry));
   if (s.pending_choice.active()) {
-    ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 0));
+    ASSERT_TRUE(apply_action(s, option_action(s, 0)));
   }
 
   ASSERT_EQ(s.exhaust_pile.size(), 1u);
@@ -643,7 +745,7 @@ TEST(ChoiceCards, HeadbuttDealsDamageThenMovesADiscardCardToTopOfDraw) {
   EXPECT_EQ(s.enemies[0].hp, hp - 9);  // damage resolves before the choice
   ASSERT_TRUE(s.pending_choice.active());
   ASSERT_EQ(s.pending_choice.options[1].card_id, CardId::Bash);
-  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 1));
+  ASSERT_TRUE(apply_action(s, option_action(s, 1)));
 
   ASSERT_EQ(s.draw_pile.size(), 1u);
   EXPECT_EQ(s.draw_pile.back().card_id, CardId::Bash);
@@ -686,7 +788,7 @@ TEST(ChoiceCards, ExhumeRetrievesFromExhaustAndCannotRetrieveItself) {
   for (int i = 0; i < s.pending_choice.num_options; ++i) {
     EXPECT_NE(s.pending_choice.options[i].card_id, CardId::Exhume);
   }
-  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 1));  // Bash
+  ASSERT_TRUE(apply_action(s, option_action(s, 1)));  // Bash
 
   EXPECT_EQ(s.current_hand.back().card_id, CardId::Bash);
   // Exhume itself exhausts.
@@ -705,7 +807,7 @@ TEST(ChoiceCards, DualWieldAddsOneCopyAndThePlusAddsTwo) {
   ASSERT_TRUE(play(s, CardId::DualWield));
   ASSERT_TRUE(s.pending_choice.active());
   EXPECT_EQ(s.pending_choice.copies, 1);
-  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 0));  // copy the Strike
+  ASSERT_TRUE(apply_action(s, option_action(s, 0)));  // copy the Strike
 
   int strikes = 0;
   for (const Card& c : s.current_hand) {
@@ -720,7 +822,7 @@ TEST(ChoiceCards, DualWieldAddsOneCopyAndThePlusAddsTwo) {
   ASSERT_TRUE(play(s2, CardId::DualWieldPlus));
   ASSERT_TRUE(s2.pending_choice.active());
   EXPECT_EQ(s2.pending_choice.copies, 2);
-  ASSERT_TRUE(apply_action(s2, kFirstOptionSlot + 0));
+  ASSERT_TRUE(apply_action(s2, option_action(s2, 0)));
 
   int strikes2 = 0;
   for (const Card& c : s2.current_hand) {
@@ -759,7 +861,7 @@ TEST(ChoiceCards, CopiesOverflowToDiscardWhenTheHandIsFull) {
   // and the second (DualWield+) must overflow.
   ASSERT_TRUE(play(s, CardId::DualWieldPlus));
   ASSERT_TRUE(s.pending_choice.active());
-  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 0));
+  ASSERT_TRUE(apply_action(s, option_action(s, 0)));
 
   EXPECT_LE(static_cast<int>(s.current_hand.size()), HAND_SIZE_LIMIT);
   EXPECT_FALSE(s.discard_pile.empty()) << "overflow copy must go to discard";
@@ -777,7 +879,7 @@ TEST(ChoiceCards, PlayingAChoiceCardMasksOffCombatUntilAnswered) {
   const auto mask = valid_actions(s);
   EXPECT_FALSE(mask[kEndTurnAction]);
   EXPECT_FALSE(mask[static_cast<int>(CardId::Strike) * kMaxEnemies]);
-  EXPECT_TRUE(mask[kFirstOptionSlot + 0]);
+  EXPECT_TRUE(mask[option_action(s, 0)]);
 }
 
 TEST(ChoiceCards, ChoiceCardPauseSurvivesCloneEndToEnd) {
@@ -792,8 +894,8 @@ TEST(ChoiceCards, ChoiceCardPauseSurvivesCloneEndToEnd) {
 
   CombatState a = s.clone();
   CombatState b = s.clone();
-  ASSERT_TRUE(apply_action(a, kFirstOptionSlot + 0));  // upgrade Strike
-  ASSERT_TRUE(apply_action(b, kFirstOptionSlot + 1));  // upgrade Defend
+  ASSERT_TRUE(apply_action(a, option_action(a, 0)));  // upgrade Strike
+  ASSERT_TRUE(apply_action(b, option_action(b, 1)));  // upgrade Defend
 
   EXPECT_EQ(a.current_hand[0].card_id, CardId::StrikePlus);
   EXPECT_EQ(a.current_hand[1].card_id, CardId::Defend);
@@ -915,7 +1017,7 @@ TEST(PerInstance, ArmamentsClimbsTheSearingBlowLadder) {
     if (s.pending_choice.options[i].card_id == CardId::SearingBlow2) slot = i;
   }
   ASSERT_GE(slot, 0);
-  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + slot));
+  ASSERT_TRUE(apply_action(s, option_action(s, slot)));
 
   bool found = false;
   for (const Card& c : s.current_hand) {
@@ -942,7 +1044,7 @@ TEST(PerInstance, ArmamentsStillUpgradesAtTheSearingBlowCap) {
     if (s.pending_choice.options[i].card_id == CardId::SearingBlow5) slot = i;
   }
   ASSERT_GE(slot, 0) << "a capped Searing Blow must still be offered";
-  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + slot));
+  ASSERT_TRUE(apply_action(s, option_action(s, slot)));
 
   for (const Card& c : s.current_hand) {
     if (c.card_id == CardId::SearingBlow5) {
@@ -1015,7 +1117,7 @@ TEST(PerInstance, DualWieldCopiesInheritInstanceState) {
     if (s.pending_choice.options[i].card_id == CardId::Rampage) slot = i;
   }
   ASSERT_GE(slot, 0);
-  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + slot));
+  ASSERT_TRUE(apply_action(s, option_action(s, slot)));
 
   int buffed = 0;
   for (const Card& c : s.current_hand) {
@@ -1347,7 +1449,7 @@ TEST(ExhaustCards, TrueGritPlusLetsYouChooseWhichCardToExhaust) {
     if (s.pending_choice.options[i].card_id == CardId::Defend) slot = i;
   }
   ASSERT_GE(slot, 0);
-  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + slot));
+  ASSERT_TRUE(apply_action(s, option_action(s, slot)));
 
   ASSERT_EQ(s.exhaust_pile.size(), 1u);
   EXPECT_EQ(s.exhaust_pile[0].card_id, CardId::Defend);
@@ -1371,7 +1473,7 @@ TEST(ExhaustCards, BurningPactExhaustsAChosenCardThenDraws) {
   ASSERT_TRUE(play(s, CardId::BurningPact));
   ASSERT_TRUE(s.pending_choice.active());
   ASSERT_EQ(s.pending_choice.kind, ChoiceKind::ExhaustCardInHand);
-  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 0));
+  ASSERT_TRUE(apply_action(s, option_action(s, 0)));
 
   EXPECT_EQ(s.exhaust_pile.size(), 1u);
   // Started with 2, exhausted 1, drew 2 => 3.
@@ -1385,7 +1487,7 @@ TEST(ExhaustCards, BurningPactPlusDrawsThree) {
   s.current_hand.push_back(Card{CardId::Bash});
 
   ASSERT_TRUE(play(s, CardId::BurningPactPlus));
-  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + 0));
+  ASSERT_TRUE(apply_action(s, option_action(s, 0)));
 
   EXPECT_EQ(s.current_hand.size(), 4u);  // 2 - 1 exhausted + 3 drawn
 }
@@ -2000,7 +2102,7 @@ TEST(WikiAudit, BurningPactStillDrawsAfterTheExhaustResolves) {
     if (s.pending_choice.options[i].card_id == CardId::Defend) defend_slot = i;
   }
   ASSERT_GE(defend_slot, 0);
-  ASSERT_TRUE(apply_action(s, kFirstOptionSlot + defend_slot));
+  ASSERT_TRUE(apply_action(s, option_action(s, defend_slot)));
 
   EXPECT_FALSE(s.pending_choice.active());
   int bashes = 0;

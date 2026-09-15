@@ -65,6 +65,11 @@ enum class RestOption {
 };
 
 inline constexpr int kNumRestOptions = 5;
+// The action space reserves exactly this many indices for rest options
+// (turn_loop.h). Declared twice because run_state.h includes turn_loop.h and
+// not the reverse; this assert is what stops the two drifting.
+static_assert(kNumRestOptions == kRestOptionBlockSize,
+              "rest options and their action block must be the same width");
 
 // Fraction of max HP a campfire restores. Truncated, as the game does.
 inline constexpr float kRestHealFraction = 0.30f;

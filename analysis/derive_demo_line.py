@@ -57,7 +57,7 @@ def play(seed: int, max_turns: int = 30) -> tuple[bool, list[str], int]:
         view = env.choice_view()
         if view.active:
             keys.append("0")  # take the first option; the box grid is on screen
-            obs, *_ = env.step(_core.CombatEnv.FIRST_OPTION_SLOT)
+            obs, *_ = env.step(env.choice_action(0))
             continue
 
         action_map = _hand_options(env)
@@ -75,7 +75,8 @@ def play(seed: int, max_turns: int = 30) -> tuple[bool, list[str], int]:
             # Targeting screen: the app opens a pick-one-of-N, so the demo
             # presses a second key. Slot 0 is the first living enemy.
             keys.append("0")
-            action = int(card_id) * _core.CombatEnv.MAX_ENEMIES + living[0]
+            action = _core.encode_action(
+                _core.ActionBlock.Combat, int(card_id), living[0])
         obs, _r, terminated, truncated, _i = env.step(action)
         if terminated or truncated:
             break

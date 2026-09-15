@@ -33,7 +33,8 @@ struct StatePiles {
 
 // Pending-choice accessor for the TUI (Stage 4c). The obs already encodes this
 // for the agent; the TUI wants it as named values rather than float offsets.
-// `options[i]` is answered with action FIRST_OPTION_SLOT + i.
+// `options[i]` is answered with encode_action(ActionBlock::CardSelect,
+// options[i]) — entity-indexed (v2-spec.md §6.2), not a positional slot.
 struct ChoiceView {
   bool active = false;
   ChoiceKind kind = ChoiceKind::None;
@@ -128,9 +129,9 @@ class CombatEnv {
 
   static constexpr int kObsSize = kTurnObsIndex + 1 + kChoiceObsSize;
 
-  // Action space: the combat block (card x target + end-turn, ROB-60) plus the
-  // Stage 4c option-slot channel. Layout constants live in turn_loop.h next to
-  // decode_action, so the env and the engine cannot disagree about it.
+  // Action space: the v2 layout (v2-spec.md §6). The layout constants and the
+  // encode_action / decode_action pair live in turn_loop.h, so the env and the
+  // engine cannot disagree about it.
   static constexpr int kNumActions = kTotalActions;
 
   // hp_reward_coeff is a per-env reward-shaping hyperparameter, fixed for the

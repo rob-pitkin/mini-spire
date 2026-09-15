@@ -994,17 +994,32 @@ CombatState start_v1_combat(uint32_t seed) {
   return state;
 }
 
+int encode_action(ActionBlock block, int entity, int target) {
+  const ActionBlockSpan& b = kActionBlocks[static_cast<std::size_t>(block)];
+  assert(entity >= 0 && entity * b.stride < b.size &&
+         "entity out of range for its action block");
+  assert(target >= 0 && target < b.stride &&
+         "target out of range for its action block");
+  return b.first + entity * b.stride + target;
+}
+
 DecodedAction decode_action(int action) {
-  const int num_card_ids = static_cast<int>(CARD_DATABASE.size());
-  const int end_turn_idx = num_card_ids * kMaxEnemies;
-  if (action == end_turn_idx) {
-    return DecodedAction{/*is_end_turn=*/true, CardId::Strike, 0};
+  assert(action >= 0 && action < kTotalActions &&
+         "decode_action outside the action space");
+  // Twelve blocks, scanned in layout order. Combat is block 0, so a card play —
+  // the overwhelmingly common action on the benchmarked hot path — resolves on
+  // the first comparison.
+  for (std::size_t i = 0; i < kActionBlocks.size(); ++i) {
+    const ActionBlockSpan& b = kActionBlocks[i];
+    if (action < b.first + b.size) {
+      const int offset = action - b.first;
+      return DecodedAction{static_cast<ActionBlock>(i), offset / b.stride,
+                           offset % b.stride};
+    }
   }
-  // action = card_idx * kMaxEnemies + target_idx
-  const int card_idx = action / kMaxEnemies;
-  const int target = action % kMaxEnemies;
-  return DecodedAction{/*is_end_turn=*/false, static_cast<CardId>(card_idx),
-                       target};
+  // Unreachable while action_blocks_tile_the_space() holds, which is a
+  // static_assert. Returned rather than UB if the range assert is compiled out.
+  return DecodedAction{ActionBlock::Decline, 0, 0};
 }
 
 namespace {
@@ -1013,19 +1028,21 @@ namespace {
 // legality: valid_actions loops it, apply_action calls it once. `entangled` is
 // hoisted by the caller (it's per-state, not per-action).
 bool card_action_is_legal(const CombatState& state, const DecodedAction& d) {
-  const int card_idx = static_cast<int>(d.card);
+  if (d.block != ActionBlock::Combat) return false;
+  const int card_idx = d.entity;
   if (card_idx < 0 || card_idx >= static_cast<int>(CARD_DATABASE.size())) {
     return false;
   }
-  const CardData& data = CARD_DATABASE.at(d.card);
+  const CardId card = d.card();
+  const CardData& data = CARD_DATABASE.at(card);
   // Playability (unplayable / Entangle / Clash) and cost (Corruption, Blood for
   // Blood) come from the query layer, so the mask can't disagree with what
   // resolution actually does (Stage 4b, §4.5).
-  if (!is_playable(state, d.card)) return false;
-  if (find_first_in_hand(state.current_hand, d.card) < 0) return false;
+  if (!is_playable(state, card)) return false;
+  if (find_first_in_hand(state.current_hand, card) < 0) return false;
   // X-cost cards (ROB-80) are always affordable (X = current energy, may be 0);
   // fixed-cost cards need enough energy.
-  const int cost = effective_cost(state, d.card);
+  const int cost = effective_cost(state, card);
   if (cost != kXCost && state.character.energy < cost) return false;
 
   // Target legality fork.
@@ -1048,15 +1065,23 @@ std::vector<bool> valid_actions(const CombatState& state) {
     return mask;  // all false
   }
 
-  // Choice mode (Stage 4c): the combat block is entirely illegal and only the
-  // offered option slots are legal. Walks the option list (<= 102), never the
-  // action space — walking the action space is what cost 39% at Stage 4a.
+  // Choice mode: the combat block is entirely illegal, and the legal actions
+  // are the OFFERED CARDS, indexed by CardId (§6.2).
+  //
+  // v1.0.0 indexed these by rank — "the 3rd option" — so the same index meant
+  // different cards in different states. Entity-indexing makes index k mean
+  // card k forever, which is the property §6 requires of the whole space.
+  //
+  // Still walks the option list rather than the action space: the list is <= 10
+  // against 2,135 actions, and walking the space was a measured 39% of step
+  // cost at Stage 4a.
   if (state.pending_choice.active()) {
     const PendingChoice& pc = state.pending_choice;
     for (int i = 0; i < pc.num_options; ++i) {
-      mask[kFirstOptionSlot + i] = true;
+      mask[encode_action(ActionBlock::CardSelect,
+                         static_cast<int>(pc.options[i].card_id))] = true;
     }
-    if (pc.is_optional) mask[kDeclineAction] = true;
+    if (pc.is_optional) mask[encode_action(ActionBlock::Decline)] = true;
     return mask;
   }
 
@@ -1068,16 +1093,16 @@ std::vector<bool> valid_actions(const CombatState& state) {
     const int card_idx = static_cast<int>(c.card_id);
     if (card_idx < 0 || card_idx >= num_card_ids) continue;
     for (int target = 0; target < kMaxEnemies; ++target) {
-      const int action = card_idx * kMaxEnemies + target;
+      const int action = encode_action(ActionBlock::Combat, card_idx, target);
       if (mask[action]) continue;  // duplicate card in hand, already decided
       mask[action] = card_action_is_legal(
-          state, DecodedAction{/*is_end_turn=*/false, c.card_id, target});
+          state, DecodedAction{ActionBlock::Combat, card_idx, target});
     }
   }
 
-  // End turn is always legal while in progress. (Named constant, not
-  // `size - 1`: the last index is now the decline action, not end-turn.)
-  mask[kEndTurnAction] = true;
+  // End turn is always legal while in progress. Encoded, never computed as
+  // `size - 1` — the last index is the decline action, not end-turn.
+  mask[encode_action(ActionBlock::EndTurn)] = true;
   return mask;
 }
 
@@ -1085,27 +1110,73 @@ bool apply_action(CombatState& state, int action) {
   if (state.outcome != Outcome::InProgress) return false;
   if (action < 0 || action >= kTotalActions) return false;
 
-  // Choice mode (Stage 4c): only the option-slot channel is legal, and it is
-  // legal ONLY here — the two blocks are mutually exclusive, which is what
-  // keeps an index from ever meaning two things at once.
-  if (state.pending_choice.active()) {
-    if (action == kDeclineAction) return resolve_choice(state, kDeclineChoice);
-    if (action < kFirstOptionSlot) return false;  // combat action while paused
-    return resolve_choice(state, action - kFirstOptionSlot);
-  }
-  if (action >= kFirstOptionSlot) return false;  // slot action with no choice
-
-  // Validate just THIS action rather than building the whole mask (the action
-  // space is 600+ entries; building it here doubled the per-step mask cost).
-  // Shares card_action_is_legal with valid_actions, so the two can't disagree.
+  // Decoded ONCE. From here on legality is a question about which BLOCK an
+  // action is in — never about where one index sits relative to another. The
+  // offset comparisons this replaced (`action > kEndTurnAction`) encoded "combat
+  // is first and everything later is illegal", which would have silently
+  // rejected map, shop and rest actions the moment those phases got producers.
   const DecodedAction d = decode_action(action);
-  if (!d.is_end_turn && !card_action_is_legal(state, d)) return false;
-  if (d.is_end_turn) {
-    handle_end_turn(state);
-  } else {
-    handle_play_card(state, d.card, d.target);
+
+  // A pending choice and normal combat are mutually exclusive: while a choice
+  // is open, only a card selection or a decline is live. Every block is listed
+  // rather than caught by a default, so wiring a new kind of choice is adding a
+  // case, not discovering that a blanket "illegal" swallowed it.
+  if (state.pending_choice.active()) {
+    switch (d.block) {
+      case ActionBlock::Decline:
+        return resolve_choice(state, kDeclineChoice);
+      case ActionBlock::CardSelect: {
+        // Which offered option is this card? The mask only lit cards that ARE
+        // on offer, so a miss means the caller ignored the mask — refused, and
+        // resolve_choice never sees an index it cannot use.
+        const PendingChoice& pc = state.pending_choice;
+        for (int i = 0; i < pc.num_options; ++i) {
+          if (pc.options[i].card_id == d.card()) return resolve_choice(state, i);
+        }
+        return false;
+      }
+      case ActionBlock::Combat:
+      case ActionBlock::EndTurn:
+      case ActionBlock::Map:
+      case ActionBlock::RelicSelect:
+      case ActionBlock::PotionUse:
+      case ActionBlock::PotionDiscard:
+      case ActionBlock::EventOption:
+      case ActionBlock::RestOption:
+      case ActionBlock::Purpose:
+      case ActionBlock::TakeMaxHp:
+        return false;
+    }
+    return false;
   }
-  return true;
+
+  switch (d.block) {
+    case ActionBlock::Combat:
+      // Validate just THIS action rather than building the whole mask (building
+      // it here doubled the per-step mask cost). Shares card_action_is_legal
+      // with valid_actions, so the two can't disagree.
+      if (!card_action_is_legal(state, d)) return false;
+      handle_play_card(state, d.card(), d.target);
+      return true;
+    case ActionBlock::EndTurn:
+      handle_end_turn(state);
+      return true;
+    // Run-layer blocks. A CombatState has no map, shop, event or rest phase, so
+    // none is ever live here. Enumerated for the same reason as above: a phase
+    // that gains a producer becomes a new case, visibly.
+    case ActionBlock::Map:
+    case ActionBlock::CardSelect:
+    case ActionBlock::RelicSelect:
+    case ActionBlock::PotionUse:
+    case ActionBlock::PotionDiscard:
+    case ActionBlock::EventOption:
+    case ActionBlock::RestOption:
+    case ActionBlock::Purpose:
+    case ActionBlock::TakeMaxHp:
+    case ActionBlock::Decline:
+      return false;
+  }
+  return false;
 }
 
 }  // namespace minispire

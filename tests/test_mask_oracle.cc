@@ -43,11 +43,13 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
   std::vector<bool> mask(kTotalActions, false);
   if (state.outcome != Outcome::InProgress) return mask;
 
-  // During a pending choice ONLY the offered slots are legal, and the whole
+  // During a pending choice ONLY the offered cards are legal — at their CardId
+  // in the card-selection block (§6.2), not at their rank — and the whole
   // combat block is illegal.
   if (state.pending_choice.active()) {
     for (int i = 0; i < state.pending_choice.num_options; ++i) {
-      mask[kFirstOptionSlot + i] = true;
+      const int card = static_cast<int>(state.pending_choice.options[i].card_id);
+      mask[kCardSelectBlock + card] = true;
     }
     if (state.pending_choice.is_optional) mask[kDeclineAction] = true;
     return mask;
@@ -57,16 +59,22 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
   auto it = state.character.debuffs.find(Debuff::Entangle);
   if (it != state.character.debuffs.end() && it->second > 0) entangled = true;
 
+  // Combat indices decoded with RAW arithmetic, deliberately. This oracle is
+  // only worth anything if it is independent of the code under test, so it does
+  // not call decode_action — which makes it the one INTENTIONAL cross-check of
+  // the encoder's combat block, rather than a second copy of it. Everywhere else
+  // in the codebase, offset arithmetic goes through encode/decode_action.
   for (int action = 0; action < kEndTurnAction; ++action) {
-    const DecodedAction d = decode_action(action);
-    const int card_idx = static_cast<int>(d.card);
+    const int card_idx = action / kMaxEnemies;
+    const int target = action % kMaxEnemies;
     if (card_idx < 0 || card_idx >= num_card_ids) continue;
-    const CardData& data = CARD_DATABASE.at(d.card);
+    const CardId card = static_cast<CardId>(card_idx);
+    const CardData& data = CARD_DATABASE.at(card);
     if (data.unplayable) continue;
 
     bool in_hand = false;
     for (const Card& c : state.current_hand) {
-      if (c.card_id == d.card) {
+      if (c.card_id == card) {
         in_hand = true;
         break;
       }
@@ -75,7 +83,7 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
     // Cost modifiers, recomputed here rather than asked of effective_cost.
     int cost = data.cost;
     if (cost != kXCost) {
-      auto free_it = state.character.free_this_turn.find(d.card);
+      auto free_it = state.character.free_this_turn.find(card);
       const bool free_now = free_it != state.character.free_this_turn.end() &&
                             free_it->second > 0;
       bool corrupted = false;
@@ -107,10 +115,10 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
     }
 
     if (card_targets_enemy(data)) {
-      mask[action] = d.target < static_cast<int>(state.enemies.size()) &&
-                     state.enemies[d.target].hp > 0;
+      mask[action] = target < static_cast<int>(state.enemies.size()) &&
+                     state.enemies[target].hp > 0;
     } else {
-      mask[action] = (d.target == 0);
+      mask[action] = (target == 0);
     }
   }
   mask[kEndTurnAction] = true;

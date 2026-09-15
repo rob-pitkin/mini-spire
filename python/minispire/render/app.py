@@ -51,10 +51,12 @@ EXIT_QUIT = 2
 def card_action(card_id, target_slot: int) -> int:
     """Global action index for playing `card_id` at `target_slot`.
 
-    The action space is a (card x target) cross-product (ROB-60), so an
-    untargeted card uses the canonical slot 0.
+    The combat block is a (card x target) cross-product (ROB-60), so an
+    untargeted card uses the canonical slot 0. Encoded by the engine, never by
+    offset arithmetic here — the layout is v2-spec.md §6's to change.
     """
-    return int(card_id) * _core.CombatEnv.MAX_ENEMIES + target_slot
+    return _core.encode_action(_core.ActionBlock.Combat, int(card_id),
+                               target_slot)
 
 
 def resolve_card_action(card_id, living_slots: list[int]) -> int | None:
@@ -246,7 +248,9 @@ class MinispireApp(App):
                 self.mode = Mode.PLAY
                 self._step(card_action(card, self._targets[index]))
             else:
-                self._step(_core.CombatEnv.FIRST_OPTION_SLOT + index)
+                # Entity-indexed (v2-spec.md §6.2): the env resolves option
+                # `index` to its card's action, so the TUI adds no offsets.
+                self._step(self.env.choice_action(index))
             return
 
         # PLAY: the hand, then End Turn.

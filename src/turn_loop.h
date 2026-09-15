@@ -1,11 +1,15 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
 
 #include "combat_state.h"
 #include "encounter.h"
+#include "map.h"      // kMapWidth, kMapHeight — the map block's size
+#include "potion.h"   // kNumPotions
+#include "relic.h"    // kNumRelics
 #include "status_effect.h"
 
 namespace minispire {
@@ -84,35 +88,149 @@ CombatState start_combat(uint32_t seed, EncounterPool pool,
 // M1 / existing tests that want the deterministic Jaw Worm fight.
 CombatState start_v1_combat(uint32_t seed);
 
-// Action layout (ROB-60 + Stage 4c). Two mutually-exclusive blocks:
+// THE v2 ACTION SPACE (docs/design/v2-spec.md §6). Flat, masked, and ENTITY
+// INDEXED: index k means the same thing in every state, forever — never "the
+// k-th option offered".
 //
-//   COMBAT (indices 0 .. kEndTurnAction) — legal only while no choice pends:
-//     action   = card_idx * kMaxEnemies + target_idx
-//     end_turn = kEndTurnAction                        (block's last index)
-//   CHOICE (indices kFirstOptionSlot .. kDeclineAction) — legal only DURING a
-//   pending choice (docs/design/decision-points.md §5.1):
-//     slot k   = kFirstOptionSlot + k    the k-th offered option
-//     decline  = kDeclineAction          optional choices only
+// ┌──────────────────────┬───────┬──────────────────────────────────────────┐
+// │ block                │  size │ index means                              │
+// ├──────────────────────┼───────┼──────────────────────────────────────────┤
+// │ combat: card×target  │ 1,350 │ play card c at enemy slot t              │
+// │ end turn             │     1 │                                          │
+// │ map: choose node     │   105 │ move to grid position p                  │
+// │ card selection       │   270 │ pick card c — purpose from the phase     │
+// │ relic selection      │   140 │ pick relic r — shop only                 │
+// │ potion: use × target │   165 │ drink potion p at enemy slot t           │
+// │ potion: discard      │    33 │                                          │
+// │ event option         │    58 │ globally enumerated option id            │
+// │ rest option          │     5 │ rest, smith, lift, toke, dig             │
+// │ purpose selection    │     6 │ choose WHY a card list opens (§6.1)      │
+// │ take Max HP instead  │     1 │ Singing Bowl                             │
+// │ decline / skip       │     1 │                                          │
+// └──────────────────────┴───────┴──────────────────────────────────────────┘
+//                                  = 2,135
 //
-// card_idx is the integer value of a CardId; target_idx is an enemy slot.
-// Untargeted cards (Defend) use the canonical target_idx 0; their other slots
-// are permanently masked (see valid_actions).
+// The combat block is unchanged in POSITION (still index 0) but is now 270
+// cards wide rather than 189 — the colorless and curse blocks landed. Every
+// pre-existing card keeps its exact index, because those ids were appended.
 //
-// The combat indices are byte-identical to pre-4c, so a policy's learned
-// card-playing mapping survives the addition of the choice channel.
+// THE POSITIONAL OPTION-SLOT CHANNEL IS GONE (§6.2). v1.0.0 indexed a choice by
+// RANK — "the 3rd card offered" — which meant the same index meant different
+// things in different states. Card choices are now indexed by CardId, so the
+// index IS the identity. decision-points.md §5.3's canonical slot ordering was
+// a mitigation for rank-indexing and is moot: there are no positional slots
+// left to order.
+//
+// Blocks past `end turn` are sized and reserved but not all wired — map, event
+// and purpose have no producer yet, and their indices are permanently masked
+// until they do. Reserved rather than appended later, because renumbering the
+// action space after a policy trains against it is the expensive kind of
+// change, and this is the last moment it is free.
+inline constexpr int kNumMapNodes = kMapWidth * kMapHeight;  // 105
+inline constexpr int kNumEventOptions = 58;                  // §6.3, counted
+inline constexpr int kNumPurposes = 6;                       // §6.1
+// The rest block's width. Declared here rather than reused from run_state.h's
+// kNumRestOptions, because run_state.h includes THIS header — taking it from
+// there would be circular. run_state.h static_asserts the two agree, so they
+// cannot drift.
+inline constexpr int kRestOptionBlockSize = 5;
+
+inline constexpr int kCombatBlock = 0;
 inline constexpr int kEndTurnAction = kNumCardTypes * kMaxEnemies;
-inline constexpr int kFirstOptionSlot = kEndTurnAction + 1;
-inline constexpr int kDeclineAction = kFirstOptionSlot + kNumOptionSlots;
+inline constexpr int kMapBlock = kEndTurnAction + 1;
+inline constexpr int kCardSelectBlock = kMapBlock + kNumMapNodes;
+inline constexpr int kRelicSelectBlock = kCardSelectBlock + kNumCardTypes;
+inline constexpr int kPotionUseBlock = kRelicSelectBlock + kNumRelics;
+inline constexpr int kPotionDiscardBlock = kPotionUseBlock + kNumPotions * kMaxEnemies;
+inline constexpr int kEventOptionBlock = kPotionDiscardBlock + kNumPotions;
+inline constexpr int kRestOptionBlock = kEventOptionBlock + kNumEventOptions;
+inline constexpr int kPurposeBlock = kRestOptionBlock + kRestOptionBlockSize;
+inline constexpr int kTakeMaxHpAction = kPurposeBlock + kNumPurposes;
+inline constexpr int kDeclineAction = kTakeMaxHpAction + 1;
 inline constexpr int kTotalActions = kDeclineAction + 1;
 
-struct DecodedAction {
-  bool is_end_turn;
-  CardId card;     // valid only if !is_end_turn
-  int target;      // enemy slot index; valid only if !is_end_turn
+static_assert(kTotalActions == 2135,
+              "the v2 action space is 2,135 actions (v2-spec.md §6). If this "
+              "fires, a block size changed — update the spec table too, do not "
+              "just move the number.");
+
+// Which region of the action space an index belongs to. Declaration order IS
+// layout order — the table below is indexed by this enum.
+enum class ActionBlock : uint8_t {
+  Combat,
+  EndTurn,
+  Map,
+  CardSelect,
+  RelicSelect,
+  PotionUse,
+  PotionDiscard,
+  EventOption,
+  RestOption,
+  Purpose,
+  TakeMaxHp,
+  Decline,
+};
+inline constexpr int kNumActionBlocks = 12;
+
+struct ActionBlockSpan {
+  int first;   // first action index of the block
+  int size;    // indices the block occupies
+  int stride;  // indices per entity: kMaxEnemies for the ×target blocks, else 1
 };
 
-// Pure arithmetic decode of an action index — no state, so the mask and the
-// apply path share one source of truth (decode never disagrees with itself).
+// The layout as data, indexed by ActionBlock. Built from the k*Block constants
+// above, which are themselves derived sequentially — so this adds no new
+// arithmetic. It names what already exists, so that encode_action and
+// decode_action have exactly one place to read the layout from.
+inline constexpr std::array<ActionBlockSpan, kNumActionBlocks> kActionBlocks = {{
+    {kCombatBlock, kNumCardTypes * kMaxEnemies, kMaxEnemies},
+    {kEndTurnAction, 1, 1},
+    {kMapBlock, kNumMapNodes, 1},
+    {kCardSelectBlock, kNumCardTypes, 1},
+    {kRelicSelectBlock, kNumRelics, 1},
+    {kPotionUseBlock, kNumPotions * kMaxEnemies, kMaxEnemies},
+    {kPotionDiscardBlock, kNumPotions, 1},
+    {kEventOptionBlock, kNumEventOptions, 1},
+    {kRestOptionBlock, kRestOptionBlockSize, 1},
+    {kPurposeBlock, kNumPurposes, 1},
+    {kTakeMaxHpAction, 1, 1},
+    {kDeclineAction, 1, 1},
+}};
+
+// The blocks tile [0, kTotalActions) in order: each starts where the last
+// ended, none is empty, and every size is a whole number of strides. Checked at
+// compile time, so a table row that drifts from its constant cannot build.
+constexpr bool action_blocks_tile_the_space() {
+  int next = 0;
+  for (const ActionBlockSpan& b : kActionBlocks) {
+    if (b.first != next || b.size <= 0 || b.size % b.stride != 0) return false;
+    next = b.first + b.size;
+  }
+  return next == kTotalActions;
+}
+static_assert(action_blocks_tile_the_space(),
+              "kActionBlocks must tile the action space with no gaps or "
+              "overlaps, in ActionBlock order");
+
+struct DecodedAction {
+  ActionBlock block;
+  int entity;  // which card / map node / relic / potion / option / purpose
+  int target;  // enemy slot for Combat and PotionUse; 0 for every other block
+
+  // For the two card-indexed blocks, Combat and CardSelect.
+  CardId card() const { return static_cast<CardId>(entity); }
+};
+
+// THE ONLY TWO FUNCTIONS ALLOWED TO ADD OR SUBTRACT A BLOCK OFFSET.
+//
+// Everything else — the mask, apply_action, the bindings, the TUI, the tests —
+// goes through these. Offset arithmetic repeated at each call site is how
+// v1.0.0 shipped `end-turn = size - 1` into the TUI and 13 Python tests at
+// once: the layout knowledge re-derived wherever someone needed an index.
+//
+// Both are pure — no state — so the mask and the apply path cannot disagree.
+// encode_action asserts `entity` and `target` are in range for their block.
+int encode_action(ActionBlock block, int entity = 0, int target = 0);
 DecodedAction decode_action(int action);
 
 // Validity mask over the full action space. An action is legal iff the card is

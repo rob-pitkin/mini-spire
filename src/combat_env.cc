@@ -120,18 +120,19 @@ CombatEnv::CombatEnv(float hp_reward_coeff, EncounterPool pool,
       hp_reward_coeff_(hp_reward_coeff),
       pool_(pool),
       deck_(deck.empty() ? starter_deck() : std::move(deck)) {
-  // Engine invariant: the action space is the combat block — (card x target)
-  // plus one end-turn action (ROB-60) — followed by the Stage 4c option-slot
-  // channel (one slot per possible option, plus decline).
+  // Engine invariant: the action space is the v2 layout (v2-spec.md §6). The
+  // combat block still starts at 0 and end-turn still closes it; everything
+  // after is the run-layer blocks, sized and reserved whether or not their
+  // phases exist yet.
   static_assert(kEndTurnAction == kNumCardTypes * kMaxEnemies,
                 "end-turn must be the last index of the combat block");
-  static_assert(kNumActions == kNumCardTypes * kMaxEnemies + 1 +
-                                   kNumOptionSlots + 1,
-                "kNumActions must be the combat block plus the slot channel");
-  // Slots are sized so a pile choice can never overflow (a pile cannot hold
-  // more distinct card types than exist) — truncation would be a parity bug.
-  static_assert(kNumOptionSlots >= kNumCardTypes,
-                "option slots must cover every distinct card type");
+  static_assert(kNumActions == kTotalActions,
+                "the env's action count must be the published layout's total");
+  // Card selection covers every card type, so a pile choice can never overflow
+  // — a pile cannot hold more distinct card types than exist, and truncation
+  // would be a parity bug.
+  static_assert(kCardSelectBlock + kNumCardTypes <= kTotalActions,
+                "card selection must fit inside the action space");
   // And kNumCardTypes must match the actual card database.
   assert(static_cast<int>(CARD_DATABASE.size()) == kNumCardTypes &&
          "kNumCardTypes out of sync with CARD_DATABASE");

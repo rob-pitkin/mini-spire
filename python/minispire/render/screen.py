@@ -349,11 +349,12 @@ def render_fight(
 def card_playable(mask, card_id) -> bool:
     """True if any (card_id, target) action is legal in the mask.
 
-    The action space is (card x target) cross-product (ROB-60); a card is
+    The combat block is a (card x target) cross-product (ROB-60); a card is
     playable iff at least one of its target slots is unmasked.
     """
-    base = int(card_id) * MAX_ENEMIES
-    return any(bool(mask[base + t]) for t in range(MAX_ENEMIES))
+    return any(
+        bool(mask[_core.encode_action(_core.ActionBlock.Combat, int(card_id), t)])
+        for t in range(MAX_ENEMIES))
 
 
 #: Marker on the focused entry. A style alone is not enough — reverse video is
@@ -509,7 +510,9 @@ CHOICE_PROMPTS = {
 def build_choice(env, *, focus: int | None = None) -> tuple[Panel, int]:
     """Build the pending-choice panel and its option count.
 
-    Local index i maps to the global action FIRST_OPTION_SLOT + i, so the caller
+    Local index i is answered with ``env.choice_action(i)``. Choices are
+    entity-indexed, so the global action is the card's own index in the
+    card-selection block rather than anything derived from i, and the caller
     needs no mapping table of its own. The count is returned alongside the panel
     for the same reason build_hand returns its map: it is what a keypress is
     bounds-checked against, and it must describe the panel actually shown.

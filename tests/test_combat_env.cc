@@ -206,12 +206,12 @@ TEST(CombatEnv, ActionMaskIsKNumActions) {
   env.reset(0);
   EXPECT_EQ(env.action_mask().size(),
             static_cast<std::size_t>(CombatEnv::kNumActions));
-  // Combat block (card types x enemies + end-turn) plus the option-slot
-  // channel (one slot per option + decline) — from constants, never stale.
+  // The full v2 layout (v2-spec.md §6) — from the published constant, never
+  // re-derived here, since re-deriving the total is how the old layout's
+  // end-turn-as-size-minus-one bug happened.
   EXPECT_EQ(env.action_mask().size(),
-            static_cast<std::size_t>(minispire::kNumCardTypes *
-                                         minispire::kMaxEnemies +
-                                     1 + minispire::kNumOptionSlots + 1));
+            static_cast<std::size_t>(minispire::kTotalActions));
+  EXPECT_EQ(minispire::kTotalActions, 2135);
 }
 
 TEST(CombatEnv, EndTurnAlwaysLegalAfterReset) {

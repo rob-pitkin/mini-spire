@@ -275,13 +275,25 @@ def test_choice_view_is_inactive_during_normal_combat():
 
 
 def test_action_layout_constants_are_consistent():
-    """The TUI computes global actions from these; they must not drift."""
+    """The v2 layout (v2-spec.md §6): published by the engine, and checked here
+    by DECODING the landmarks rather than by re-deriving them with offsets."""
     import minispire._core as _core
 
     ce = _core.CombatEnv
+    B = _core.ActionBlock
+    assert ce.NUM_ACTIONS == 2135
     assert ce.END_TURN_ACTION == ce.NUM_CARD_TYPES * ce.MAX_ENEMIES
-    assert ce.FIRST_OPTION_SLOT == ce.END_TURN_ACTION + 1
-    assert ce.DECLINE_ACTION == ce.FIRST_OPTION_SLOT + ce.NUM_OPTION_SLOTS
-    assert ce.NUM_ACTIONS == ce.DECLINE_ACTION + 1
     # End turn is NOT the last index — the whole reason this bug class existed.
     assert ce.END_TURN_ACTION != ce.NUM_ACTIONS - 1
+    assert _core.decode_action(ce.END_TURN_ACTION).block == B.EndTurn
+    assert _core.decode_action(ce.CARD_SELECT_BLOCK).block == B.CardSelect
+    assert _core.decode_action(ce.DECLINE_ACTION).block == B.Decline
+
+
+def test_every_action_round_trips_through_encode_and_decode():
+    """Python sees the same layout the engine does, index for index."""
+    import minispire._core as _core
+
+    for a in range(_core.CombatEnv.NUM_ACTIONS):
+        d = _core.decode_action(a)
+        assert _core.encode_action(d.block, d.entity, d.target) == a, a

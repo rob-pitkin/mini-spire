@@ -4,7 +4,7 @@ from __future__ import annotations
 import gymnasium as gym
 import numpy as np
 
-from minispire._core import CardId
+from minispire._core import ActionBlock, CardId, encode_action
 from minispire._core import CombatEnv as _CombatEnv
 from minispire._core import EncounterPool
 
@@ -12,18 +12,22 @@ from minispire._core import EncounterPool
 class MinispireEnv(gym.Env):
     """Single-combat Slay the Spire environment wrapping the C++ engine.
 
-    Action space is `Discrete(NUM_ACTIONS)`, in two mutually-exclusive blocks
-    (docs/design/decision-points.md):
+    Action space is `Discrete(NUM_ACTIONS)` — the v2 layout
+    (docs/design/v2-spec.md §6): flat, masked, and entity-indexed, so index k
+    means the same thing in every state. A combat env only ever makes two
+    regions live, and they are mutually exclusive:
 
-    * **combat**, indices ``0 .. END_TURN_ACTION`` — play a card by
-      ``card_idx * MAX_ENEMIES + target``, and ``END_TURN_ACTION`` ends the
-      turn. Legal only when no choice is pending.
-    * **option slots**, ``FIRST_OPTION_SLOT .. DECLINE_ACTION`` — answer a
-      pending mid-card choice (Armaments, Warcry, ...). Legal only *during* a
-      choice.
+    * **combat** — play a card, or ``END_TURN_ACTION``. Legal only when no
+      choice is pending.
+    * **card selection** — answer a pending mid-card choice (Armaments,
+      Warcry, ...) by picking the CARD, not its position in the offer. Legal
+      only *during* a choice, with ``DECLINE_ACTION`` when it is optional.
 
-    Note ``END_TURN_ACTION`` is the last index of the combat block, **not**
-    ``NUM_ACTIONS - 1`` (that is ``DECLINE_ACTION``).
+    Never build an index by adding offsets. Use ``minispire._core.encode_action``
+    and ``decode_action`` — or :meth:`choice_action` for a pending choice. The
+    block constants are published for inspection, not for arithmetic; offset
+    math repeated at call sites is how ``end-turn = size - 1`` once broke the
+    TUI and 13 tests at once.
 
     Observation space is `Box(-inf, inf, shape=(OBS_SIZE,), dtype=float32)`
     — raw, unnormalized values per ROB-40. The shape is fixed whether or not a
@@ -38,7 +42,7 @@ class MinispireEnv(gym.Env):
     NUM_ACTIONS = _CombatEnv.NUM_ACTIONS
     # Action-layout landmarks, engine-sourced so they can never drift.
     END_TURN_ACTION = _CombatEnv.END_TURN_ACTION
-    FIRST_OPTION_SLOT = _CombatEnv.FIRST_OPTION_SLOT
+    CARD_SELECT_BLOCK = _CombatEnv.CARD_SELECT_BLOCK
     DECLINE_ACTION = _CombatEnv.DECLINE_ACTION
     NUM_OPTION_SLOTS = _CombatEnv.NUM_OPTION_SLOTS
 
@@ -134,11 +138,22 @@ class MinispireEnv(gym.Env):
     def choice_view(self):
         """Return the pending mid-card choice, if any (Stage 4c).
 
-        `options[i]` is answered with action `FIRST_OPTION_SLOT + i`. The obs
-        already encodes this for the agent; this is the named-value form for
-        the TUI and for inspection — not used in the training loop.
+        Answer ``options[i]`` with :meth:`choice_action`. Choices are
+        entity-indexed, so the action is the card's own index in the
+        card-selection block, not ``i``. The obs already encodes the offer for
+        the agent; this is the named-value form for the TUI and for inspection
+        — not used in the training loop.
         """
         return self._env.choice_view()
+
+    def choice_action(self, i: int) -> int:
+        """The global action that picks ``options[i]`` of the pending choice.
+
+        Goes through the engine's encoder rather than adding offsets, so the
+        layout lives in exactly one place (v2-spec.md §6.2).
+        """
+        card = self.choice_view().options[i]
+        return encode_action(ActionBlock.CardSelect, int(card))
 
     def effective_cost(self, card_id) -> int:
         """What `card_id` costs to play right now.

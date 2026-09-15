@@ -210,7 +210,7 @@ it is forced four independent ways:
 
 | # | what forces a change |
 |---|---|
-| 1 | **The card vocabulary widens 189 → 270.** `kNumOptionSlots = kNumCardTypes` (`card.h`), and `kEndTurnAction` / `kFirstOptionSlot` / `kDeclineAction` / `kObsSize` all derive from it (`turn_loop.h`). So "combat's action space is unchanged" is **false**. |
+| 1 | **The card vocabulary widens 189 → 270.** `kNumOptionSlots = kNumCardTypes` (`card.h`), and `kEndTurnAction`, every §6 block offset and `kObsSize` all derive from it (`turn_loop.h`). So "combat's action space is unchanged" is **false**. |
 | 2 | **Relics are combat state** (§3.0.1) — a held list plus per-combat counters, observable, with effects hooking the action queue (Vajra, Anchor, Kunai, Burning Blood). There is **zero relic code in `src/` today**. |
 | 3 | **Potions are combat state and combat actions** — observable inventory, used mid-combat, effects entering the action queue, and action indices outside `decode_action`'s current range. |
 | 4 | **Curses and colorless cards have in-combat behaviour**, and `CardId` has no curse enumerators. |

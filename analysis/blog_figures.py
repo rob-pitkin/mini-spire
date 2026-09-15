@@ -203,59 +203,93 @@ def plot_obs_layout(out_dir: pathlib.Path) -> None:
 
 
 def plot_action_space(out_dir: pathlib.Path) -> None:
-    """The action space as two mutually-exclusive blocks (ROB-82).
+    """The v2 action space as proportional bands (v2-spec.md §6).
 
-    This used to enumerate an 8-card x 5-target grid with a hardcoded
-    "Discrete(41)" title. That stopped being drawable at 189 card types, and it
-    never showed the option-slot channel at all — which is now a third of the
-    space. Drawn as proportional bands instead, with every index derived."""
-    from minispire._core import CombatEnv as C
-    cards, targets = C.NUM_CARD_TYPES, C.MAX_ENEMIES
-    end_turn, first_slot = C.END_TURN_ACTION, C.FIRST_OPTION_SLOT
-    decline, total = C.DECLINE_ACTION, C.NUM_ACTIONS
-    combat = end_turn          # 0 .. end_turn-1 are the card x target actions
-    slots = decline - first_slot
+    v1 drew four hand-listed bands from FIRST_OPTION_SLOT, which v2 removed.
+    Now every band comes from decoding each index with the engine's own
+    decode_action, so the figure cannot drift from the layout again.
 
-    # Coloured by BLOCK, not by individual action, because the mutual exclusion
-    # is the whole point of the figure. PALETTE["accent"] and PALETTE["deck"]
-    # are the same amber, so colouring these four bands separately made the two
-    # blocks indistinguishable — the one thing the reader needs to see.
-    # Grey matches the choice channel in the observation figure.
-    bands = [
-        (f"play card x target\n{cards} cards x {targets} slots = {combat}",
-         combat, "deck"),
-        (f"end turn\n[{end_turn}]", 1, "deck"),
-        (f"option slots\n{slots} = one per card type", slots, "meta"),
-        (f"decline\n[{decline}]", 1, "meta"),
-    ]
-    if sum(w for _, w, _ in bands) != total:
+    Blocks a CombatEnv never unmasks today (map, relic, potion, event, rest,
+    purpose, max HP) are merged into one muted band wherever they are adjacent:
+    seven slivers one to six indices wide cannot be labelled legibly."""
+    from minispire import _core
+    C = _core.CombatEnv
+    total = C.NUM_ACTIONS
+
+    # Coloured by what is live in combat. Amber is the combat phase, grey the
+    # pending-choice phase (matching the choice channel in the observation
+    # figure), muted the run layer.
+    live = {
+        _core.ActionBlock.Combat: (
+            f"play card x target\n{C.NUM_CARD_TYPES} cards x "
+            f"{C.MAX_ENEMIES} slots", "deck"),
+        _core.ActionBlock.EndTurn: ("end turn", "deck"),
+        _core.ActionBlock.CardSelect: ("card select\none per card type",
+                                       "meta"),
+        _core.ActionBlock.Decline: ("decline", "meta"),
+    }
+
+    # Run-length encode the space by block, straight from the decoder.
+    runs: list[list] = []  # [block, first, size]
+    for a in range(total):
+        block = _core.decode_action(a).block
+        if runs and runs[-1][0] == block:
+            runs[-1][2] += 1
+        else:
+            runs.append([block, a, 1])
+
+    bands: list[list] = []  # [names, first, width, key]
+    for block, first, size in runs:
+        name, key = live.get(block, (block.name, "muted"))
+        if key == "muted" and bands and bands[-1][3] == "muted":
+            bands[-1][0].append(name)
+            bands[-1][2] += size
+        else:
+            bands.append([[name], first, size, key])
+    if sum(b[2] for b in bands) != total:
         raise AssertionError("action bands do not sum to NUM_ACTIONS")
 
     with _theme():
-        fig, ax = plt.subplots(figsize=(11, 2.5))
-        x = 0
-        for label, width, key in bands:
-            ax.add_patch(mpatches.Rectangle(
-                (x, 0), width, 1, facecolor=PALETTE[key],
-                edgecolor=PALETTE["ink"], linewidth=1.2))
-            # Narrow bands get their label above the bar, not inside it.
-            if width / total > 0.06:
-                ax.text(x + width / 2, 0.5, label, ha="center", va="center",
-                        fontsize=7.5, color=_BLOCK_TEXT)
+        fig, ax = plt.subplots(figsize=(11, 2.8))
+        narrow = 0
+        for names, first, width, key in bands:
+            if key == "muted":
+                # Names go in the footer: seven of them joined overran the
+                # band and printed across its neighbours.
+                title = (names[0] if len(names) == 1
+                         else f"{len(names)} run-layer blocks")
+                label = f"{title}\n{width}"
+            elif width == 1:
+                label = f"{names[0]}\n[{first}]"
             else:
-                ax.text(x + width / 2, 1.15, label, ha="center", va="bottom",
-                        fontsize=6.5, color=PALETTE["ink"])
-            x += width
+                label = f"{names[0]}\n{width}"
+            ax.add_patch(mpatches.Rectangle(
+                (first, 0), width, 1, facecolor=PALETTE[key],
+                edgecolor=PALETTE["ink"], linewidth=1.2))
+            # Narrow bands get their label above the bar, staggered so
+            # neighbouring slivers (end turn, map) do not overprint.
+            if width / total > 0.06:
+                ax.text(first + width / 2, 0.5, label, ha="center",
+                        va="center", fontsize=7.5,
+                        color=PALETTE["ink"] if key == "muted"
+                        else _BLOCK_TEXT)
+            else:
+                ax.text(first + width / 2, 1.15 + 0.45 * (narrow % 2), label,
+                        ha="center", va="bottom", fontsize=6.5,
+                        color=PALETTE["ink"])
+                narrow += 1
         ax.set_xlim(-total * 0.02, total * 1.02)
-        ax.set_ylim(-0.75, 2.0)
+        ax.set_ylim(-0.95, 2.4)
         ax.axis("off")
-        ax.set_title(f"Action space: Discrete({total}) — two mutually-exclusive "
-                     "blocks")
-        ax.text(total / 2, -0.55,
-                "action = card x MAX_ENEMIES + target during combat; the option "
-                "slots are live only while a choice is pending.\n"
-                "Exactly one block is unmasked at a time — end turn is NOT the "
-                "last index.",
+        ax.set_title(f"Action space: Discrete({total}) — entity-indexed blocks")
+        run_layer = [n for names, _, _, key in bands if key == "muted"
+                     for n in names]
+        ax.text(total / 2, -0.75,
+                "action = encode_action(block, entity, target); a card is its "
+                "CardId in every block that names one. End turn is NOT the "
+                "last index.\n"
+                "Muted = run layer, never unmasked by a CombatEnv: "
+                + ", ".join(run_layer) + ".",
                 ha="center", fontsize=7, color=PALETTE["ink"])
         fig.tight_layout()
         fig.savefig(out_dir / "action_space.png", dpi=150)

@@ -290,13 +290,18 @@ channel.
 - Obs layout: `CombatEnv::kObsSize`, `kPlayerObsSize`, `kEnemyObsStride`,
   `kPileObsSize`, `kChoiceObsSize` in `src/combat_env.h`, surfaced to Python as
   `CombatEnv.OBS_SIZE`, `NUM_CARD_TYPES`, `NUM_DEBUFFS`, …
-- Action layout: `kEndTurnAction`, `kFirstOptionSlot`, `kDeclineAction`,
-  `kTotalActions` in `src/turn_loop.h`.
+- Action layout: the v2 block table (`kActionBlocks`, `kTotalActions`) and
+  `encode_action` / `decode_action` in `src/turn_loop.h`, surfaced to Python as
+  `encode_action`, `decode_action` and `ActionBlock`. Layout spec:
+  `docs/design/v2-spec.md` §6.
 
-**Read those constants; never re-derive them.** Computing end-turn as
-`size - 1` was a real bug — the option-slot channel now sits after the combat
-block, so the last index is the *decline* action. It broke the TUI and 13
-Python tests at once.
+**Read those constants; never re-derive them — and never do offset arithmetic
+outside the encoder.** Computing end-turn as `size - 1` was a real bug — the
+option-slot channel sat after the combat block, so the last index was the
+*decline* action. It broke the TUI and 13 Python tests at once. The v2 refactor
+then found the same class of bug in `apply_action` (`action > kEndTurnAction`
+meaning "illegal"), which is why `encode_action` / `decode_action` are now the
+only code allowed to add or subtract a block offset.
 
 **Action masking is non-negotiable.** Unmasked invalid actions produce
 degenerate training where the agent learns to spam end-turn.

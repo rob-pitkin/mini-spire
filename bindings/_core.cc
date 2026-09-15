@@ -444,6 +444,62 @@ PYBIND11_MODULE(_core, m) {
       .value("PenNibCharge", Power::PenNibCharge)
       .value("StrengthDown", Power::StrengthDown);
 
+  // --- The v2 action layout (v2-spec.md §6) -------------------------------
+  //
+  // Python gets the SAME encode/decode pair the engine uses, so no caller —
+  // TUI, training script, analysis notebook — ever builds an index by adding
+  // block offsets. That re-derivation at call sites is the bug class that once
+  // shipped `end-turn = size - 1` into the TUI and 13 tests at once.
+  py::enum_<ActionBlock>(m, "ActionBlock")
+      .value("Combat", ActionBlock::Combat)
+      .value("EndTurn", ActionBlock::EndTurn)
+      .value("Map", ActionBlock::Map)
+      .value("CardSelect", ActionBlock::CardSelect)
+      .value("RelicSelect", ActionBlock::RelicSelect)
+      .value("PotionUse", ActionBlock::PotionUse)
+      .value("PotionDiscard", ActionBlock::PotionDiscard)
+      .value("EventOption", ActionBlock::EventOption)
+      .value("RestOption", ActionBlock::RestOption)
+      .value("Purpose", ActionBlock::Purpose)
+      .value("TakeMaxHp", ActionBlock::TakeMaxHp)
+      .value("Decline", ActionBlock::Decline);
+
+  py::class_<DecodedAction>(m, "DecodedAction")
+      .def_readonly("block", &DecodedAction::block)
+      .def_readonly("entity", &DecodedAction::entity)
+      .def_readonly("target", &DecodedAction::target)
+      .def("card", &DecodedAction::card,
+           "The CardId, for the card-indexed blocks (Combat, CardSelect).");
+
+  // The engine's encode_action ASSERTS its range, which aborts a debug build
+  // and silently produces a wrong index in a release one. A Python caller
+  // deserves an exception instead, so the range is checked here against the
+  // same layout table before crossing into C++.
+  m.def(
+      "encode_action",
+      [](ActionBlock block, int entity, int target) {
+        const ActionBlockSpan& b = kActionBlocks[static_cast<std::size_t>(block)];
+        if (entity < 0 || entity * b.stride >= b.size) {
+          throw py::value_error("entity out of range for its action block");
+        }
+        if (target < 0 || target >= b.stride) {
+          throw py::value_error("target out of range for its action block");
+        }
+        return encode_action(block, entity, target);
+      },
+      py::arg("block"), py::arg("entity") = 0, py::arg("target") = 0,
+      "The global action index for `entity` (and `target`) within `block`.");
+  m.def(
+      "decode_action",
+      [](int action) {
+        if (action < 0 || action >= kTotalActions) {
+          throw py::index_error("action outside the action space");
+        }
+        return decode_action(action);
+      },
+      py::arg("action"),
+      "Which block an action index belongs to, and its entity and target.");
+
   py::enum_<Target>(m, "Target")
       .value("Character", Target::Character)
       .value("Enemy", Target::Enemy);
@@ -564,12 +620,27 @@ PYBIND11_MODULE(_core, m) {
       .def_readonly_static("NUM_ENEMY_POWERS", &kNumEnemyPowers)
       .def_readonly_static("NUM_PLAYER_POWERS", &kNumPlayerPowers)
       .def_readonly_static("NUM_CARD_TYPES", &kNumCardTypes)
-      // Action-layout landmarks (Stage 4c). END_TURN_ACTION is the last index
-      // of the COMBAT block, not of the action space — the option-slot channel
-      // follows it. Never derive end-turn as NUM_ACTIONS - 1.
+      // Action-layout landmarks — the v2 layout (v2-spec.md §6). Every block's
+      // first index is published so Python never re-derives one. END_TURN_ACTION
+      // is the last index of the COMBAT block, not of the action space; never
+      // derive end-turn as NUM_ACTIONS - 1.
+      //
+      // FIRST_OPTION_SLOT is gone: choices are entity-indexed now (§6.2), so
+      // the i-th offered card is answered with CARD_SELECT_BLOCK + its CardId,
+      // not with a positional slot.
       .def_readonly_static("END_TURN_ACTION", &kEndTurnAction)
-      .def_readonly_static("FIRST_OPTION_SLOT", &kFirstOptionSlot)
+      .def_readonly_static("MAP_BLOCK", &kMapBlock)
+      .def_readonly_static("CARD_SELECT_BLOCK", &kCardSelectBlock)
+      .def_readonly_static("RELIC_SELECT_BLOCK", &kRelicSelectBlock)
+      .def_readonly_static("POTION_USE_BLOCK", &kPotionUseBlock)
+      .def_readonly_static("POTION_DISCARD_BLOCK", &kPotionDiscardBlock)
+      .def_readonly_static("EVENT_OPTION_BLOCK", &kEventOptionBlock)
+      .def_readonly_static("REST_OPTION_BLOCK", &kRestOptionBlock)
+      .def_readonly_static("PURPOSE_BLOCK", &kPurposeBlock)
+      .def_readonly_static("TAKE_MAX_HP_ACTION", &kTakeMaxHpAction)
       .def_readonly_static("DECLINE_ACTION", &kDeclineAction)
+      // Still published: the OBSERVATION's choice block remains positional
+      // (slot i describes the i-th offered card), and this is its slot count.
       .def_readonly_static("NUM_OPTION_SLOTS", &kNumOptionSlots)
       .def_readonly_static("CHOICE_HEADER_SIZE", &CombatEnv::kChoiceHeaderSize)
       .def_readonly_static("CHOICE_SLOT_STRIDE", &CombatEnv::kChoiceSlotStride)
@@ -598,8 +669,9 @@ PYBIND11_MODULE(_core, m) {
            "Boolean mask of legal actions (length NUM_ACTIONS).")
       .def("choice_view", &CombatEnv::choice_view,
            "The pending mid-card choice, if any (Stage 4c). options[i] is "
-           "answered with action FIRST_OPTION_SLOT + i. For the TUI; "
-           "allocates, so not for the training loop.")
+           "answered with encode_action(ActionBlock.CardSelect, options[i]) — "
+           "choices are entity-indexed. For the TUI; allocates, so not for "
+           "the training loop.")
       .def("state_piles", &CombatEnv::state_piles,
            "Read pile contents (hand/draw/discard/exhaust) as CardId lists. "
            "Allocates — not for use in the training loop.")
