@@ -1231,6 +1231,32 @@ run-content generation rather than only for counting.
 **Total = 4,115 floats** (**2.32×** v1.0.0's 1,772). Dominated by the pile planes
 and the map.
 
+> **Rulings for when the observation work is sequenced (Rob, 2026-09-14).** The
+> observation is **not** current work. These were settled early and are recorded
+> so they are not argued again.
+>
+> - **Env ownership: prefix layout.** `CombatEnv`'s observation is a prefix of the
+>   run observation. The run env appends run-only blocks after it. This keeps
+>   §3.0.1's complete standalone combat env, leaves no always-zero run blocks in
+>   it (§5.1 rule 5), and a policy can still move between the two envs.
+>   *Consequence:* the combat-visible blocks (relics 8, counters 9, potions 11,
+>   and any others a fight shows) must come before the run-only blocks, so the
+>   order in the table above changes when this is built.
+>   Rejected: one 4,115 layout with run blocks zeroed in `CombatEnv` (~1,800 dead
+>   floats), and a v2 obs for the run env only (contradicts §3.0.1).
+> - **In-combat choices: leaning towards stretching blocks 18 and 19. Not final.**
+>   v1's choice channel (header + 270 × 3) is retired with `payload_id` (§6.2).
+>   The pending-purpose block (18) would also cover combat choice kinds, and the
+>   offer block (19) would mark selectable cards at `cost + 1`. Open: block 19
+>   would carry two meanings; the source card must stay visible (Burning Pact and
+>   True Grit+ are the same kind of choice with different value); and
+>   generated offers (Discovery) are in no pile.
+> - **Blocks are added as their data sources land**, not laid out ahead of time
+>   with zero writers. Each addition bumps the layout version (§10.4).
+> - ⚠️ Stale row: the player block is **40** floats in code, not 34, after six
+>   Powers were added (Vigor, Thorns, Plated Armor, Intangible, Buffer, Pen Nib
+>   charge).
+
 ### 5.2.1 Event parameters (block 6b) = 4 floats
 
 **The event one-hot says *which* event is live; it does not say what is at

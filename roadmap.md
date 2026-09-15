@@ -14,6 +14,12 @@ env and a Textual TUI.
 | 3 — RL baseline | ✅ | MaskablePPO trains; **M1** reached on the v0.x environment |
 | 4 — Benchmarks | ✅ | 438k engine / 259k end-to-end steps/sec; **M2** |
 
+**v2.0.0 is in progress, at `docs/design/v2-spec.md` §11 step 7.** Built: the run
+state, sequential fights, card rewards, the map and path choice, rest sites, and
+shops except the two colorless card slots. Relic effects are 69 of 140. Potion
+effects and events are not started. §11 is the authority on build order; this
+file tracks phases, not sequence.
+
 ## The reordering, and why
 
 The original plan ran the algorithm comparison (**M3**) next, then expanded the
@@ -85,7 +91,7 @@ What the design pass actually produced, beyond the spec itself:
 
 - **Counted vocabularies**, not estimates: `CARDS` 270, `RELICS` 140,
   `POTIONS` 33, `EVENTS` 25, `EVENT_OPTIONS` 58 → a **4,115**-float observation
-  and a **2,136**-action space.
+  and a **2,135**-action space.
 - **A sourcing discipline** (CLAUDE.md, `prior-art-sts-lightspeed.md` §7.5):
   mechanics come from two MIT reimplementations and are **wiki-cross-checked
   before entering the spec**. That check caught four defects, three of them
@@ -102,15 +108,25 @@ hunted and either handled or written down as a known limit.
 
 The foundation everything else hangs off.
 
-- [ ] Run state above `CombatState`: floor, persistent HP, persistent deck, potions
-- [ ] Episode boundary — `reset()` starts a run, `step()` spans fights
-- [ ] Non-combat decisions routed through the option-slot channel
-- [ ] Observation additions: full deck, potions, map, current choices
-- [ ] Potential-based reward with configurable coefficients
+- [x] Run state above `CombatState`: floor, persistent HP, persistent deck,
+      potions (§11 steps 1–2)
+- [ ] Episode boundary — `reset()` starts a run, `step()` spans fights.
+      **Partial:** `RunState` has phases, terminal detection and sequential
+      fights, but there is no env surface yet, so no `reset()` or `step()` over
+      a run.
+- [x] ~~Non-combat decisions routed through the option-slot channel~~
+      **Superseded** by the entity-indexed action space (`v2-spec.md` §6.2),
+      built in `a9198af`. The run-layer blocks are laid out; each decision
+      point adds the code that produces its actions.
+- [ ] Observation additions: full deck, potions, map, current choices. Not yet
+      placed in §11; the rulings so far are in `v2-spec.md` §5.2.
+- [ ] Potential-based reward with configurable coefficients. Not yet placed in
+      §11.
 
 **Exit criterion:** a **walking skeleton** — three fights in sequence on a linear
 path, HP and deck carrying across them, a card reward between each, terminating
-after N floors. No map, no shop, no events, no boss.
+after N floors. No map, no shop, no events, no boss. ✅ **Reached** (§11 step 4),
+at engine level: it runs through `RunState`, not through a Gymnasium env.
 
 That slice is deliberately the first target rather than a later one: it exercises
 the entire loop end to end, so the architecture is proven before four features
@@ -122,13 +138,19 @@ instead of completing an unproven one.
 Each is a decision point over the same channel; ordered by how much new
 machinery each needs.
 
-- [ ] **Card rewards** — pick 1 of 3, or skip. Simplest; already in the skeleton.
-- [ ] **Rest sites** — rest vs. smith. Two options, but the first real
-      resource-vs-investment tradeoff, and the case that motivated the reward design.
-- [ ] **Path choice** — needs a map to exist at all. New state, new observation.
-- [ ] **Events** — most varied; many are bespoke one-offs.
+- [x] **Card rewards** — pick 1 of 3, or skip. Simplest; already in the
+      skeleton. (§11 step 3)
+- [x] **Rest sites** — rest vs. smith. Two options, but the first real
+      resource-vs-investment tradeoff, and the case that motivated the reward
+      design. (§11 step 6; Lift, Toke and Dig came with the campfire relics.)
+- [x] **Path choice** — needs a map to exist at all. New state, new
+      observation. (§11 step 5; the map observation blocks are not built yet.)
+- [ ] **Events** — most varied; many are bespoke one-offs. Not started.
 - [ ] **Shops** — most complex: multiple purchases, prices, gold as a resource.
       Miles reported shops as his most computationally expensive decision.
+      **Nearly done:** class cards, the sale slot, removal, and the relic and
+      potion slots are built. The 2 colorless card slots wait on colorless card
+      effects. Potions can be bought, but none can be used yet.
 
 ### Phase 7 — a complete act
 
