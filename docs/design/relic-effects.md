@@ -256,7 +256,9 @@ have nothing to do with relics**, and those blockers are shared:
 |---|---|---|
 | ~~**Missing `Power`s**~~ | ~~Bronze Scales, Akabeko, Incense Burner, Fossilized Helix, Thread and Needle, Pen Nib~~ | ✅ **done.** All six Powers exist: Vigor, PenNibCharge, Intangible, Buffer, Thorns, PlatedArmor. Intangible is the one power that ticks — a named exception to the status model (Rob, 2026-09-12). |
 | **No curse cards** | Omamori, Darkstone Periapt, Blue Candle, and the unreachable halves of Du-Vu Doll and Cursed Key | §6.4 |
-| **No colorless cards** | Toolbox, Prismatic Shard, Orrery, Dolly's Mirror, Cauldron | also blocks the shop's 2 colorless slots |
+| **No colorless cards** | **Toolbox**, and half of **Prismatic Shard** | also blocks the shop's 2 colorless slots. ⚠️ CORRECTED: an earlier revision listed Orrery, Dolly's Mirror and Cauldron here too. They do not need colorless — Cauldron is potions only ("brews 5 random potions"), and Orrery and Dolly's Mirror need a shop CHOICE SCREEN over normal card rewards. Checked card by card when the colorless vocabulary landed. |
+| **Needs a shop choice screen** | Orrery, Dolly's Mirror | moved here from the colorless row |
+| **Needs potion effects** | Cauldron | moved here from the colorless row |
 | **No events** | Neow's Lament, Odd Mushroom, Warped Tongs, Spirit Poop, and the 5 Face Trader masks | 10 of the special-tier relics |
 | **Hooks not yet wired** | Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle), Toy Ornithopter + Sacred Bark (PotionDrunk) | the hooks exist in the enum; nothing fires them |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
@@ -379,6 +381,31 @@ property of which relics are wired, not a guarantee. Anything added there that
 
 Found because a test asserted the interaction rather than each relic alone. The
 naive version passes every single-relic test.
+
+### 6.8 Prismatic Shard reaches OUTSIDE the card vocabulary — needs a ruling
+
+*"Combat reward screens now contain Colorless cards and cards from other
+colors."*
+
+The colorless half is implementable now that the 35 colorless cards exist. The
+**other-colors half is not**: it means Silent, Defect and Watcher cards, which
+are deliberately absent from the 270-card vocabulary (189 Ironclad + 70
+colorless + 11 curses) and outside Act 1 scope.
+
+This is a category the blocker table did not previously have. Prismatic Shard is
+**not a dead index** — it is a Shop-tier relic, genuinely obtainable, so §5.1
+rule 5 is satisfied. The problem is that half its *effect* reaches content the
+vocabulary excludes by design.
+
+Two options, and neither is obviously right:
+
+| | cost |
+|---|---|
+| implement the colorless half only | a strictly weaker relic — the same failure mode as shipping a boss relic's upside without its drawback (§6.2), and as shipping an obtainable-but-unplayable card |
+| widen the vocabulary to other classes | contradicts the Act 1 scope rule, and adds ~600 card ids for one relic |
+
+**Unresolved.** Recorded rather than decided, because it is a scope question
+rather than an implementation one.
 
 ### 6.5 The remaining counter relics need powers that do not exist
 
