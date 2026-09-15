@@ -58,6 +58,49 @@ does not — the numbers are flat. Real vectorisation needs ROB-57 (thread-safe
 `CombatEnv`); until then, treat the batched rows as a control rather than a
 scaling result.
 
+## Open regression: the mask copy (deferred to the post-v2 pass)
+
+**Do not publish an engine-path number from a v2 build until this is fixed.**
+
+Widening the action space to v2's 2,135 (commit `a9198af`) cost 14% on the
+engine path, measured with `minispire_bench 300000`, Release, run twice and
+interleaved against the parent commit:
+
+| | `8319163` (1,622 actions) | `a9198af` (2,135 actions) |
+|---|---:|---:|
+| engine steps/sec | 347k | 298k |
+| `apply_action_us` (includes obs + mask rebuild) | 1.95 | 2.25 |
+| `action_select_us` (harness mask scan) | 0.524 | 0.686 |
+
+The 347k baseline is lower than the ~438k in the table above because the
+engine has grown since that measurement (Powers, relics, a 270-card
+vocabulary). The comparison here is only between these two commits.
+
+**Cause, isolated with a microbenchmark:**
+
+| cost | measured |
+|---|---:|
+| `decode_action`, combat actions | 2.4 ns (the arithmetic it replaced: 3.1 ns) |
+| `valid_actions` | 324 ns |
+| `compute_mask` copy loop, 1,622 wide | 896 ns |
+| `compute_mask` copy loop, 2,135 wide | 1,175 ns |
+
+`CombatEnv::compute_mask` copies the `std::vector<bool>` returned by
+`valid_actions` into the `uint8_t` mask one element at a time, with a bounds
+check per element. `vector<bool>` is bit-packed, so every read is a shift and a
+mask, and the loop cannot be turned into a byte copy. That loop is now about
+half of `step()`, and it grows linearly with the action space. The harness's
+`action_select_us` grew by exactly the width ratio (×1.316), for the same
+reason.
+
+**Agreed fix:** `valid_actions` writes straight into the env's `uint8_t` buffer
+instead of returning a `vector<bool>`. That removes both the copy and the
+allocation. The mask oracle (`tests/test_mask_oracle.cc`) must keep comparing
+engine and reference masks through whatever the new signature is.
+
+**Sequencing (Rob, 2026-09-14):** batched into the optimisation pass that
+follows v2, when v2 is benchmarked against v1. Not fixed piecemeal now.
+
 ## Results
 
 `results.json` records the machine, the observation and action sizes, and the

@@ -170,6 +170,32 @@ board disagrees with it, the spec wins.
 
 "I'll figure out what this needs to do when I get there" is a red flag.
 
+### Session task tracking
+
+Track work in the session task list (TaskCreate / TaskUpdate / TaskList) all
+the time, not only when Rob hands over a numbered list. **The list survives
+conversation compaction.** A summary can drop a deferred follow-up; the task
+list will not. That is why it works without mirroring anything to Linear.
+
+- **Add a task the moment work appears**, not at the end of a turn: a stale
+  reference found mid-sweep, a follow-up Rob defers, a ruling still owed, a
+  benchmark to re-run. If a message you are writing says "later" or
+  "follow-up", that item needs a task.
+- **Put the evidence in the description.** Write deferred tasks so a context
+  that remembers nothing can pick them up: measured numbers, files, the agreed
+  fix, and what unblocks it ("after v2").
+- **Keep one task `in_progress` at a time, and check it off only when it is
+  done**: tests pass, and anything that needs Rob's approval (a commit) has it.
+  Partial or blocked work stays open, with what blocks it written down.
+- **Check TaskList when a task completes and after compaction.** Work in Rob's
+  order (lowest id first) unless he re-sequences.
+- **Keep it honest.** Delete superseded tasks, and update a description when
+  the scope changes, so the subject never drifts away from the work.
+
+The list is session working state, not a record. Decisions still go in
+`docs/design/`. Work that must outlive the session, or be visible to anyone
+else, still goes to Linear.
+
 ### What Claude should never do
 
 - One-shot a large component with no agreed design behind it
