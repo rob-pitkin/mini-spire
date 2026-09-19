@@ -97,7 +97,11 @@ int choice_source_pile(ChoiceKind kind) {
     case ChoiceKind::HandToTopOfDraw:
     case ChoiceKind::CopyAttackOrPowerInHand:
     case ChoiceKind::ExhaustCardInHand:
+    case ChoiceKind::HandToBottomOfDraw:
       return 0;  // hand
+    case ChoiceKind::DrawPileSkillToHand:
+    case ChoiceKind::DrawPileAttackToHand:
+      return 1;  // draw
     case ChoiceKind::DiscardToTopOfDraw:
       return 2;  // discard
     case ChoiceKind::ExhaustToHand:

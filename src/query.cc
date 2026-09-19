@@ -265,6 +265,20 @@ bool is_playable(const CombatState& state, CardId card) {
       if (CARD_DATABASE.at(c.card_id).type != CardType::Attack) return false;
     }
   }
+  // Secret Technique / Secret Weapon: the DRAW PILE must hold a card of the
+  // required type. In StS the card greys out with "no valid cards" rather than
+  // resolving to nothing, so this is legality, not a fizzling effect — and
+  // legality belongs here, where the mask and resolution both read it.
+  if (data.requires_draw_pile_type) {
+    bool found = false;
+    for (const Card& c : state.draw_pile) {
+      if (CARD_DATABASE.at(c.card_id).type == data.required_draw_pile_type) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) return false;
+  }
   return true;
 }
 

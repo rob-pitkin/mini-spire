@@ -655,13 +655,8 @@ TEST(Colorless, ImpatiencePlusDrawsThree) {
   EXPECT_EQ(s.current_hand.size(), 3u);
 }
 
-// Forethought needs a hand choice that moves a card to the BOTTOM of the draw
-// pile, plus the "until played" cost duration — batch 4.
-TEST(Colorless, ForethoughtIsNotYetPlayable) {
-  for (CardId id : {CardId::Forethought, CardId::ForethoughtPlus}) {
-    EXPECT_TRUE(CARD_DATABASE.at(id).unplayable) << card_name(id);
-  }
-}
+// Forethought landed in batch 4. Only the + is still out, because "any number"
+// is a multi-select (batch 6) — see ForethoughtPlusIsStillMultiSelectAndUnplayable.
 
 // ------------------------------------------------------ Mind Blast, Panacea
 
@@ -786,8 +781,8 @@ TEST(Colorless, AllTwentyUncommonsArePresentAndConsistent) {
 // The unplayable ones are exactly the ones whose machinery is missing — not a
 // drifting set. If a card leaves this list, its effect landed; if one joins,
 // something regressed.
-TEST(Colorless, TheNotYetPlayableUncommonsAreExactlyTheseTwo) {
-  const CardId expected[] = {CardId::Forethought, CardId::Purity};
+TEST(Colorless, PurityIsTheLastUnplayableUncommon) {
+  const CardId expected[] = {CardId::Purity};
 
   for (CardId id : expected) {
     EXPECT_TRUE(CARD_DATABASE.at(id).unplayable)
@@ -797,10 +792,10 @@ TEST(Colorless, TheNotYetPlayableUncommonsAreExactlyTheseTwo) {
                     CardId::DeepBreath, CardId::Discovery,
                     CardId::DramaticEntrance, CardId::Enlightenment,
                     CardId::Finesse, CardId::FlashOfSteel,
-                    CardId::GoodInstincts, CardId::Impatience,
-                    CardId::JackOfAllTrades, CardId::Madness,
-                    CardId::MindBlast, CardId::Panacea, CardId::PanicButton,
-                    CardId::SwiftStrike, CardId::Trip}) {
+                    CardId::Forethought, CardId::GoodInstincts,
+                    CardId::Impatience, CardId::JackOfAllTrades,
+                    CardId::Madness, CardId::MindBlast, CardId::Panacea,
+                    CardId::PanicButton, CardId::SwiftStrike, CardId::Trip}) {
     EXPECT_FALSE(CARD_DATABASE.at(id).unplayable)
         << card_name(id) << " regressed to unplayable";
   }
@@ -1255,6 +1250,209 @@ TEST(Colorless, ShuffledInCardsAreStillFreeNextTurn) {
   EXPECT_EQ(free_cards, 3) << "all three survive into the next turn";
 }
 
+// ================================= batch 4: choices over the draw pile
+
+// StS greys the card out when the draw pile holds nothing of its type, so this
+// is a mask rule rather than an effect that fizzles.
+TEST(Colorless, SecretTechniqueIsMaskedOutWithoutASkillInTheDrawPile) {
+  CombatState s = fight_holding(CardId::SecretTechnique);
+  s.draw_pile.clear();
+  s.draw_pile.push_back(Card{CardId::Strike});  // an Attack, not a Skill
+
+  EXPECT_FALSE(valid_actions(s)[static_cast<std::size_t>(
+      card_action(CardId::SecretTechnique))]);
+
+  s.draw_pile.push_back(Card{CardId::Defend});  // now a Skill is there
+  EXPECT_TRUE(valid_actions(s)[static_cast<std::size_t>(
+      card_action(CardId::SecretTechnique))]);
+}
+
+TEST(Colorless, SecretWeaponIsMaskedOutWithoutAnAttackInTheDrawPile) {
+  CombatState s = fight_holding(CardId::SecretWeapon);
+  s.draw_pile.clear();
+  s.draw_pile.push_back(Card{CardId::Defend});
+
+  EXPECT_FALSE(valid_actions(s)[static_cast<std::size_t>(
+      card_action(CardId::SecretWeapon))]);
+
+  s.draw_pile.push_back(Card{CardId::Strike});
+  EXPECT_TRUE(valid_actions(s)[static_cast<std::size_t>(
+      card_action(CardId::SecretWeapon))]);
+}
+
+// One candidate is no decision, so it resolves without a prompt (as StS does).
+TEST(Colorless, SecretTechniqueTakesTheOnlySkillWithoutPrompting) {
+  CombatState s = fight_holding(CardId::SecretTechnique);
+  s.draw_pile.clear();
+  s.draw_pile.push_back(Card{CardId::Strike});
+  s.draw_pile.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::SecretTechnique)));
+
+  EXPECT_FALSE(s.pending_choice.active());
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].card_id, CardId::Defend);
+  ASSERT_EQ(s.draw_pile.size(), 1u);
+  EXPECT_EQ(s.draw_pile[0].card_id, CardId::Strike) << "the Attack stays put";
+}
+
+TEST(Colorless, SecretTechniqueOffersOnlySkills) {
+  CombatState s = fight_holding(CardId::SecretTechnique);
+  s.draw_pile.clear();
+  s.draw_pile.push_back(Card{CardId::Defend});
+  s.draw_pile.push_back(Card{CardId::Armaments});  // another Skill
+  s.draw_pile.push_back(Card{CardId::Strike});     // an Attack
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::SecretTechnique)));
+
+  ASSERT_TRUE(s.pending_choice.active());
+  EXPECT_EQ(s.pending_choice.kind, ChoiceKind::DrawPileSkillToHand);
+  ASSERT_EQ(s.pending_choice.num_options, 2);
+  for (int i = 0; i < s.pending_choice.num_options; ++i) {
+    EXPECT_EQ(CARD_DATABASE.at(s.pending_choice.options[i].card_id).type,
+              CardType::Skill);
+  }
+}
+
+TEST(Colorless, SecretWeaponOffersOnlyAttacks) {
+  CombatState s = fight_holding(CardId::SecretWeapon);
+  s.draw_pile.clear();
+  s.draw_pile.push_back(Card{CardId::Strike});
+  s.draw_pile.push_back(Card{CardId::Bash});
+  s.draw_pile.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::SecretWeapon)));
+
+  ASSERT_TRUE(s.pending_choice.active());
+  EXPECT_EQ(s.pending_choice.kind, ChoiceKind::DrawPileAttackToHand);
+  ASSERT_EQ(s.pending_choice.num_options, 2);
+  for (int i = 0; i < s.pending_choice.num_options; ++i) {
+    EXPECT_EQ(CARD_DATABASE.at(s.pending_choice.options[i].card_id).type,
+              CardType::Attack);
+  }
+}
+
+TEST(Colorless, SecretTechniqueExhaustsAndThePlusDoesNot) {
+  for (CardId id : {CardId::SecretTechnique, CardId::SecretTechniquePlus}) {
+    CombatState s = fight_holding(id);
+    s.draw_pile.clear();
+    s.draw_pile.push_back(Card{CardId::Defend});
+    ASSERT_TRUE(apply_action(s, card_action(id))) << card_name(id);
+
+    const bool exhausted =
+        !s.exhaust_pile.empty() && s.exhaust_pile.back().card_id == id;
+    EXPECT_EQ(exhausted, id == CardId::SecretTechnique) << card_name(id);
+  }
+}
+
+// A full hand sends the card to the discard instead, the same rule every other
+// arrival follows.
+TEST(Colorless, SecretWeaponOverflowsToTheDiscardWhenTheHandIsFull) {
+  CombatState s = fight_holding(CardId::SecretWeapon);
+  // A FULL hand once Secret Weapon itself has left it, which is what the
+  // overflow needs: the played card is removed before its effect resolves, so
+  // nine cards plus the card being played leaves room for the retrieved one.
+  // StS reaches this state through effects that play a card without removing
+  // it (its patch notes mention Burst); the engine's rule is generic.
+  for (int i = 0; i < HAND_SIZE_LIMIT; ++i) {
+    s.current_hand.push_back(Card{CardId::Defend});
+  }
+  s.draw_pile.clear();
+  s.draw_pile.push_back(Card{CardId::Bash});
+  s.discard_pile.clear();
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::SecretWeapon)));
+
+  EXPECT_TRUE(s.draw_pile.empty()) << "it still left the draw pile";
+  bool in_discard = false;
+  for (const Card& c : s.discard_pile) {
+    if (c.card_id == CardId::Bash) in_discard = true;
+  }
+  EXPECT_TRUE(in_discard);
+}
+
+// ------------------------------------------------------------- Forethought
+
+TEST(Colorless, ForethoughtPutsAHandCardOnTheBottomOfTheDrawPile) {
+  CombatState s = fight_holding(CardId::Forethought);
+  s.draw_pile.clear();
+  s.draw_pile.push_back(Card{CardId::Strike});  // the bottom before the move
+  s.current_hand.push_back(Card{CardId::Bash});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Forethought)));
+
+  ASSERT_EQ(s.draw_pile.size(), 2u);
+  EXPECT_EQ(s.draw_pile.front().card_id, CardId::Bash)
+      << "front() is the BOTTOM — draw_one pops the back";
+  EXPECT_EQ(s.draw_pile.front().cost_override, 0);
+  EXPECT_EQ(s.draw_pile.front().cost_duration, CostDuration::UntilPlayed);
+}
+
+// "Until played" outlives the turn, unlike Transmutation's discount.
+TEST(Colorless, ForethoughtsDiscountSurvivesTheTurn) {
+  CombatState s = fight_holding(CardId::Forethought);
+  s.draw_pile.clear();
+  s.current_hand.push_back(Card{CardId::Bash});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Forethought)));
+
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+
+  bool found = false;
+  for (const std::vector<Card>* pile :
+       {&s.current_hand, &s.draw_pile, &s.discard_pile}) {
+    for (const Card& c : *pile) {
+      if (c.card_id == CardId::Bash && c.cost_override == 0) {
+        found = true;
+        EXPECT_EQ(c.cost_duration, CostDuration::UntilPlayed);
+      }
+    }
+  }
+  EXPECT_TRUE(found);
+}
+
+// ...and is SPENT by the play, rather than lasting the combat.
+TEST(Colorless, ForethoughtsDiscountIsSpentByPlayingTheCard) {
+  CombatState s = fight_holding(CardId::Forethought);
+  s.draw_pile.clear();
+  s.current_hand.push_back(Card{CardId::Bash});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Forethought)));
+  ASSERT_EQ(s.draw_pile.size(), 1u);
+
+  // Draw it back by hand, then play it: Bash costs 2, and this play is free.
+  s.current_hand.push_back(s.draw_pile.front());
+  s.draw_pile.clear();
+  s.character.energy = 1;  // not enough for Bash's printed cost
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bash, 0)));
+
+  EXPECT_EQ(s.character.energy, 1) << "the discounted play cost nothing";
+  for (const Card& c : s.discard_pile) {
+    if (c.card_id == CardId::Bash) {
+      EXPECT_EQ(c.cost_override, kNoCostOverride)
+          << "the discount is spent, not permanent";
+    }
+  }
+}
+
+// StS only marks a card whose PRINTED cost is above 0.
+TEST(Colorless, ForethoughtDoesNotDiscountAFreeCard) {
+  CombatState s = fight_holding(CardId::Forethought);
+  s.draw_pile.clear();
+  s.current_hand.push_back(Card{CardId::SwiftStrike});  // already costs 0
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Forethought)));
+
+  ASSERT_EQ(s.draw_pile.size(), 1u);
+  EXPECT_EQ(s.draw_pile.front().card_id, CardId::SwiftStrike);
+  EXPECT_EQ(s.draw_pile.front().cost_override, kNoCostOverride);
+}
+
+// The + is "any number", a multi-select, which waits for batch 6.
+TEST(Colorless, ForethoughtPlusIsStillMultiSelectAndUnplayable) {
+  EXPECT_TRUE(CARD_DATABASE.at(CardId::ForethoughtPlus).unplayable);
+  EXPECT_FALSE(CARD_DATABASE.at(CardId::Forethought).unplayable);
+}
+
 // ================================================ all 35, as a complete block
 
 // The pools are the authority on what exists. sts_lightspeed's
@@ -1306,7 +1504,7 @@ TEST(Colorless, TheTwoPoolsAreDisjoint) {
 // Of the 35, these are the ones whose effects are wired. The rest hold correct
 // data and a stable action index and are masked out. A card leaving this list
 // means an effect landed; one joining means something regressed.
-TEST(Colorless, ExactlyTwentySevenOfThirtyFiveArePlayable) {
+TEST(Colorless, ExactlyThirtyOfThirtyFiveArePlayable) {
   const CardId playable[] = {
       CardId::BandageUp,     CardId::Blind,        CardId::DarkShackles,
       CardId::DeepBreath,    CardId::DramaticEntrance, CardId::Finesse,
@@ -1321,7 +1519,9 @@ TEST(Colorless, ExactlyTwentySevenOfThirtyFiveArePlayable) {
       CardId::Discovery,
       // Batch 3: the "this combat" cost duration.
       CardId::Madness, CardId::Enlightenment, CardId::Chrysalis,
-      CardId::Metamorphosis};
+      CardId::Metamorphosis,
+      // Batch 4: choices over the draw pile.
+      CardId::SecretTechnique, CardId::SecretWeapon, CardId::Forethought};
 
   int wired = 0;
   for (const std::vector<CardId>* pool :

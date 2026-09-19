@@ -200,7 +200,7 @@ machinery lands with the cards that need it.
 | 1 ✅ | Thinking Ahead, Apotheosis, Violence, Dark Shackles, Panic Button, Hand of Greed | small, self-contained; D5 |
 | 2 ✅ | Jack of All Trades, Transmutation, Magnetism, Discovery + Infernal Blade fix | generation; `CardRandom` (D4); cost this turn (first use of D2) |
 | 3 ✅ | Madness, Enlightenment, Chrysalis, Metamorphosis | the rest of D2 |
-| 4 | Secret Technique, Secret Weapon, Forethought | new choice sources |
+| 4 ✅ | Secret Technique, Secret Weapon, Forethought | new choice sources |
 | 5 | Panache, Sadistic Nature, Mayhem, The Bomb | power triggers; D3 |
 | 6 | Purity, Forethought+ | D1 |
 
@@ -298,3 +298,24 @@ Toolbox, and update `relic-effects.md` §7.
 - **Chrysalis and Metamorphosis need the combat duration, not the turn one**,
   because their cards go into the DRAW pile: a this-turn discount would usually
   expire before the card was ever drawn.
+
+### Batch 4
+
+- **Secret Technique and Secret Weapon are MASK rules, not fizzling effects.**
+  StS's `canUse` returns false when the draw pile holds no card of the required
+  type, and the card greys out. So the rule lives in `is_playable` beside
+  Clash's, and the mask oracle re-derives it independently. Implementing it as
+  an effect that finds nothing would have let the agent burn a card — and, for
+  the base versions, Exhaust it — for no result.
+- **A draw-pile choice reveals WHAT is in the pile but never its ORDER.** The
+  options are deduplicated by identity before being offered, so a pile holding
+  three Strikes is one option, not three in draw order. That is `v2-spec.md`
+  §5.10's second parity rule, and it is also what StS shows: an unordered grid.
+- **Forethought's discount only marks a card whose PRINTED cost is above 0**,
+  and it is spent by the play rather than expiring with a turn or a combat —
+  the `UntilPlayed` duration, now exercised for the first time. StS models it
+  as `freeToPlayOnce` for the same reason.
+- **A test-construction trap worth recording:** "the hand is full" for a
+  retrieved card means full AFTER the played card has left it. The played card
+  is removed before its effect resolves, so a hand of nine plus the card being
+  played has room, and an overflow test built that way silently tests nothing.

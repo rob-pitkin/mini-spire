@@ -122,6 +122,20 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
       if (!all_attacks) continue;
     }
 
+    // Secret Technique / Secret Weapon: the DRAW PILE must hold a card of the
+    // required type. StS greys the card out rather than letting it resolve to
+    // nothing, so it is a legality rule and belongs in the mask.
+    if (data.requires_draw_pile_type) {
+      bool found = false;
+      for (const Card& c : state.draw_pile) {
+        if (CARD_DATABASE.at(c.card_id).type == data.required_draw_pile_type) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) continue;
+    }
+
     if (card_targets_enemy(data)) {
       mask[action] = target < static_cast<int>(state.enemies.size()) &&
                      state.enemies[target].hp > 0;

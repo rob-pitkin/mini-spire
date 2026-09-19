@@ -1774,6 +1774,7 @@ footnote in a design doc. The full list to publish:
 | Frozen Eye excluded from the shop pool | reveals draw-pile *order*; no way to show it |
 | Neow always offers 4 blessings | no cross-run state exists (§8) |
 | Relic order is insertion order | §5.4 — a real parity defect |
+| **The cheapest copy of a card is the one played** | Actions name a `CardId`, not a copy, so when one copy is discounted (Madness, Discovery, Infernal Blade) and another is not, the engine spends the cheap one. Optimal within a turn; a human could instead SAVE a combat-long discount for a later turn. `colorless-effects.md` D2 option A (Rob, 2026-09-19) |
 | Ascension pinned at 0 | §3.0 |
 
 A researcher comparing mini-spire win rates against CommunicationMod or

@@ -1798,6 +1798,32 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
             q.push_front(ex);
           }
           break;
+        case ChoiceKind::DrawPileSkillToHand:
+        case ChoiceKind::DrawPileAttackToHand:
+          // Secret Technique / Secret Weapon: draw pile -> hand. A hand at the
+          // limit sends the card to the discard instead, which is what
+          // add_card_to_hand already does for every other arrival.
+          if (take_from_pile(state.draw_pile, chosen)) {
+            add_card_to_hand(state, chosen);
+          }
+          break;
+        case ChoiceKind::HandToBottomOfDraw: {
+          // Forethought: hand -> the BOTTOM of the draw pile, costing 0 until
+          // it is played. front() is the bottom, since draw_one pops the back.
+          //
+          // The discount only applies to a card whose PRINTED cost is above 0,
+          // exactly as StS guards it — a 0-cost card gains nothing and must not
+          // come back marked as discounted.
+          if (take_from_pile(state.current_hand, chosen)) {
+            Card moved = chosen;
+            if (CARD_DATABASE.at(moved.card_id).cost > 0) {
+              moved.cost_override = 0;
+              moved.cost_duration = CostDuration::UntilPlayed;
+            }
+            state.draw_pile.insert(state.draw_pile.begin(), moved);
+          }
+          break;
+        }
         case ChoiceKind::DiscoverCard: {
           // Discovery: the chosen card is a fresh copy that costs 0 this turn.
           // It is generated, so it comes from no pile and nothing is removed.
@@ -1901,10 +1927,15 @@ bool card_qualifies(ChoiceKind kind, CardId id) {
       return is_upgradable(id);  // already-upgraded and Status cards excluded
     case ChoiceKind::CopyAttackOrPowerInHand:
       return d.type == CardType::Attack || d.type == CardType::Power;
+    case ChoiceKind::DrawPileSkillToHand:
+      return d.type == CardType::Skill;
+    case ChoiceKind::DrawPileAttackToHand:
+      return d.type == CardType::Attack;
     case ChoiceKind::HandToTopOfDraw:
     case ChoiceKind::DiscardToTopOfDraw:
     case ChoiceKind::ExhaustToHand:
     case ChoiceKind::ExhaustCardInHand:
+    case ChoiceKind::HandToBottomOfDraw:
       return true;  // any card in the source pile
     case ChoiceKind::DiscoverCard:
       // Never reaches here: Discovery's options are ROLLED, so the
@@ -1925,10 +1956,17 @@ const std::vector<Card>& source_pile(const CombatState& state,
       return state.discard_pile;
     case ChoiceKind::ExhaustToHand:
       return state.exhaust_pile;
+    case ChoiceKind::DrawPileSkillToHand:
+    case ChoiceKind::DrawPileAttackToHand:
+      // The draw pile. Options are deduplicated by identity, so this reveals
+      // WHAT is in the pile but never its ORDER — the parity rule v2-spec.md
+      // §5.10 calls out, and the same reason StS shows an unordered grid.
+      return state.draw_pile;
     case ChoiceKind::UpgradeCardInHand:
     case ChoiceKind::HandToTopOfDraw:
     case ChoiceKind::CopyAttackOrPowerInHand:
     case ChoiceKind::ExhaustCardInHand:
+    case ChoiceKind::HandToBottomOfDraw:
     case ChoiceKind::DiscoverCard:  // no pile at all — the options are rolled
     case ChoiceKind::None:
       break;

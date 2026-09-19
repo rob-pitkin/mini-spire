@@ -405,6 +405,9 @@ enum class ChoiceKind {
                             // options are rolled rather than taken from a pile,
                             // which is why the RequestChoice executor builds
                             // them instead of build_choice.
+  DrawPileSkillToHand,      // Secret Technique: a Skill from the draw pile
+  DrawPileAttackToHand,     // Secret Weapon: an Attack from the draw pile
+  HandToBottomOfDraw,       // Forethought: hand -> BOTTOM of the draw pile
   // v2.0.0 (map / shop / events) appends here — no encoding change.
 };
 
@@ -703,6 +706,13 @@ struct CardData {
   // not a set-to-zero. `for_combat` is the upgrade's longer duration.
   bool caps_hand_cost_at_one = false;
   bool caps_hand_cost_for_combat = false;
+  // --- Colorless effects, batch 4: choices over the draw pile. ---
+  //
+  // Secret Technique / Secret Weapon cannot be PLAYED at all unless the draw
+  // pile holds a card of this type — StS's canUse returns false and the card
+  // greys out, so this is a mask rule like Clash's, not an effect that fizzles.
+  bool requires_draw_pile_type = false;
+  CardType required_draw_pile_type = CardType::Skill;
 };
 
 // What a card becomes when upgraded (Armaments; v2's rest-site smith).
@@ -1557,15 +1567,14 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     // Forethought: "Put a card from your hand to the bottom of your draw pile.
     // It costs 0 until played." The upgrade makes it ANY NUMBER — a
     // single-select becoming a multi-select, which is a shape change, not a
-    // number.
+    // number, so the + waits for batch 6.
     //
-    // UNPLAYABLE: needs a hand choice that moves to the BOTTOM of the draw pile
-    // and a per-instance "costs 0 until played" marker that survives being
-    // drawn again. free_this_turn is keyed by card id and expires at end of
-    // turn, so it is the wrong tool for both halves.
+    // "Until played" is the third cost duration: it survives being drawn again
+    // and is spent by the play itself, which is why it cannot be modelled as a
+    // turn- or combat-scoped discount.
     {CardId::Forethought, [] {
        CardData d = colorless("Forethought", 0, CardType::Skill);
-       d.unplayable = true;
+       d.requests_choice = ChoiceKind::HandToBottomOfDraw;
        return d;
      }()},
     {CardId::ForethoughtPlus, [] {
@@ -1937,27 +1946,38 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     // Secret Technique / Secret Weapon: "Put a Skill [Attack] from your draw
     // pile into your hand. Exhaust." Mirror images, and BOTH upgrades remove
     // the Exhaust rather than changing a number.
-    // UNPLAYABLE: a choice whose options are the draw pile FILTERED BY TYPE.
+    //
+    // Each is UNPLAYABLE while the draw pile holds no card of its type — StS
+    // greys the card out rather than letting it resolve to nothing, so this is
+    // a mask rule (requires_draw_pile_type), the same shape as Clash's.
     {CardId::SecretTechnique, [] {
        CardData d = colorless("Secret Technique", 0, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.requests_choice = ChoiceKind::DrawPileSkillToHand;
+       d.requires_draw_pile_type = true;
+       d.required_draw_pile_type = CardType::Skill;
        return d;
      }()},
     {CardId::SecretTechniquePlus, [] {
        CardData d = colorless("Secret Technique+", 0, CardType::Skill);
-       d.unplayable = true;
+       d.requests_choice = ChoiceKind::DrawPileSkillToHand;
+       d.requires_draw_pile_type = true;
+       d.required_draw_pile_type = CardType::Skill;
        return d;
      }()},
     {CardId::SecretWeapon, [] {
        CardData d = colorless("Secret Weapon", 0, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.requests_choice = ChoiceKind::DrawPileAttackToHand;
+       d.requires_draw_pile_type = true;
+       d.required_draw_pile_type = CardType::Attack;
        return d;
      }()},
     {CardId::SecretWeaponPlus, [] {
        CardData d = colorless("Secret Weapon+", 0, CardType::Skill);
-       d.unplayable = true;
+       d.requests_choice = ChoiceKind::DrawPileAttackToHand;
+       d.requires_draw_pile_type = true;
+       d.required_draw_pile_type = CardType::Attack;
        return d;
      }()},
 
