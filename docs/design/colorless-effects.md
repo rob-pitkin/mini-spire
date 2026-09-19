@@ -201,7 +201,7 @@ machinery lands with the cards that need it.
 | 2 ✅ | Jack of All Trades, Transmutation, Magnetism, Discovery + Infernal Blade fix | generation; `CardRandom` (D4); cost this turn (first use of D2) |
 | 3 ✅ | Madness, Enlightenment, Chrysalis, Metamorphosis | the rest of D2 |
 | 4 ✅ | Secret Technique, Secret Weapon, Forethought | new choice sources |
-| 5 | Panache, Sadistic Nature, Mayhem, The Bomb | power triggers; D3 |
+| 5 ✅ | Panache, Sadistic Nature, Mayhem, The Bomb | power triggers; D3 |
 | 6 | Purity, Forethought+ | D1 |
 
 **After batch 6:** stock the shop's two colorless slots (`v2-spec.md` §4.3), wire
@@ -319,3 +319,33 @@ Toolbox, and update `relic-effects.md` §7.
   retrieved card means full AFTER the played card has left it. The played card
   is removed before its effect resolves, so a hand of nine plus the card being
   played has room, and an overflow test built that way silently tests nothing.
+
+### Batch 5
+
+- **Sadistic Nature forced a real interface change: `apply_debuff` and
+  `apply_power` now report whether the effect LANDED.** StS deals no damage when
+  the target's Artifact eats the debuff, and only the mutator knows — it is
+  where the charge is spent. Everything else ignores the return value.
+- **A negative POWER is a debuff in StS terms**, so Disarm's Strength loss
+  triggers Sadistic Nature — but `Shackled` is excluded by name. That single
+  exclusion is what stops Dark Shackles triggering it twice (its Strength loss
+  counts, the give-back does not), and StS patched exactly that.
+- **Panache's stacks are the DAMAGE, not a countdown.** A second Panache adds
+  damage rather than starting a second counter, which is Combust's shape.
+  The countdown lives on `Character::panache_counter`, resets every turn, and is
+  decremented in the **card-played executor** rather than the power registry —
+  that registry pushes actions and never mutates state.
+- ⚠️ **Open: does playing Panache itself count toward the first five?** Our
+  order says yes (the power is applied, then the card-played hook fires). StS's
+  action order looks the same — `use()` queues the power before `UseCardAction`
+  triggers `onUseCard` — but no source states it outright, and the wiki's note
+  ("the counter begins at 5") is about earlier cards, not this one. The test
+  drives the counter directly so it does not depend on the answer.
+- **Mayhem is Havoc as a recurring power, minus the Exhaust**, and it fires
+  BEFORE the turn's draw, so it plays the card already on top. The two share one
+  executor branch with a single flag between them.
+- **The Bomb's blast is unmodifiable, not unblockable.** It lands at the end of
+  the player's turn, before the enemies act, so block an enemy gained on its
+  previous turn is still standing and absorbs part of it. That is correct, and
+  it made three of my tests wrong: they expected the full 40 and, in two cases,
+  negative HP on an enemy the blast killed.

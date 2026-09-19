@@ -111,6 +111,16 @@ enum class Power {
   Magnetism,     // turn start: add `stacks` random COLORLESS cards to hand, at
                  // full price. Stacks intensify (two Magnetisms make two cards
                  // a turn), which is why the count is the stack value.
+  Panache,       // every 5th card played IN A TURN: `stacks` damage to all
+                 // enemies. Stacks are the DAMAGE (a second Panache adds to it
+                 // rather than starting a second countdown); the countdown
+                 // itself is Character::panache_counter, reset each turn.
+  SadisticNature,// whenever the player applies a debuff to an enemy AND it
+                 // lands, that enemy takes `stacks` fixed damage. Artifact
+                 // negating the debuff means no damage.
+  Mayhem,        // turn start, BEFORE the draw: play the top card of the draw
+                 // pile, `stacks` times. Unlike Havoc it does NOT exhaust the
+                 // card it plays.
   // --- Turn-scoped bookkeeping power. ---
   StrengthDown,  // turn end: lose `stacks` Strength, then remove self. StS
                  // models temporary Strength (Flex) as a Strength gain paired
@@ -130,7 +140,7 @@ enum class Power {
 // powers) because two of five is not worth a second table.
 inline constexpr int kNumDebuffs = 6;
 inline constexpr int kNumEnemyPowers = 7;
-inline constexpr int kNumPlayerPowers = 30;
+inline constexpr int kNumPlayerPowers = 33;
 
 // FUTURE (multi-enemy): Target { Character, Enemy } collapses any "the enemy"
 // to a single entity, which is unambiguous in v1 with one enemy. Multi-enemy

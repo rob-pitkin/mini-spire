@@ -213,9 +213,13 @@ std::optional<CardId> draw_one(CombatState& state);
 // Apply one debuff/power application to its target ('enemy_target' = decoded
 // enemy slot; ignored for Target::Character). Artifact negates a whole debuff
 // application; Entangle is SET, not accumulated (non-stacking, ROB-75).
-void apply_debuff(CombatState& state, const DebuffApplication& app,
+//
+// Returns whether the effect actually LANDED. Sadistic Nature needs that
+// distinction — StS deals no damage when the target's Artifact eats the debuff
+// — and "did it land" is knowable only here, where the charge is spent.
+bool apply_debuff(CombatState& state, const DebuffApplication& app,
                   int enemy_target);
-void apply_power(CombatState& state, const PowerApplication& app,
+bool apply_power(CombatState& state, const PowerApplication& app,
                  int enemy_target);
 
 // ---------------------------------------------------------------------------

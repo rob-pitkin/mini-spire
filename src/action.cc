@@ -187,10 +187,10 @@ std::unordered_map<Power, int>* power_map(CombatState& state, Target target,
 
 }  // namespace
 
-void apply_debuff(CombatState& state, const DebuffApplication& app,
+bool apply_debuff(CombatState& state, const DebuffApplication& app,
                   int enemy_target) {
   auto* m = debuff_map(state, app.target, enemy_target);
-  if (!m) return;
+  if (!m) return false;
 
   // Relic immunity (Ginger / Turnip) is checked BEFORE Artifact, and the order
   // is the whole point: the wiki states that a player holding Ginger who would
@@ -199,7 +199,7 @@ void apply_debuff(CombatState& state, const DebuffApplication& app,
   // charge negating a debuff that could never have landed.
   if (app.target == Target::Character &&
       player_is_immune_to(state, app.effect)) {
-    return;
+    return false;
   }
 
   // Artifact (ROB-65): negates the whole debuff APPLICATION regardless of
@@ -209,7 +209,7 @@ void apply_debuff(CombatState& state, const DebuffApplication& app,
     auto art = pm->find(Power::Artifact);
     if (art != pm->end() && art->second > 0) {
       if (--art->second <= 0) pm->erase(art);
-      return;  // debuff negated
+      return false;  // debuff negated
     }
   }
   // Entangle is non-stacking: SET to the applied amount, not accumulated. It's
@@ -219,12 +219,13 @@ void apply_debuff(CombatState& state, const DebuffApplication& app,
   } else {
     (*m)[app.effect] += app.amount;
   }
+  return true;
 }
 
-void apply_power(CombatState& state, const PowerApplication& app,
+bool apply_power(CombatState& state, const PowerApplication& app,
                  int enemy_target) {
   auto* m = power_map(state, app.target, enemy_target);
-  if (!m) return;
+  if (!m) return false;
   // Artifact also negates NEGATIVE power applications, not just Debuff ones:
   // in StS a negative buff *is* a debuff, so Disarm's "Enemy loses 2 Strength"
   // is eaten by a Sentry's Artifact charge (Rob's ruling from play experience;
@@ -237,10 +238,11 @@ void apply_power(CombatState& state, const PowerApplication& app,
     auto art = m->find(Power::Artifact);
     if (art != m->end() && art->second > 0) {
       if (--art->second <= 0) m->erase(art);
-      return;  // application negated
+      return false;  // application negated
     }
   }
   (*m)[app.effect] += app.amount;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +263,20 @@ int count_living(const CombatState& state) {
     if (e.hp > 0) n++;
   }
   return n;
+}
+
+// Sadistic Nature: an enemy the player just debuffed takes fixed damage.
+// Pushed, never applied here, and only for a debuff that LANDED — StS deals
+// nothing when Artifact eats it.
+void push_sadistic_nature(const CombatState& state, int enemy_slot,
+                          ActionQueue& q) {
+  const int damage = get_status(state.character.powers, Power::SadisticNature);
+  if (damage <= 0) return;
+  Action a = make_action(ActionKind::DealFixedDamage);
+  a.actor = kPlayerSlot;
+  a.target = enemy_slot;
+  a.amount = damage;
+  q.push_back(a);
 }
 
 // First slot not holding a living enemy (dead corpse OR empty), or -1 if all
@@ -982,6 +998,7 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
   const int thorns = get_status(powers, Power::Thorns);
   const int plated_armor = get_status(powers, Power::PlatedArmor);
   const int magnetism = get_status(powers, Power::Magnetism);
+  const int mayhem = get_status(powers, Power::Mayhem);
 
   switch (hook) {
     case Hook::TurnStartPlayer:
@@ -1004,6 +1021,14 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
         a.amount = magnetism;
         a.gen_pool = GenerationPool::Colorless;
         a.gen_pile = GeneratedPile::Hand;
+        q.push_back(a);
+      }
+      // Mayhem: play the top card of the draw pile, once per stack. These hooks
+      // run BEFORE the turn's draw is queued, which is the correct order: the
+      // card played is the one already on top, not one just drawn.
+      for (int i = 0; i < mayhem; ++i) {
+        Action a = make_action(ActionKind::PlayCard);
+        a.amount = kPlayTopOfDrawKeeping;
         q.push_back(a);
       }
       // Flame Barrier is "this turn" from the play until the START of the next
@@ -1344,10 +1369,11 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         apply_debuff(state,
                      DebuffApplication{a.debuff, a.amount, Target::Character},
                      kNoSlot);
-      } else {
-        apply_debuff(state,
-                     DebuffApplication{a.debuff, a.amount, Target::Enemy},
-                     a.target);
+      } else if (apply_debuff(state,
+                              DebuffApplication{a.debuff, a.amount,
+                                                Target::Enemy},
+                              a.target)) {
+        push_sadistic_nature(state, a.target, q);
       }
       break;
     case ActionKind::ApplyPower:
@@ -1360,8 +1386,16 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         // dmg).
         if (a.power == Power::Combust) state.character.combust_casts += 1;
       } else {
-        apply_power(state, PowerApplication{a.power, a.amount, Target::Enemy},
-                    a.target);
+        const bool landed = apply_power(
+            state, PowerApplication{a.power, a.amount, Target::Enemy},
+            a.target);
+        // A NEGATIVE power is a debuff in StS terms (Disarm's "lose Strength"),
+        // so Sadistic Nature sees it — but never Shackled, which StS excludes
+        // by name. That exclusion is what stops Dark Shackles triggering twice:
+        // its Strength loss counts, the give-back does not.
+        if (landed && a.amount < 0 && a.power != Power::Shackled) {
+          push_sadistic_nature(state, a.target, q);
+        }
       }
       break;
     case ActionKind::RemovePower:
@@ -1481,6 +1515,39 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
                                                 : CostDuration::ThisTurn;
       }
       break;
+    case ActionKind::ArmBomb:
+      // A fuse starts at its full length and the end-of-turn tick walks it
+      // down, so a Bomb played this turn goes off at the end of the third —
+      // counting this one, as StS does.
+      if (a.card == CardId::TheBombPlus) {
+        ++state.character.bombs_upgraded[kBombFuseTurns - 1];
+      } else {
+        ++state.character.bombs[kBombFuseTurns - 1];
+      }
+      break;
+    case ActionKind::TickBombs: {
+      Character& c = state.character;
+      // Each Bomb in the expiring slot fires as its OWN all-enemy hit, which is
+      // how StS resolves several at once — they are separate powers there. The
+      // damage is read from the card database so the numbers live in one place.
+      for (int i = 0; i < c.bombs[0]; ++i) {
+        Action bang = make_action(ActionKind::DamageAllEnemies);
+        bang.amount = CARD_DATABASE.at(CardId::TheBomb).bomb_damage;
+        q.push_back(bang);
+      }
+      for (int i = 0; i < c.bombs_upgraded[0]; ++i) {
+        Action bang = make_action(ActionKind::DamageAllEnemies);
+        bang.amount = CARD_DATABASE.at(CardId::TheBombPlus).bomb_damage;
+        q.push_back(bang);
+      }
+      for (int i = 0; i + 1 < kBombFuseTurns; ++i) {
+        c.bombs[i] = c.bombs[i + 1];
+        c.bombs_upgraded[i] = c.bombs_upgraded[i + 1];
+      }
+      c.bombs[kBombFuseTurns - 1] = 0;
+      c.bombs_upgraded[kBombFuseTurns - 1] = 0;
+      break;
+    }
     case ActionKind::GainGold:
       // Hand of Greed. Combat has no gold of its own; it records what it earned
       // and RunState writes it back (colorless-effects.md D5).
@@ -1540,9 +1607,10 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       PlayContext pc;
       pc.pay_energy = false;      // both cases are free plays
       pc.take_from_hand = false;  // the card is not in hand
-      if (a.amount == kPlayFromDrawPile) {
-        // Havoc. Reshuffle first if the draw pile is empty ("it will shuffle
-        // your discard pile into your draw pile and target the new top card").
+      if (a.amount == kPlayFromDrawPile || a.amount == kPlayTopOfDrawKeeping) {
+        // Havoc and Mayhem. Reshuffle first if the draw pile is empty ("it will
+        // shuffle your discard pile into your draw pile and target the new top
+        // card").
         if (state.draw_pile.empty() && !state.discard_pile.empty()) {
           state.draw_pile = std::move(state.discard_pile);
           state.discard_pile.clear();
@@ -1565,7 +1633,10 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
           q.push_back(ex);
           break;
         }
-        pc.force_exhaust = true;  // "and Exhaust it", whatever it would do
+        // Havoc says "and Exhaust it"; Mayhem does not, so its card takes its
+        // normal fate and can come round again. That is the only difference
+        // between the two, and it is why they share this branch.
+        pc.force_exhaust = a.amount == kPlayFromDrawPile;
         pc.instance = top;
         pc.forced_x = 0;  // an X-cost card played this way gets X = 0
         // The player chose no target, so auto-target at random.
@@ -1659,6 +1730,17 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       break;
     }
     case ActionKind::CardPlayedHook:
+      // Panache counts cards played THIS TURN, firing on every fifth. The
+      // countdown is mutated here, in an executor, rather than in the power
+      // registry — that registry pushes actions and never touches state.
+      if (get_status(state.character.powers, Power::Panache) > 0) {
+        if (--state.character.panache_counter <= 0) {
+          state.character.panache_counter = kPanacheCardsPerTrigger;
+          Action bang = make_action(ActionKind::DamageAllEnemies);
+          bang.amount = get_status(state.character.powers, Power::Panache);
+          q.push_back(bang);
+        }
+      }
       // Player powers first (Rage: block when an Attack is played), then the
       // enemy side: playing a Skill fires every living enemy's OnPlayerSkill
       // effects (the Gremlin Nob's Enrage), independent of whether the card

@@ -24,6 +24,10 @@ inline constexpr int kNoSlot = -2;
 // PlayCard modes (Action::amount). Which re-entrant play this is.
 inline constexpr int kPlayFromDrawPile = 0;     // Havoc
 inline constexpr int kPlayDoubleTapReplay = 1;  // Double Tap
+// Mayhem. Havoc's sibling, and the difference is the whole distinction between
+// the two cards: Havoc reads "and Exhaust it", Mayhem does not, so a card
+// Mayhem plays goes to the discard and can come round again.
+inline constexpr int kPlayTopOfDrawKeeping = 2;
 
 // Helper: look up a stack count in a debuff/power map, returning 0 if absent.
 template <typename Effect>
@@ -84,6 +88,10 @@ enum class ActionKind {
                              // 0 for the rest of the combat
   CapHandCost,    // Enlightenment: every card in hand costing more than 1 drops
                   // to 1, for this turn or (upgraded) the whole combat
+  ArmBomb,        // The Bomb: start a fuse at its full length (`card` says
+                  // which Bomb, since the two differ only in damage)
+  TickBombs,      // The Bomb: end of turn — the slot that has run out fires at
+                  // every enemy, then the remaining fuses shift down one
   GenerateCards,  // roll `amount` cards from `gen_pool` into `gen_pile`
                   // (Infernal Blade, Jack of All Trades, Transmutation,
                   // Magnetism). Rolled from the CardRandom stream at execution.

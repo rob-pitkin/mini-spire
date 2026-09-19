@@ -597,6 +597,14 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
   if (data.discounts_random_card_in_hand) {
     q.push_back(Action{ActionKind::DiscountRandomCardInHand});
   }
+  // The Bomb: light a fuse. `card` names which Bomb, since the two differ only
+  // in the damage they eventually deal.
+  if (data.bomb_damage > 0) {
+    Action a;
+    a.kind = ActionKind::ArmBomb;
+    a.card = card_id;
+    q.push_back(a);
+  }
   // Enlightenment: cap every hand card's cost at 1.
   if (data.caps_hand_cost_at_one) {
     Action a;
@@ -802,6 +810,9 @@ void handle_end_turn(CombatState& state) {
     ResolutionContext ctx;
     q.push_back(Action{ActionKind::DiscardHand});
     fire_player_power_hooks(state, Hook::TurnEndPlayer, q);
+    // The Bomb ticks with the other end-of-turn powers, which is what it is in
+    // StS — a power whose fuse counts down at the end of each of your turns.
+    q.push_back(Action{ActionKind::TickBombs});
     fire_relic_hooks(state, Hook::TurnEndPlayer, q);
     drain(state, q, ctx);
     // Combust's damage lands inside that drain, so its kills need their
@@ -914,6 +925,9 @@ void handle_end_turn(CombatState& state) {
   // Barricade keeps block across the turn boundary (query, Stage 4b).
   state.character.current_block = block_after_turn_start(state);
   state.character.energy = state.character.energy_per_turn;
+  // Panache's countdown restarts every turn: four cards this turn and one the
+  // next must not set it off.
+  state.character.panache_counter = kPanacheCardsPerTrigger;
   // Battle Trance's NoDraw needs no clear here — it is a Debuff now (ROB-40 B2)
   // and the end-of-turn tick already expired it.
   // "Costs 0 this turn" ends here, wherever the card sits: a discounted card

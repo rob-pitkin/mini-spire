@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <random>
 #include <unordered_map>
@@ -21,6 +22,14 @@ namespace minispire {
 // slot is reusable only once its occupant is dead. Invariant: the count of
 // *living* enemies never exceeds kMaxEnemies.
 inline constexpr int kMaxEnemies = 5;
+
+// Panache fires on every 5th card played in a turn.
+inline constexpr int kPanacheCardsPerTrigger = 5;
+
+// The Bomb counts down 3 turns, including the turn it is played. Every Bomb
+// starts at the same number, which is what lets any number of them be tracked
+// as three slots (docs/design/colorless-effects.md D3).
+inline constexpr int kBombFuseTurns = 3;
 
 enum class Outcome {
   InProgress,
@@ -54,6 +63,18 @@ struct Character {
   // source including enemy attacks (unlike Rupture, which is self-inflicted
   // only). Combat-scoped — never reset per turn.
   int hp_loss_events = 0;
+  // Panache's countdown: cards still to be played before it fires. Held here
+  // rather than in the power's stacks because those are the DAMAGE (a second
+  // Panache adds damage, never a second countdown). Reset to 5 at turn start,
+  // so four cards this turn and one next turn never trigger it.
+  int panache_counter = kPanacheCardsPerTrigger;
+  // The Bomb, by turns remaining (index 0 = fires at the end of THIS turn).
+  // Two arrays because each Bomb fires as its OWN all-enemy hit in StS, and a
+  // Bomb and a Bomb+ in the same slot deal different damage; summing them into
+  // one number would merge two hits into one. Bounded because every Bomb starts
+  // at the same 3 turns, so any number of them collapses into three slots.
+  std::array<int, kBombFuseTurns> bombs{};
+  std::array<int, kBombFuseTurns> bombs_upgraded{};
   // Battle Trance's "no further draws this turn" is Debuff::NoDraw, not a field
   // here (ROB-40 B2) — StS renders it as a debuff icon.
   //

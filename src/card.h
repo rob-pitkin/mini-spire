@@ -713,6 +713,13 @@ struct CardData {
   // greys out, so this is a mask rule like Clash's, not an effect that fizzles.
   bool requires_draw_pile_type = false;
   CardType required_draw_pile_type = CardType::Skill;
+  // --- Colorless effects, batch 5. ---
+  //
+  // The Bomb: damage dealt to ALL enemies when its fuse runs out, three turns
+  // later (counting the turn it is played). Stored as the damage rather than a
+  // flag because Bomb and Bomb+ differ only in this number, and each Bomb fires
+  // as its own hit.
+  int bomb_damage = 0;
 };
 
 // What a card becomes when upgraded (Armaments; v2's rest-site smith).
@@ -1899,47 +1906,55 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
      }()},
 
     // Mayhem: "At the start of your turn, play the top card of your draw pile."
-    // UNPLAYABLE: Havoc's plays_top_of_draw exists as a CARD effect; this needs
-    // it as a recurring POWER, fired at turn start.
+    //
+    // Havoc as a recurring POWER, with one difference that is the whole point
+    // of the pair: Havoc exhausts the card it plays and Mayhem does not, so
+    // Mayhem's card returns to the discard and can come round again. It fires
+    // BEFORE the turn's draw, so the card played is the one already on top.
     {CardId::Mayhem, [] {
        CardData d = colorless("Mayhem", 2, CardType::Power);
-       d.unplayable = true;
+       d.applies_powers = {{Power::Mayhem, 1, Target::Character}};
        return d;
      }()},
     {CardId::MayhemPlus, [] {
        CardData d = colorless("Mayhem+", 1, CardType::Power);
-       d.unplayable = true;
+       d.applies_powers = {{Power::Mayhem, 1, Target::Character}};
        return d;
      }()},
 
     // Panache: "Every time you play 5 cards in a single turn, deal 10 damage to
-    // ALL enemies."
-    // UNPLAYABLE: a POWER with a per-turn play counter. The relic counters
-    // (Kunai, Shuriken) are the same shape, but powers have no counter field —
-    // their stacks are the effect's magnitude, not a tally.
+    // ALL enemies." The upgrade raises the damage to 14.
+    //
+    // The power's stacks are the DAMAGE, as Combust's are: a second Panache
+    // adds damage rather than starting a second countdown. The countdown lives
+    // on Character::panache_counter and resets every turn, so four cards this
+    // turn and one the next never trigger it.
     {CardId::Panache, [] {
        CardData d = colorless("Panache", 0, CardType::Power);
-       d.unplayable = true;
+       d.applies_powers = {{Power::Panache, 10, Target::Character}};
        return d;
      }()},
     {CardId::PanachePlus, [] {
        CardData d = colorless("Panache+", 0, CardType::Power);
-       d.unplayable = true;
+       d.applies_powers = {{Power::Panache, 14, Target::Character}};
        return d;
      }()},
 
     // Sadistic Nature: "Whenever you apply a debuff to an enemy, they take 5
-    // damage."
-    // UNPLAYABLE: needs an on-debuff-APPLIED hook. apply_debuff is a mutator,
-    // not a trigger site, and adding one there touches every debuff in the game.
+    // damage." The upgrade raises it to 7.
+    //
+    // Fires only when the debuff LANDS: an enemy whose Artifact negates it
+    // takes nothing. StS also excludes Shackled by name, which is what stops
+    // Dark Shackles triggering this twice — its Strength loss counts, the
+    // give-back does not.
     {CardId::SadisticNature, [] {
        CardData d = colorless("Sadistic Nature", 0, CardType::Power);
-       d.unplayable = true;
+       d.applies_powers = {{Power::SadisticNature, 5, Target::Character}};
        return d;
      }()},
     {CardId::SadisticNaturePlus, [] {
        CardData d = colorless("Sadistic Nature+", 0, CardType::Power);
-       d.unplayable = true;
+       d.applies_powers = {{Power::SadisticNature, 7, Target::Character}};
        return d;
      }()},
 
@@ -1981,18 +1996,21 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
        return d;
      }()},
 
-    // The Bomb: "At the end of 3 turns, deal 40 damage to ALL enemies."
-    // UNPLAYABLE: a DELAYED effect — the only card in the block that schedules
-    // something for a future turn. Nothing in the engine defers an effect
-    // across turn boundaries today.
+    // The Bomb: "At the end of 3 turns, deal 40 damage to ALL enemies." The
+    // upgrade deals 50.
+    //
+    // The three turns COUNT THE TURN IT IS PLAYED: the fuse ticks at the end of
+    // that turn and the Bomb goes off at the end of the third. Bombs never
+    // merge — each is its own power in StS and fires as its own hit — which is
+    // why the engine keeps counts per fuse length rather than a damage total.
     {CardId::TheBomb, [] {
        CardData d = colorless("The Bomb", 2, CardType::Skill);
-       d.unplayable = true;
+       d.bomb_damage = 40;
        return d;
      }()},
     {CardId::TheBombPlus, [] {
        CardData d = colorless("The Bomb+", 2, CardType::Skill);
-       d.unplayable = true;
+       d.bomb_damage = 50;
        return d;
      }()},
 

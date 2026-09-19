@@ -78,7 +78,8 @@ constexpr std::array<Power, kNumPlayerPowers> kObsPlayerPowerOrder = {
     Power::Berserk,      Power::Corruption,    Power::Barricade,
     Power::DoubleTap,    Power::Vigor,         Power::Thorns,
     Power::PlatedArmor,  Power::Intangible,    Power::Buffer,
-    Power::PenNibCharge, Power::Magnetism,     Power::StrengthDown,
+    Power::PenNibCharge, Power::Magnetism,     Power::Panache,
+    Power::SadisticNature, Power::Mayhem,      Power::StrengthDown,
 };
 static_assert(kObsPlayerPowerOrder.size() == kNumPlayerPowers,
               "kObsPlayerPowerOrder must list every power");

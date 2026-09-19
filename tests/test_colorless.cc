@@ -1453,6 +1453,197 @@ TEST(Colorless, ForethoughtPlusIsStillMultiSelectAndUnplayable) {
   EXPECT_FALSE(CARD_DATABASE.at(CardId::Forethought).unplayable);
 }
 
+// ====================== batch 5: power triggers and the delayed effect
+
+// The countdown is driven directly rather than by playing Panache, so the test
+// pins the mechanism (every fifth card) without depending on whether Panache's
+// own play counts toward the first cycle.
+TEST(Colorless, PanacheFiresOnEveryFifthCardPlayed) {
+  CombatState s = fight_holding(CardId::SwiftStrike);
+  s.character.powers[Power::Panache] = 10;
+  s.character.panache_counter = kPanacheCardsPerTrigger;
+  s.current_hand.clear();
+  for (int i = 0; i < 5; ++i) s.current_hand.push_back(Card{CardId::Defend});
+  const int hp_before = s.enemies[0].hp;
+
+  for (int i = 0; i < 4; ++i) {
+    ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
+  }
+  EXPECT_EQ(s.enemies[0].hp, hp_before) << "four cards is not five";
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
+  EXPECT_EQ(s.enemies[0].hp, hp_before - 10) << "the fifth card sets it off";
+  EXPECT_EQ(s.character.panache_counter, kPanacheCardsPerTrigger)
+      << "the countdown rolls back to 5";
+}
+
+TEST(Colorless, PanacheCountdownRestartsEachTurn) {
+  CombatState s = fight_holding(CardId::SwiftStrike);
+  s.character.powers[Power::Panache] = 10;
+  s.character.panache_counter = kPanacheCardsPerTrigger;
+  s.current_hand.clear();
+  for (int i = 0; i < 4; ++i) s.current_hand.push_back(Card{CardId::Defend});
+  for (int i = 0; i < 4; ++i) {
+    ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
+  }
+
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+  EXPECT_EQ(s.character.panache_counter, kPanacheCardsPerTrigger);
+
+  const int hp_before = s.enemies[0].hp;
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.character.energy = 99;
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
+  EXPECT_EQ(s.enemies[0].hp, hp_before)
+      << "four cards last turn plus one this turn must not trigger it";
+}
+
+// Stacks are the DAMAGE: a second Panache adds to it rather than starting a
+// second countdown.
+TEST(Colorless, PanacheStacksRaiseTheDamage) {
+  CombatState s = fight_holding(CardId::Panache);
+  s.current_hand.push_back(Card{CardId::PanachePlus});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Panache)));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::PanachePlus)));
+
+  EXPECT_EQ(get_status(s.character.powers, Power::Panache), 24) << "10 + 14";
+}
+
+// ------------------------------------------------------- Sadistic Nature
+
+TEST(Colorless, SadisticNatureDamagesAnEnemyWhenADebuffLands) {
+  CombatState s = fight_holding(CardId::Blind);  // applies 2 Weak
+  s.character.powers[Power::SadisticNature] = 5;
+  const int hp_before = s.enemies[0].hp;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Blind, 0)));
+
+  EXPECT_GT(get_status(s.enemies[0].debuffs, Debuff::Weak), 0);
+  EXPECT_EQ(s.enemies[0].hp, hp_before - 5);
+}
+
+// "The damage will not trigger if the enemy prevents the debuff through
+// Artifact" — the reason apply_debuff reports whether it landed.
+TEST(Colorless, SadisticNatureIsSilentWhenArtifactEatsTheDebuff) {
+  CombatState s = fight_holding(CardId::Blind);
+  s.character.powers[Power::SadisticNature] = 5;
+  s.enemies[0].powers[Power::Artifact] = 1;
+  const int hp_before = s.enemies[0].hp;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Blind, 0)));
+
+  EXPECT_EQ(get_status(s.enemies[0].debuffs, Debuff::Weak), 0);
+  EXPECT_EQ(s.enemies[0].hp, hp_before) << "a negated debuff deals nothing";
+}
+
+// StS patched this specifically: Dark Shackles triggers Sadistic Nature ONCE.
+// Its Strength loss counts; the Shackled give-back is excluded by name.
+TEST(Colorless, SadisticNatureFiresOnceForDarkShackles) {
+  CombatState s = fight_holding(CardId::DarkShackles);
+  s.character.powers[Power::SadisticNature] = 5;
+  const int hp_before = s.enemies[0].hp;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::DarkShackles, 0)));
+
+  EXPECT_EQ(s.enemies[0].hp, hp_before - 5) << "once, not twice";
+  EXPECT_EQ(get_status(s.enemies[0].powers, Power::Shackled), 9);
+}
+
+// ---------------------------------------------------------------- Mayhem
+
+TEST(Colorless, MayhemPlaysTheTopCardOfTheDrawPileEachTurn) {
+  CombatState s = fight_holding(CardId::Mayhem);
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Mayhem)));
+  ASSERT_EQ(get_status(s.character.powers, Power::Mayhem), 1);
+  s.draw_pile.clear();
+  s.draw_pile.push_back(Card{CardId::Strike});  // back() is the top
+  const int hp_before = s.enemies[0].hp;
+
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+
+  EXPECT_LT(s.enemies[0].hp, hp_before) << "the top card was played for free";
+}
+
+// The one difference from Havoc: Mayhem does NOT exhaust the card it plays.
+TEST(Colorless, MayhemDoesNotExhaustTheCardItPlays) {
+  CombatState s = fight_holding(CardId::Mayhem);
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Mayhem)));
+  s.draw_pile.clear();
+  s.draw_pile.push_back(Card{CardId::Strike});
+  s.exhaust_pile.clear();
+
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+
+  for (const Card& c : s.exhaust_pile) {
+    EXPECT_NE(c.card_id, CardId::Strike) << "Havoc exhausts; Mayhem does not";
+  }
+}
+
+// -------------------------------------------------------------- The Bomb
+
+TEST(Colorless, TheBombFiresAtTheEndOfTheThirdTurn) {
+  CombatState s = fight_holding(CardId::TheBomb);
+  s.enemies[0].hp = 200;  // survive the blast, so the delta stays readable
+  ASSERT_TRUE(apply_action(s, card_action(CardId::TheBomb)));
+  ASSERT_EQ(s.character.bombs[kBombFuseTurns - 1], 1) << "the fuse is lit";
+
+  // Two turn ends walk the fuse down without firing.
+  for (int turn = 0; turn < 2; ++turn) {
+    const int before = s.enemies[0].hp;
+    ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+    ASSERT_EQ(s.outcome, Outcome::InProgress);
+    EXPECT_EQ(s.enemies[0].hp, before) << "it must not go off early";
+  }
+
+  // The blast lands at the END of the player's turn, before the enemies act,
+  // so block an enemy gained on its previous turn is still standing and would
+  // absorb part of it. That is correct — the Bomb is unmodifiable, not
+  // unblockable — and this test is measuring the blast, so clear it first.
+  s.enemies[0].current_block = 0;
+  const int before = s.enemies[0].hp;
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+  EXPECT_EQ(s.enemies[0].hp, before - 40) << "the third end of turn";
+  EXPECT_EQ(s.character.bombs[0], 0) << "and the slot is spent";
+}
+
+TEST(Colorless, TheBombPlusDealsFifty) {
+  CombatState s = fight_holding(CardId::TheBombPlus);
+  s.enemies[0].hp = 200;
+  ASSERT_TRUE(apply_action(s, card_action(CardId::TheBombPlus)));
+  for (int turn = 0; turn < 2; ++turn) {
+    ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+  }
+
+  s.enemies[0].current_block = 0;
+  const int before = s.enemies[0].hp;
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+
+  EXPECT_EQ(s.enemies[0].hp, before - 50);
+}
+
+// Two Bombs played on the same turn share a fuse length, which is what lets
+// three slots hold any number of them — and each still fires as its own hit.
+TEST(Colorless, TwoBombsInOneTurnBothFire) {
+  CombatState s = fight_holding(CardId::TheBomb);
+  s.current_hand.push_back(Card{CardId::TheBombPlus});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::TheBomb)));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::TheBombPlus)));
+  EXPECT_EQ(s.character.bombs[kBombFuseTurns - 1], 1);
+  EXPECT_EQ(s.character.bombs_upgraded[kBombFuseTurns - 1], 1);
+
+  s.enemies[0].hp = 200;
+  for (int turn = 0; turn < 2; ++turn) {
+    ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+  }
+
+  s.enemies[0].current_block = 0;
+  const int before = s.enemies[0].hp;
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+
+  EXPECT_EQ(s.enemies[0].hp, before - 90) << "40 and 50, as two separate hits";
+}
+
 // ================================================ all 35, as a complete block
 
 // The pools are the authority on what exists. sts_lightspeed's
@@ -1504,7 +1695,7 @@ TEST(Colorless, TheTwoPoolsAreDisjoint) {
 // Of the 35, these are the ones whose effects are wired. The rest hold correct
 // data and a stable action index and are masked out. A card leaving this list
 // means an effect landed; one joining means something regressed.
-TEST(Colorless, ExactlyThirtyOfThirtyFiveArePlayable) {
+TEST(Colorless, ExactlyThirtyFourOfThirtyFiveArePlayable) {
   const CardId playable[] = {
       CardId::BandageUp,     CardId::Blind,        CardId::DarkShackles,
       CardId::DeepBreath,    CardId::DramaticEntrance, CardId::Finesse,
@@ -1521,7 +1712,10 @@ TEST(Colorless, ExactlyThirtyOfThirtyFiveArePlayable) {
       CardId::Madness, CardId::Enlightenment, CardId::Chrysalis,
       CardId::Metamorphosis,
       // Batch 4: choices over the draw pile.
-      CardId::SecretTechnique, CardId::SecretWeapon, CardId::Forethought};
+      CardId::SecretTechnique, CardId::SecretWeapon, CardId::Forethought,
+      // Batch 5: power triggers and the delayed effect.
+      CardId::Panache, CardId::SadisticNature, CardId::Mayhem,
+      CardId::TheBomb};
 
   int wired = 0;
   for (const std::vector<CardId>* pool :
