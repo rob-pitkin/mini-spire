@@ -433,7 +433,8 @@ enum class GenerationPool : uint8_t {
   None,         // not a generator
   Colorless,    // Jack of All Trades, Transmutation, Magnetism
   ClassAny,     // Discovery — any type from the class pool
-  ClassAttack,  // Infernal Blade — class Attacks only
+  ClassAttack,  // Infernal Blade, Metamorphosis — class Attacks only
+  ClassSkill,   // Chrysalis — class Skills only
 };
 
 // How long a per-instance cost override lasts (colorless-effects.md D2). The
@@ -690,6 +691,18 @@ struct CardData {
   // full price.
   bool generates_free_this_turn = false;
   GeneratedPile generates_into = GeneratedPile::Hand;
+  // --- Colorless effects, batch 3: the "this combat" cost duration. ---
+  //
+  // Chrysalis / Metamorphosis: the generated cards cost 0 for the REST OF THE
+  // COMBAT, not just this turn — and they land in the draw pile, so most of
+  // them are drawn on a later turn where a this-turn discount would be gone.
+  bool generates_free_this_combat = false;
+  // Madness: one random card in hand costs 0 for the rest of the combat.
+  bool discounts_random_card_in_hand = false;
+  // Enlightenment: every card in hand costing more than 1 drops TO 1 — a cap,
+  // not a set-to-zero. `for_combat` is the upgrade's longer duration.
+  bool caps_hand_cost_at_one = false;
+  bool caps_hand_cost_for_combat = false;
 };
 
 // What a card becomes when upgraded (Armaments; v2's rest-site smith).
@@ -1484,18 +1497,18 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     // Enlightenment: "Reduce the cost of all cards in your hand to 1 this
     // turn." The upgrade changes the DURATION — this turn becomes this combat.
     //
-    // UNPLAYABLE: needs a cost override that applies to the hand for a
-    // duration. free_this_turn is per-card-id and means "costs 0 once", which
-    // is a different thing from "everything costs at most 1 until the fight
-    // ends".
+    // A CAP, not a discount to zero: a card already costing 0 or 1 is
+    // untouched, and X-cost cards are never affected. It applies to the hand as
+    // it stands when played; cards drawn later keep their printed cost.
     {CardId::Enlightenment, [] {
        CardData d = colorless("Enlightenment", 0, CardType::Skill);
-       d.unplayable = true;
+       d.caps_hand_cost_at_one = true;
        return d;
      }()},
     {CardId::EnlightenmentPlus, [] {
        CardData d = colorless("Enlightenment+", 0, CardType::Skill);
-       d.unplayable = true;
+       d.caps_hand_cost_at_one = true;
+       d.caps_hand_cost_for_combat = true;
        return d;
      }()},
 
@@ -1600,20 +1613,18 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     // Exhaust." The upgrade changes only the CARD'S OWN COST, 1 to 0 — the
     // effect text is identical.
     //
-    // UNPLAYABLE: "this combat" is a PERMANENT cost override on one card
-    // INSTANCE. free_this_turn is keyed by card id and expires at end of turn,
-    // so it is wrong on both counts — it would make every copy of that id free,
-    // and only until the turn ended.
+    // The discount lands on ONE COPY for the rest of the combat, which is
+    // exactly what the per-instance override exists for (D2).
     {CardId::Madness, [] {
        CardData d = colorless("Madness", 1, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.discounts_random_card_in_hand = true;
        return d;
      }()},
     {CardId::MadnessPlus, [] {
        CardData d = colorless("Madness+", 0, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.discounts_random_card_in_hand = true;
        return d;
      }()},
 
@@ -1797,33 +1808,46 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
 
     // Chrysalis / Metamorphosis: "Shuffle 3 random Skills [Attacks] into your
     // draw pile. They cost 0 this combat. Exhaust." Mirror images of each
-    // other, differing only in the card type they generate.
+    // other, differing only in the card type they generate. Both upgrade to 5.
     //
-    // UNPLAYABLE: generation into the draw pile, plus a per-instance "costs 0
-    // this combat" marker on cards that do not exist yet. Both halves are the
-    // same gaps Madness and Forethought hit.
+    // The discount is for the COMBAT rather than the turn, and that is
+    // load-bearing: the cards are shuffled into the draw pile, so most are
+    // drawn on a later turn — a this-turn discount would almost always have
+    // expired before its card was ever seen.
     {CardId::Chrysalis, [] {
        CardData d = colorless("Chrysalis", 2, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.generates_pool = GenerationPool::ClassSkill;
+       d.generates_count = 3;
+       d.generates_into = GeneratedPile::ShuffleDraw;
+       d.generates_free_this_combat = true;
        return d;
      }()},
     {CardId::ChrysalisPlus, [] {
        CardData d = colorless("Chrysalis+", 2, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.generates_pool = GenerationPool::ClassSkill;
+       d.generates_count = 5;
+       d.generates_into = GeneratedPile::ShuffleDraw;
+       d.generates_free_this_combat = true;
        return d;
      }()},
     {CardId::Metamorphosis, [] {
        CardData d = colorless("Metamorphosis", 2, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.generates_pool = GenerationPool::ClassAttack;
+       d.generates_count = 3;
+       d.generates_into = GeneratedPile::ShuffleDraw;
+       d.generates_free_this_combat = true;
        return d;
      }()},
     {CardId::MetamorphosisPlus, [] {
        CardData d = colorless("Metamorphosis+", 2, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.generates_pool = GenerationPool::ClassAttack;
+       d.generates_count = 5;
+       d.generates_into = GeneratedPile::ShuffleDraw;
+       d.generates_free_this_combat = true;
        return d;
      }()},
 
@@ -2140,13 +2164,25 @@ inline const std::vector<CardId>& generatable_class_pool() {
   return pool;
 }
 
-// Infernal Blade's pool: the class pool filtered to Attacks. Feed and Reaper
-// are both Attacks AND healing, so they are excluded here twice over.
+// Infernal Blade's and Metamorphosis' pool: the class pool filtered to Attacks.
+// Feed and Reaper are both Attacks AND healing, so they are excluded twice over.
 inline const std::vector<CardId>& generatable_class_attack_pool() {
   static const std::vector<CardId> pool = [] {
     std::vector<CardId> v;
     for (CardId id : generatable_class_pool()) {
       if (CARD_DATABASE.at(id).type == CardType::Attack) v.push_back(id);
+    }
+    return v;
+  }();
+  return pool;
+}
+
+// Chrysalis' pool: the class pool filtered to Skills.
+inline const std::vector<CardId>& generatable_class_skill_pool() {
+  static const std::vector<CardId> pool = [] {
+    std::vector<CardId> v;
+    for (CardId id : generatable_class_pool()) {
+      if (CARD_DATABASE.at(id).type == CardType::Skill) v.push_back(id);
     }
     return v;
   }();
@@ -2162,6 +2198,8 @@ inline const std::vector<CardId>& generation_pool(GenerationPool pool) {
       return generatable_class_pool();
     case GenerationPool::ClassAttack:
       return generatable_class_attack_pool();
+    case GenerationPool::ClassSkill:
+      return generatable_class_skill_pool();
     case GenerationPool::None:
       break;
   }

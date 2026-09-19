@@ -80,6 +80,10 @@ enum class ActionKind {
                     // goes to the discard pile
   GainGold,         // Hand of Greed: record `amount` gold earned in this fight.
                     // Combat has no gold — RunState writes it back (§3.2)
+  DiscountRandomCardInHand,  // Madness: one random eligible card in hand costs
+                             // 0 for the rest of the combat
+  CapHandCost,    // Enlightenment: every card in hand costing more than 1 drops
+                  // to 1, for this turn or (upgraded) the whole combat
   GenerateCards,  // roll `amount` cards from `gen_pool` into `gen_pile`
                   // (Infernal Blade, Jack of All Trades, Transmutation,
                   // Magnetism). Rolled from the CardRandom stream at execution.
@@ -134,6 +138,9 @@ struct Action {
   GeneratedPile gen_pile = GeneratedPile::Hand;
   bool gen_upgraded = false;        // Transmutation+
   bool gen_free_this_turn = false;  // Transmutation, Infernal Blade
+  bool gen_free_this_combat = false;  // Chrysalis, Metamorphosis
+  // CapHandCost: does the cap last the combat (Enlightenment+) or the turn?
+  bool cost_cap_for_combat = false;
   MoveName move = MoveName::None;  // RewriteIntent payload
   bool card_block = false;  // GainBlock from a played card: apply Dex/Frail
   int copies = 1;  // ApplyChoice: how many copies to add (Dual Wield+ = 2)
@@ -141,11 +148,34 @@ struct Action {
   // AddCardToPile). Carried alongside `card` so a Rampage returning to the
   // discard pile keeps its accumulated bonus, and an upgraded Searing Blow
   // keeps its counter. Zero for cards with no instance state.
+  //
+  // The cost override belongs to the same family and for the same reason: a
+  // Madness-discounted card discarded at end of turn must still be free when it
+  // is drawn again. Leaving it out silently reset every this-combat discount at
+  // the turn boundary — two tests caught it.
   int card_bonus_damage = 0;
   int card_upgrades = 0;
+  int card_cost_override = kNoCostOverride;
+  CostDuration card_cost_duration = CostDuration::None;
 
   // Rebuild the card instance this action carries.
-  Card as_card() const { return Card{card, card_bonus_damage, card_upgrades}; }
+  Card as_card() const {
+    Card c{card, card_bonus_damage, card_upgrades};
+    c.cost_override = card_cost_override;
+    c.cost_duration = card_cost_duration;
+    return c;
+  }
+
+  // Carry one card's full instance state onto this action. Preferred over
+  // setting the fields one at a time, which is how the cost override came to be
+  // dropped at three of the four call sites.
+  void carry(const Card& c) {
+    card = c.card_id;
+    card_bonus_damage = c.bonus_damage;
+    card_upgrades = c.upgrades;
+    card_cost_override = c.cost_override;
+    card_cost_duration = c.cost_duration;
+  }
 };
 
 // Fixed-capacity ring buffer (no steady-state allocation — constraint §3.3).

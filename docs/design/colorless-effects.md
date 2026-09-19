@@ -199,7 +199,7 @@ machinery lands with the cards that need it.
 |---|---|---|
 | 1 ✅ | Thinking Ahead, Apotheosis, Violence, Dark Shackles, Panic Button, Hand of Greed | small, self-contained; D5 |
 | 2 ✅ | Jack of All Trades, Transmutation, Magnetism, Discovery + Infernal Blade fix | generation; `CardRandom` (D4); cost this turn (first use of D2) |
-| 3 | Madness, Enlightenment, Chrysalis, Metamorphosis | the rest of D2 |
+| 3 ✅ | Madness, Enlightenment, Chrysalis, Metamorphosis | the rest of D2 |
 | 4 | Secret Technique, Secret Weapon, Forethought | new choice sources |
 | 5 | Panache, Sadistic Nature, Mayhem, The Bomb | power triggers; D3 |
 | 6 | Purity, Forethought+ | D1 |
@@ -271,3 +271,30 @@ Toolbox, and update `relic-effects.md` §7.
   instances, which is also what the player sees — a 0 printed on a specific card.
 - **Task #14 is closed by this batch**, as planned: Infernal Blade now rolls from
   the class Attack pool and draws from `CardRandom`.
+
+### Batch 3
+
+- **`Action::as_card()` silently dropped the cost override, and two tests caught
+  it.** The queue carries a card's instance state as loose fields
+  (`card_bonus_damage`, `card_upgrades`) and rebuilds the `Card` on the far side.
+  The override was not among them, so every pile move erased it — and the hand is
+  discarded through a pile move at end of turn, which meant *every this-combat
+  discount expired with the turn*. The fix adds the override to the carried
+  state and introduces `Action::carry(const Card&)`, so the next field added to
+  `Card` is picked up by all eight call sites instead of three of them.
+  **Anger's self-copy and Double Tap's replay deliberately do NOT carry it**:
+  both make a fresh copy in StS, which does not inherit a discount.
+- **Madness' eligibility is two-tier and the tiers are not interchangeable.**
+  Normally it targets a card whose CURRENT cost is above 0; only if every card
+  is already discounted does it fall back to one whose PRINTED cost is above 0.
+  That second tier is why Madness still works on a card another effect made free
+  this turn — and it upgrades that discount from this-turn to this-combat.
+  X-cost cards are never eligible. As with Discovery, the uniform pick is made
+  over the eligible set rather than by StS's re-roll loop: same distribution,
+  fixed draw count.
+- **Enlightenment is a CAP, not a discount.** Cards already at 0 or 1 are
+  untouched, so it can never raise a Madness-discounted card back to 1, and
+  X-cost cards are unaffected. The upgrade changes only the duration.
+- **Chrysalis and Metamorphosis need the combat duration, not the turn one**,
+  because their cards go into the DRAW pile: a this-turn discount would usually
+  expire before the card was ever drawn.

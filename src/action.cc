@@ -1439,6 +1439,48 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       }
       break;
     }
+    case ActionKind::DiscountRandomCardInHand: {
+      // Madness. StS picks a random card from the WHOLE hand and re-rolls until
+      // it lands on an eligible one; picking uniformly from the eligible set is
+      // the same distribution with a fixed number of draws, which is what keeps
+      // the stream stable (the same ruling as Discovery's three).
+      //
+      // Eligibility is two-tier, and the tiers are not interchangeable:
+      // normally a card whose CURRENT cost is above 0, but if every card is
+      // already discounted to 0, one whose PRINTED cost is above 0 — which is
+      // how Madness still works on a card another effect made free this turn.
+      // X-cost cards are never eligible (their cost is a sentinel, not a
+      // number).
+      std::vector<int> current_cost, printed_cost;
+      for (int i = 0; i < static_cast<int>(state.current_hand.size()); ++i) {
+        const Card& c = state.current_hand[i];
+        const CardData& d = CARD_DATABASE.at(c.card_id);
+        if (d.cost == kXCost) continue;
+        if (instance_effective_cost(state, c) > 0) current_cost.push_back(i);
+        if (d.cost > 0) printed_cost.push_back(i);
+      }
+      const std::vector<int>& eligible =
+          !current_cost.empty() ? current_cost : printed_cost;
+      if (eligible.empty()) break;
+      std::uniform_int_distribution<std::size_t> pick(0, eligible.size() - 1);
+      Card& victim = state.current_hand[eligible[pick(state.card_rng)]];
+      victim.cost_override = 0;
+      victim.cost_duration = CostDuration::ThisCombat;
+      break;
+    }
+    case ActionKind::CapHandCost:
+      // Enlightenment: every card in hand costing MORE than 1 drops to 1. A
+      // cap, so a 0-cost card stays 0 and a Madness-discounted copy is not
+      // raised. X-cost cards are untouched — their cost is a sentinel.
+      for (Card& c : state.current_hand) {
+        const CardData& d = CARD_DATABASE.at(c.card_id);
+        if (d.cost == kXCost) continue;
+        if (instance_effective_cost(state, c) <= 1) continue;
+        c.cost_override = 1;
+        c.cost_duration = a.cost_cap_for_combat ? CostDuration::ThisCombat
+                                                : CostDuration::ThisTurn;
+      }
+      break;
     case ActionKind::GainGold:
       // Hand of Greed. Combat has no gold of its own; it records what it earned
       // and RunState writes it back (colorless-effects.md D5).
@@ -1464,6 +1506,14 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         if (a.gen_free_this_turn) {
           made.cost_override = 0;
           made.cost_duration = CostDuration::ThisTurn;
+        } else if (a.gen_free_this_combat) {
+          // Chrysalis / Metamorphosis. StS only zeroes a card whose cost is
+          // above 0, which matters for nothing today but keeps the override
+          // off cards that were already free.
+          if (CARD_DATABASE.at(made.card_id).cost > 0) {
+            made.cost_override = 0;
+            made.cost_duration = CostDuration::ThisCombat;
+          }
         }
         switch (a.gen_pile) {
           case GeneratedPile::Hand:
@@ -1511,9 +1561,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         // exception, so Havoc-into-Dazed silently skipped the hooks.
         if (CARD_DATABASE.at(top.card_id).unplayable) {
           Action ex = make_action(ActionKind::ExhaustCard);
-          ex.card = top.card_id;
-          ex.card_bonus_damage = top.bonus_damage;
-          ex.card_upgrades = top.upgrades;
+          ex.carry(top);
           q.push_back(ex);
           break;
         }
@@ -1690,9 +1738,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         // step whose mask has a single legal action.
         Action apply;
         apply.kind = ActionKind::ApplyChoice;
-        apply.card = pc.options[0].card_id;
-        apply.card_bonus_damage = pc.options[0].bonus_damage;
-        apply.card_upgrades = pc.options[0].upgrades;
+        apply.carry(pc.options[0]);
         apply.amount = a.amount;
         apply.copies = pc.copies;
         q.push_front(apply);
@@ -1748,9 +1794,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
           // action so Feel No Pain, Dark Embrace and Sentinel all see it.
           if (take_from_pile(state.current_hand, chosen)) {
             Action ex = make_action(ActionKind::ExhaustCard);
-            ex.card = chosen.card_id;
-            ex.card_bonus_damage = chosen.bonus_damage;
-            ex.card_upgrades = chosen.upgrades;
+            ex.carry(chosen);
             q.push_front(ex);
           }
           break;
@@ -1813,9 +1857,9 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         }
         Action move = make_action(cd.ethereal ? ActionKind::ExhaustCard
                                               : ActionKind::DiscardCard);
-        move.card = c.card_id;
-        move.card_bonus_damage = c.bonus_damage;
-        move.card_upgrades = c.upgrades;
+        // carry(), not the id alone: a card discounted for the COMBAT has to
+        // still be discounted when it is drawn again next turn.
+        move.carry(c);
         q.push_back(move);
       }
       state.current_hand = std::move(kept);
@@ -1956,9 +2000,7 @@ bool resolve_choice(CombatState& state, int option_index) {
   if (!declining) {
     Action a;
     a.kind = ActionKind::ApplyChoice;
-    a.card = chosen.card_id;
-    a.card_bonus_damage = chosen.bonus_damage;
-    a.card_upgrades = chosen.upgrades;
+    a.carry(chosen);
     a.amount = static_cast<int>(kind);
     a.copies = copies;
     q.push_front(a);  // the choice applies before the card's remaining actions

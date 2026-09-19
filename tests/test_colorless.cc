@@ -546,16 +546,15 @@ TEST(Colorless, DramaticEntranceIsInnate) {
 
 // --------------------------------------------- not yet playable (data only)
 
-// Enlightenment needs a hand-WIDE cost override (every card in hand, capped at
-// 1), which batch 2's per-instance override does not express on its own. It
-// holds correct data and a stable action index, and is masked out.
-TEST(Colorless, EnlightenmentIsNotYetPlayable) {
+// Enlightenment landed in batch 3 (the hand-wide cap). Kept as the inverse of
+// the test it replaces: the card is now offered to the agent.
+TEST(Colorless, EnlightenmentIsOfferedToTheAgent) {
   for (CardId id : {CardId::Enlightenment, CardId::EnlightenmentPlus}) {
-    EXPECT_TRUE(CARD_DATABASE.at(id).unplayable) << card_name(id);
+    EXPECT_FALSE(CARD_DATABASE.at(id).unplayable) << card_name(id);
     CombatState s = fight_holding(id);
     const std::vector<bool> mask = valid_actions(s);
-    EXPECT_FALSE(mask[static_cast<size_t>(card_action(id, 0))])
-        << card_name(id) << " was offered to the agent";
+    EXPECT_TRUE(mask[static_cast<size_t>(card_action(id, 0))])
+        << card_name(id) << " is implemented but still masked out";
   }
 }
 
@@ -787,9 +786,8 @@ TEST(Colorless, AllTwentyUncommonsArePresentAndConsistent) {
 // The unplayable ones are exactly the ones whose machinery is missing — not a
 // drifting set. If a card leaves this list, its effect landed; if one joins,
 // something regressed.
-TEST(Colorless, TheNotYetPlayableUncommonsAreExactlyTheseFour) {
-  const CardId expected[] = {CardId::Enlightenment, CardId::Forethought,
-                             CardId::Madness, CardId::Purity};
+TEST(Colorless, TheNotYetPlayableUncommonsAreExactlyTheseTwo) {
+  const CardId expected[] = {CardId::Forethought, CardId::Purity};
 
   for (CardId id : expected) {
     EXPECT_TRUE(CARD_DATABASE.at(id).unplayable)
@@ -797,9 +795,10 @@ TEST(Colorless, TheNotYetPlayableUncommonsAreExactlyTheseFour) {
   }
   for (CardId id : {CardId::BandageUp, CardId::Blind, CardId::DarkShackles,
                     CardId::DeepBreath, CardId::Discovery,
-                    CardId::DramaticEntrance, CardId::Finesse,
-                    CardId::FlashOfSteel, CardId::GoodInstincts,
-                    CardId::Impatience, CardId::JackOfAllTrades,
+                    CardId::DramaticEntrance, CardId::Enlightenment,
+                    CardId::Finesse, CardId::FlashOfSteel,
+                    CardId::GoodInstincts, CardId::Impatience,
+                    CardId::JackOfAllTrades, CardId::Madness,
                     CardId::MindBlast, CardId::Panacea, CardId::PanicButton,
                     CardId::SwiftStrike, CardId::Trip}) {
     EXPECT_FALSE(CARD_DATABASE.at(id).unplayable)
@@ -1045,6 +1044,217 @@ TEST(Colorless, GenerationUsesItsOwnRngStream) {
       << "a different generation seed should roll differently";
 }
 
+// ========================== batch 3: the "this combat" cost duration
+
+TEST(Colorless, MadnessDiscountsExactlyOneCardInHand) {
+  CombatState s = fight_holding(CardId::Madness);
+  s.current_hand.push_back(Card{CardId::Bash});   // cost 2
+  s.current_hand.push_back(Card{CardId::Strike});  // cost 1
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Madness)));
+
+  int discounted = 0;
+  for (const Card& c : s.current_hand) {
+    if (c.cost_override == kNoCostOverride) continue;
+    ++discounted;
+    EXPECT_EQ(c.cost_override, 0);
+    EXPECT_EQ(c.cost_duration, CostDuration::ThisCombat);
+  }
+  EXPECT_EQ(discounted, 1) << "exactly one copy, not one card TYPE";
+}
+
+// "This combat", so unlike Transmutation's it must survive the turn boundary.
+TEST(Colorless, MadnessDiscountSurvivesTheTurn) {
+  CombatState s = fight_holding(CardId::Madness);
+  s.draw_pile.clear();
+  s.current_hand.push_back(Card{CardId::Bash});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Madness)));
+
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+
+  bool found = false;
+  for (const std::vector<Card>* pile :
+       {&s.current_hand, &s.draw_pile, &s.discard_pile}) {
+    for (const Card& c : *pile) {
+      if (c.card_id == CardId::Bash && c.cost_override == 0) {
+        found = true;
+        EXPECT_EQ(c.cost_duration, CostDuration::ThisCombat);
+      }
+    }
+  }
+  EXPECT_TRUE(found) << "a this-combat discount must not expire with the turn";
+}
+
+// X-cost cards carry a sentinel rather than a number, and StS never targets
+// them.
+TEST(Colorless, MadnessIgnoresXCostCards) {
+  CombatState s = fight_holding(CardId::Madness);
+  s.current_hand.push_back(Card{CardId::Whirlwind});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Madness)));
+
+  for (const Card& c : s.current_hand) {
+    EXPECT_EQ(c.cost_override, kNoCostOverride) << card_name(c.card_id);
+  }
+}
+
+// The second tier: when every card is already free, Madness still lands on one
+// whose PRINTED cost is above 0 — which is how it works on a card another
+// effect discounted this turn.
+TEST(Colorless, MadnessFallsBackToCardsAlreadyDiscountedThisTurn) {
+  CombatState s = fight_holding(CardId::Madness);
+  s.current_hand.push_back(Card{CardId::Bash});
+  s.current_hand.back().cost_override = 0;
+  s.current_hand.back().cost_duration = CostDuration::ThisTurn;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Madness)));
+
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].card_id, CardId::Bash);
+  EXPECT_EQ(s.current_hand[0].cost_duration, CostDuration::ThisCombat)
+      << "the this-turn discount was upgraded to a this-combat one";
+}
+
+// ----------------------------------------------------------- Enlightenment
+
+TEST(Colorless, EnlightenmentCapsHandCostsAtOne) {
+  CombatState s = fight_holding(CardId::Enlightenment);
+  s.current_hand.push_back(Card{CardId::Bash});        // cost 2 -> 1
+  s.current_hand.push_back(Card{CardId::Strike});      // cost 1, untouched
+  s.current_hand.push_back(Card{CardId::SwiftStrike}); // cost 0, untouched
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Enlightenment)));
+
+  for (const Card& c : s.current_hand) {
+    if (c.card_id == CardId::Bash) {
+      EXPECT_EQ(c.cost_override, 1) << "capped, not zeroed";
+      EXPECT_EQ(c.cost_duration, CostDuration::ThisTurn);
+    } else {
+      EXPECT_EQ(c.cost_override, kNoCostOverride)
+          << card_name(c.card_id) << " already cost 1 or less";
+    }
+  }
+}
+
+TEST(Colorless, EnlightenmentLastsOnlyTheTurnAndThePlusTheCombat) {
+  for (CardId id : {CardId::Enlightenment, CardId::EnlightenmentPlus}) {
+    CombatState s = fight_holding(id);
+    s.draw_pile.clear();
+    s.current_hand.push_back(Card{CardId::Bash});
+    ASSERT_TRUE(apply_action(s, card_action(id))) << card_name(id);
+
+    ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+
+    bool still_capped = false;
+    for (const std::vector<Card>* pile :
+         {&s.current_hand, &s.draw_pile, &s.discard_pile}) {
+      for (const Card& c : *pile) {
+        if (c.card_id == CardId::Bash && c.cost_override == 1) {
+          still_capped = true;
+        }
+      }
+    }
+    EXPECT_EQ(still_capped, id == CardId::EnlightenmentPlus) << card_name(id);
+  }
+}
+
+// A cap never raises a cost: a Madness-discounted card stays at 0.
+TEST(Colorless, EnlightenmentDoesNotUndoACheaperDiscount) {
+  CombatState s = fight_holding(CardId::Enlightenment);
+  s.current_hand.push_back(Card{CardId::Bash});
+  s.current_hand.back().cost_override = 0;
+  s.current_hand.back().cost_duration = CostDuration::ThisCombat;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Enlightenment)));
+
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].cost_override, 0);
+  EXPECT_EQ(s.current_hand[0].cost_duration, CostDuration::ThisCombat);
+}
+
+TEST(Colorless, EnlightenmentIgnoresXCostCards) {
+  CombatState s = fight_holding(CardId::Enlightenment);
+  s.current_hand.push_back(Card{CardId::Whirlwind});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Enlightenment)));
+
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].cost_override, kNoCostOverride);
+  EXPECT_EQ(effective_cost(s, CardId::Whirlwind), kXCost);
+}
+
+// ------------------------------------------------- Chrysalis / Metamorphosis
+
+TEST(Colorless, ChrysalisShufflesThreeFreeSkillsIntoTheDrawPile) {
+  CombatState s = fight_holding(CardId::Chrysalis);
+  s.draw_pile.clear();
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Chrysalis)));
+
+  ASSERT_EQ(s.draw_pile.size(), 3u);
+  for (const Card& c : s.draw_pile) {
+    EXPECT_EQ(CARD_DATABASE.at(c.card_id).type, CardType::Skill);
+    EXPECT_TRUE(in_pool(generatable_class_skill_pool(), c.card_id))
+        << card_name(c.card_id);
+    EXPECT_EQ(c.cost_override, 0);
+    EXPECT_EQ(c.cost_duration, CostDuration::ThisCombat);
+  }
+}
+
+TEST(Colorless, ChrysalisPlusShufflesFive) {
+  CombatState s = fight_holding(CardId::ChrysalisPlus);
+  s.draw_pile.clear();
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::ChrysalisPlus)));
+
+  EXPECT_EQ(s.draw_pile.size(), 5u);
+}
+
+TEST(Colorless, MetamorphosisShufflesAttacksNotSkills) {
+  CombatState s = fight_holding(CardId::Metamorphosis);
+  s.draw_pile.clear();
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Metamorphosis)));
+
+  ASSERT_EQ(s.draw_pile.size(), 3u);
+  for (const Card& c : s.draw_pile) {
+    EXPECT_EQ(CARD_DATABASE.at(c.card_id).type, CardType::Attack);
+    EXPECT_TRUE(in_pool(generatable_class_attack_pool(), c.card_id))
+        << card_name(c.card_id);
+  }
+}
+
+TEST(Colorless, MetamorphosisPlusShufflesFive) {
+  CombatState s = fight_holding(CardId::MetamorphosisPlus);
+  s.draw_pile.clear();
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::MetamorphosisPlus)));
+
+  EXPECT_EQ(s.draw_pile.size(), 5u);
+}
+
+// The whole reason these use the combat duration: their cards sit in the DRAW
+// pile, so most are drawn on a later turn. A this-turn discount would have
+// expired before the card was ever seen.
+TEST(Colorless, ShuffledInCardsAreStillFreeNextTurn) {
+  CombatState s = fight_holding(CardId::Chrysalis);
+  s.draw_pile.clear();
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Chrysalis)));
+
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+
+  int free_cards = 0;
+  for (const std::vector<Card>* pile :
+       {&s.current_hand, &s.draw_pile, &s.discard_pile}) {
+    for (const Card& c : *pile) {
+      if (c.cost_override == 0 && c.cost_duration == CostDuration::ThisCombat) {
+        ++free_cards;
+      }
+    }
+  }
+  EXPECT_EQ(free_cards, 3) << "all three survive into the next turn";
+}
+
 // ================================================ all 35, as a complete block
 
 // The pools are the authority on what exists. sts_lightspeed's
@@ -1096,7 +1306,7 @@ TEST(Colorless, TheTwoPoolsAreDisjoint) {
 // Of the 35, these are the ones whose effects are wired. The rest hold correct
 // data and a stable action index and are masked out. A card leaving this list
 // means an effect landed; one joining means something regressed.
-TEST(Colorless, ExactlyTwentyThreeOfThirtyFiveArePlayable) {
+TEST(Colorless, ExactlyTwentySevenOfThirtyFiveArePlayable) {
   const CardId playable[] = {
       CardId::BandageUp,     CardId::Blind,        CardId::DarkShackles,
       CardId::DeepBreath,    CardId::DramaticEntrance, CardId::Finesse,
@@ -1108,7 +1318,10 @@ TEST(Colorless, ExactlyTwentyThreeOfThirtyFiveArePlayable) {
       CardId::ThinkingAhead,
       // Batch 2: random in-combat generation.
       CardId::JackOfAllTrades, CardId::Transmutation, CardId::Magnetism,
-      CardId::Discovery};
+      CardId::Discovery,
+      // Batch 3: the "this combat" cost duration.
+      CardId::Madness, CardId::Enlightenment, CardId::Chrysalis,
+      CardId::Metamorphosis};
 
   int wired = 0;
   for (const std::vector<CardId>* pool :

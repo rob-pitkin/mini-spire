@@ -206,9 +206,7 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
       }
       Action a;
       a.kind = ActionKind::ExhaustCard;
-      a.card = c.card_id;
-      a.card_bonus_damage = c.bonus_damage;
-      a.card_upgrades = c.upgrades;
+      a.carry(c);
       q.push_back(a);
       ++exhausted_from_hand;
     }
@@ -226,9 +224,7 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     state.current_hand.erase(state.current_hand.begin() + idx);
     Action a;
     a.kind = ActionKind::ExhaustCard;
-    a.card = c.card_id;
-    a.card_bonus_damage = c.bonus_damage;
-    a.card_upgrades = c.upgrades;
+    a.carry(c);
     q.push_back(a);
     ++exhausted_from_hand;
   }
@@ -502,11 +498,10 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     // CHANGE during its own resolution (Rampage grows a rung), so the copy that
     // returns to the pile must be the one that leaves the queue, not the one
     // that entered it. Using the argument silently discarded the growth.
-    pile_move.card = played.card_id;
-    // Carry the instance too — above a ladder's cap the overflow counters are
-    // what keep the damage exact.
-    pile_move.card_bonus_damage = played.bonus_damage;
-    pile_move.card_upgrades = played.upgrades;
+    // carry() takes played.card_id along with the rest of the instance —
+    // above a ladder's cap the overflow counters keep the damage exact, and a
+    // this-combat cost discount must ride back into the pile too.
+    pile_move.carry(played);
     has_pile_move = true;
     if (!defers_pile_move) q.push_back(pile_move);
   }
@@ -584,8 +579,9 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     a.gen_free_this_turn = true;
     q.push_back(a);
   }
-  // Random generation proper (Jack of All Trades, Transmutation). Transmutation
-  // generates X cards, where X is the energy this play spent.
+  // Random generation proper (Jack of All Trades, Transmutation, Chrysalis,
+  // Metamorphosis). Transmutation generates X cards, where X is the energy this
+  // play spent.
   if (data.generates_pool != GenerationPool::None) {
     Action a;
     a.kind = ActionKind::GenerateCards;
@@ -594,6 +590,18 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     a.gen_pile = data.generates_into;
     a.gen_upgraded = data.generates_upgraded;
     a.gen_free_this_turn = data.generates_free_this_turn;
+    a.gen_free_this_combat = data.generates_free_this_combat;
+    q.push_back(a);
+  }
+  // Madness: one random card in hand costs 0 for the rest of the combat.
+  if (data.discounts_random_card_in_hand) {
+    q.push_back(Action{ActionKind::DiscountRandomCardInHand});
+  }
+  // Enlightenment: cap every hand card's cost at 1.
+  if (data.caps_hand_cost_at_one) {
+    Action a;
+    a.kind = ActionKind::CapHandCost;
+    a.cost_cap_for_combat = data.caps_hand_cost_for_combat;
     q.push_back(a);
   }
   // Havoc: play the top card of the draw pile and force-exhaust it. Pushed as
