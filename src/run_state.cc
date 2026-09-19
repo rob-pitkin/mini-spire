@@ -799,6 +799,12 @@ void RunState::begin_combat(EncounterPool pool) {
   // assigned afterwards would be read too late (§3.2).
   CombatSetup setup;
   setup.seed = static_cast<uint32_t>(combat_seed);
+  // Card generation gets its own stream, indexed by floor like the fight's.
+  // Nothing else may draw from it: the whole point is that a generation roll
+  // cannot shift a shuffle, or vice versa (§3.5).
+  setup.card_seed = static_cast<uint32_t>(
+      derive_stream_seed(run_seed, RngStream::CardRandom,
+                         static_cast<uint32_t>(floor)));
   setup.pool = pool;
   setup.deck = master_deck;
   setup.hp = hp;

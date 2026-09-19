@@ -12,10 +12,12 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <vector>
 
 #include "action.h"
 #include "card.h"
+#include "query.h"
 #include "turn_loop.h"
 
 namespace minispire {
@@ -544,12 +546,11 @@ TEST(Colorless, DramaticEntranceIsInnate) {
 
 // --------------------------------------------- not yet playable (data only)
 
-// Discovery needs a choice over three GENERATED cards; Enlightenment needs a
-// hand-wide cost override with a duration. Both hold correct data and a stable
-// action index, and both are masked out.
-TEST(Colorless, DiscoveryAndEnlightenmentAreNotYetPlayable) {
-  for (CardId id : {CardId::Discovery, CardId::DiscoveryPlus,
-                    CardId::Enlightenment, CardId::EnlightenmentPlus}) {
+// Enlightenment needs a hand-WIDE cost override (every card in hand, capped at
+// 1), which batch 2's per-instance override does not express on its own. It
+// holds correct data and a stable action index, and is masked out.
+TEST(Colorless, EnlightenmentIsNotYetPlayable) {
+  for (CardId id : {CardId::Enlightenment, CardId::EnlightenmentPlus}) {
     EXPECT_TRUE(CARD_DATABASE.at(id).unplayable) << card_name(id);
     CombatState s = fight_holding(id);
     const std::vector<bool> mask = valid_actions(s);
@@ -655,9 +656,10 @@ TEST(Colorless, ImpatiencePlusDrawsThree) {
   EXPECT_EQ(s.current_hand.size(), 3u);
 }
 
-TEST(Colorless, ForethoughtAndJackOfAllTradesAreNotYetPlayable) {
-  for (CardId id : {CardId::Forethought, CardId::ForethoughtPlus,
-                    CardId::JackOfAllTrades, CardId::JackOfAllTradesPlus}) {
+// Forethought needs a hand choice that moves a card to the BOTTOM of the draw
+// pile, plus the "until played" cost duration — batch 4.
+TEST(Colorless, ForethoughtIsNotYetPlayable) {
+  for (CardId id : {CardId::Forethought, CardId::ForethoughtPlus}) {
     EXPECT_TRUE(CARD_DATABASE.at(id).unplayable) << card_name(id);
   }
 }
@@ -785,24 +787,262 @@ TEST(Colorless, AllTwentyUncommonsArePresentAndConsistent) {
 // The unplayable ones are exactly the ones whose machinery is missing — not a
 // drifting set. If a card leaves this list, its effect landed; if one joins,
 // something regressed.
-TEST(Colorless, TheNotYetPlayableUncommonsAreExactlyTheseSix) {
-  const CardId expected[] = {CardId::Discovery,       CardId::Enlightenment,
-                             CardId::Forethought,     CardId::JackOfAllTrades,
-                             CardId::Madness,         CardId::Purity};
+TEST(Colorless, TheNotYetPlayableUncommonsAreExactlyTheseFour) {
+  const CardId expected[] = {CardId::Enlightenment, CardId::Forethought,
+                             CardId::Madness, CardId::Purity};
 
   for (CardId id : expected) {
     EXPECT_TRUE(CARD_DATABASE.at(id).unplayable)
         << card_name(id) << " became playable — update this list";
   }
   for (CardId id : {CardId::BandageUp, CardId::Blind, CardId::DarkShackles,
-                    CardId::DeepBreath, CardId::DramaticEntrance,
-                    CardId::Finesse, CardId::FlashOfSteel,
-                    CardId::GoodInstincts, CardId::Impatience,
+                    CardId::DeepBreath, CardId::Discovery,
+                    CardId::DramaticEntrance, CardId::Finesse,
+                    CardId::FlashOfSteel, CardId::GoodInstincts,
+                    CardId::Impatience, CardId::JackOfAllTrades,
                     CardId::MindBlast, CardId::Panacea, CardId::PanicButton,
                     CardId::SwiftStrike, CardId::Trip}) {
     EXPECT_FALSE(CARD_DATABASE.at(id).unplayable)
         << card_name(id) << " regressed to unplayable";
   }
+}
+
+// ======================================= batch 2: random in-combat generation
+
+namespace {
+
+bool in_pool(const std::vector<CardId>& pool, CardId id) {
+  return std::find(pool.begin(), pool.end(), id) != pool.end();
+}
+
+}  // namespace
+
+TEST(Colorless, JackOfAllTradesAddsOneColorlessCardAtFullPrice) {
+  CombatState s = fight_holding(CardId::JackOfAllTrades);
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::JackOfAllTrades)));
+
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  const Card& made = s.current_hand[0];
+  EXPECT_TRUE(in_pool(generatable_colorless_pool(), made.card_id))
+      << card_name(made.card_id) << " is not a generatable colorless card";
+  EXPECT_EQ(made.cost_override, kNoCostOverride)
+      << "Jack of All Trades adds cards at full price, unlike Transmutation";
+}
+
+TEST(Colorless, JackOfAllTradesPlusAddsTwo) {
+  CombatState s = fight_holding(CardId::JackOfAllTradesPlus);
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::JackOfAllTradesPlus)));
+
+  EXPECT_EQ(s.current_hand.size(), 2u);
+  for (const Card& c : s.current_hand) {
+    EXPECT_TRUE(in_pool(generatable_colorless_pool(), c.card_id));
+  }
+}
+
+// StS patch 44: no source of random in-combat generation may produce a healing
+// card. Bandage Up is the colorless one; Feed and Reaper are the class ones.
+TEST(Colorless, GenerationNeverRollsAHealingCard) {
+  EXPECT_FALSE(in_pool(generatable_colorless_pool(), CardId::BandageUp));
+  EXPECT_FALSE(in_pool(generatable_class_pool(), CardId::Feed));
+  EXPECT_FALSE(in_pool(generatable_class_pool(), CardId::Reaper));
+  EXPECT_FALSE(in_pool(generatable_class_attack_pool(), CardId::Feed));
+  EXPECT_FALSE(in_pool(generatable_class_attack_pool(), CardId::Reaper));
+  EXPECT_EQ(generatable_colorless_pool().size(), 34u)
+      << "35 colorless cards minus Bandage Up";
+
+  // And in play, across many rolls.
+  for (uint32_t seed = 0; seed < 60; ++seed) {
+    CombatState s = fight_holding(CardId::JackOfAllTradesPlus, seed);
+    ASSERT_TRUE(apply_action(s, card_action(CardId::JackOfAllTradesPlus)));
+    for (const Card& c : s.current_hand) {
+      EXPECT_FALSE(card_is_healing(c.card_id)) << card_name(c.card_id);
+    }
+  }
+}
+
+TEST(Colorless, TransmutationAddsOneCardPerEnergyFreeForTheTurn) {
+  CombatState s = fight_holding(CardId::Transmutation);
+  s.character.energy = 3;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Transmutation)));
+
+  EXPECT_EQ(s.current_hand.size(), 3u) << "X = the energy spent";
+  for (const Card& c : s.current_hand) {
+    EXPECT_TRUE(in_pool(generatable_colorless_pool(), c.card_id));
+    EXPECT_EQ(c.cost_override, 0);
+    EXPECT_EQ(c.cost_duration, CostDuration::ThisTurn);
+    EXPECT_EQ(instance_effective_cost(s, c), 0);
+  }
+  EXPECT_EQ(s.character.energy, 0) << "X-cost spends everything";
+}
+
+// The upgrade changes WHAT is generated, not how many.
+TEST(Colorless, TransmutationPlusGeneratesUpgradedCards) {
+  CombatState s = fight_holding(CardId::TransmutationPlus);
+  s.character.energy = 2;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::TransmutationPlus)));
+
+  ASSERT_EQ(s.current_hand.size(), 2u);
+  for (const Card& c : s.current_hand) {
+    EXPECT_FALSE(in_pool(generatable_colorless_pool(), c.card_id))
+        << card_name(c.card_id) << " is the unupgraded form";
+    EXPECT_EQ(upgraded_card(c.card_id), c.card_id)
+        << card_name(c.card_id) << " can still be upgraded, so it is not a +";
+  }
+}
+
+// The discount is for THIS turn, so it must be gone next turn — on whichever
+// pile the card ended up in.
+TEST(Colorless, TransmutationsDiscountExpiresAtEndOfTurn) {
+  CombatState s = fight_holding(CardId::Transmutation);
+  s.character.energy = 2;
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Transmutation)));
+
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+
+  for (const std::vector<Card>* pile :
+       {&s.current_hand, &s.draw_pile, &s.discard_pile, &s.exhaust_pile}) {
+    for (const Card& c : *pile) {
+      EXPECT_EQ(c.cost_override, kNoCostOverride) << card_name(c.card_id);
+      EXPECT_EQ(c.cost_duration, CostDuration::None) << card_name(c.card_id);
+    }
+  }
+}
+
+TEST(Colorless, MagnetismAddsAColorlessCardEachTurnAtFullPrice) {
+  CombatState s = fight_holding(CardId::Magnetism);
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Magnetism)));
+  ASSERT_EQ(get_status(s.character.powers, Power::Magnetism), 1);
+
+  const std::size_t before = s.current_hand.size();
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+
+  // The new turn drew a hand AND gained one generated card.
+  int colorless_in_hand = 0;
+  for (const Card& c : s.current_hand) {
+    if (in_pool(generatable_colorless_pool(), c.card_id)) {
+      ++colorless_in_hand;
+      EXPECT_EQ(c.cost_override, kNoCostOverride)
+          << "Magnetism adds at full price";
+    }
+  }
+  EXPECT_GE(colorless_in_hand, 1);
+  EXPECT_GT(s.current_hand.size(), before);
+}
+
+// --------------------------------------------------------------- Discovery
+
+TEST(Colorless, DiscoveryOffersThreeDistinctClassCards) {
+  CombatState s = fight_holding(CardId::Discovery);
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Discovery)));
+
+  ASSERT_TRUE(s.pending_choice.active());
+  EXPECT_EQ(s.pending_choice.kind, ChoiceKind::DiscoverCard);
+  ASSERT_EQ(s.pending_choice.num_options, 3);
+  for (int i = 0; i < 3; ++i) {
+    const CardId id = s.pending_choice.options[i].card_id;
+    EXPECT_TRUE(in_pool(generatable_class_pool(), id)) << card_name(id);
+    for (int j = i + 1; j < 3; ++j) {
+      EXPECT_NE(id, s.pending_choice.options[j].card_id)
+          << "the three offers must be distinct";
+    }
+  }
+}
+
+TEST(Colorless, DiscoveryAddsTheChosenCardFreeForTheTurn) {
+  CombatState s = fight_holding(CardId::Discovery);
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Discovery)));
+  ASSERT_TRUE(s.pending_choice.active());
+  const CardId chosen = s.pending_choice.options[1].card_id;
+
+  ASSERT_TRUE(resolve_choice(s, 1));
+
+  bool found = false;
+  for (const Card& c : s.current_hand) {
+    if (c.card_id != chosen) continue;
+    found = true;
+    EXPECT_EQ(c.cost_override, 0);
+    EXPECT_EQ(c.cost_duration, CostDuration::ThisTurn);
+  }
+  EXPECT_TRUE(found) << "the chosen card joins the hand";
+}
+
+// "Adding one is mandatory" — there is no skip.
+TEST(Colorless, DiscoveryCannotBeDeclined) {
+  CombatState s = fight_holding(CardId::Discovery);
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Discovery)));
+  ASSERT_TRUE(s.pending_choice.active());
+
+  EXPECT_FALSE(s.pending_choice.is_optional);
+  EXPECT_FALSE(resolve_choice(s, kDeclineChoice));
+  EXPECT_TRUE(s.pending_choice.active()) << "the choice is still open";
+}
+
+TEST(Colorless, DiscoveryExhaustsAndThePlusDoesNot) {
+  for (CardId id : {CardId::Discovery, CardId::DiscoveryPlus}) {
+    CombatState s = fight_holding(id);
+    ASSERT_TRUE(apply_action(s, card_action(id))) << card_name(id);
+    ASSERT_TRUE(resolve_choice(s, 0)) << card_name(id);
+
+    const bool exhausted =
+        !s.exhaust_pile.empty() && s.exhaust_pile.back().card_id == id;
+    EXPECT_EQ(exhausted, id == CardId::Discovery) << card_name(id);
+  }
+}
+
+// ------------------------------------------------- Infernal Blade's pool fix
+
+// It generates an IRONCLAD ATTACK. Before batch 2 it rolled over every
+// Attack-typed id in CARD_DATABASE, which after the colorless block included
+// colorless attacks (Hand of Greed, unplayable at the time), upgraded ids and
+// the Rampage / Searing Blow rung ladders.
+TEST(Colorless, InfernalBladeRollsOnlyGeneratableClassAttacks) {
+  for (uint32_t seed = 0; seed < 60; ++seed) {
+    CombatState s = fight_holding(CardId::InfernalBlade, seed);
+    ASSERT_TRUE(apply_action(s, card_action(CardId::InfernalBlade)));
+    ASSERT_EQ(s.current_hand.size(), 1u);
+    const CardId got = s.current_hand[0].card_id;
+    EXPECT_TRUE(in_pool(generatable_class_attack_pool(), got))
+        << card_name(got) << " is not a generatable Ironclad Attack";
+    EXPECT_EQ(CARD_DATABASE.at(got).type, CardType::Attack);
+    EXPECT_FALSE(CARD_DATABASE.at(got).unplayable)
+        << card_name(got) << " cannot be played, so it is a dead card";
+  }
+}
+
+// Generation draws from its OWN stream (§3.5). Changing only the card seed must
+// change what is generated while leaving the shuffle untouched — that isolation
+// is what keeps an Attack Potion's offer stable while an Infernal Blade shifts
+// it.
+TEST(Colorless, GenerationUsesItsOwnRngStream) {
+  auto fight = [](uint32_t card_seed) {
+    CombatSetup setup;
+    setup.seed = 4;
+    setup.card_seed = card_seed;
+    setup.deck = starter_deck();
+    CombatState s = start_combat(std::move(setup));
+    s.current_hand.clear();
+    s.current_hand.push_back(Card{CardId::JackOfAllTrades});
+    s.character.energy = 99;
+    return s;
+  };
+
+  CombatState a = fight(1);
+  CombatState b = fight(2);
+  ASSERT_EQ(a.draw_pile.size(), b.draw_pile.size());
+  for (std::size_t i = 0; i < a.draw_pile.size(); ++i) {
+    ASSERT_EQ(a.draw_pile[i].card_id, b.draw_pile[i].card_id)
+        << "the shuffle must not depend on the generation stream";
+  }
+
+  ASSERT_TRUE(apply_action(a, card_action(CardId::JackOfAllTrades)));
+  ASSERT_TRUE(apply_action(b, card_action(CardId::JackOfAllTrades)));
+  EXPECT_NE(a.current_hand[0].card_id, b.current_hand[0].card_id)
+      << "a different generation seed should roll differently";
 }
 
 // ================================================ all 35, as a complete block
@@ -856,7 +1096,7 @@ TEST(Colorless, TheTwoPoolsAreDisjoint) {
 // Of the 35, these are the ones whose effects are wired. The rest hold correct
 // data and a stable action index and are masked out. A card leaving this list
 // means an effect landed; one joining means something regressed.
-TEST(Colorless, ExactlyNineteenOfThirtyFiveArePlayable) {
+TEST(Colorless, ExactlyTwentyThreeOfThirtyFiveArePlayable) {
   const CardId playable[] = {
       CardId::BandageUp,     CardId::Blind,        CardId::DarkShackles,
       CardId::DeepBreath,    CardId::DramaticEntrance, CardId::Finesse,
@@ -865,7 +1105,10 @@ TEST(Colorless, ExactlyNineteenOfThirtyFiveArePlayable) {
       CardId::SwiftStrike,   CardId::Trip,         CardId::MasterOfStrategy,
       // Batch 1 (colorless-effects.md §5).
       CardId::Apotheosis,    CardId::HandOfGreed,  CardId::Violence,
-      CardId::ThinkingAhead};
+      CardId::ThinkingAhead,
+      // Batch 2: random in-combat generation.
+      CardId::JackOfAllTrades, CardId::Transmutation, CardId::Magnetism,
+      CardId::Discovery};
 
   int wired = 0;
   for (const std::vector<CardId>* pool :

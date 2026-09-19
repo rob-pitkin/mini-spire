@@ -444,6 +444,7 @@ PYBIND11_MODULE(_core, m) {
       .value("Intangible", Power::Intangible)
       .value("Buffer", Power::Buffer)
       .value("PenNibCharge", Power::PenNibCharge)
+      .value("Magnetism", Power::Magnetism)
       .value("StrengthDown", Power::StrengthDown);
 
   // --- The v2 action layout (v2-spec.md §6) -------------------------------

@@ -83,14 +83,22 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
     // Cost modifiers, recomputed here rather than asked of effective_cost.
     int cost = data.cost;
     if (cost != kXCost) {
-      auto free_it = state.character.free_this_turn.find(card);
-      const bool free_now = free_it != state.character.free_this_turn.end() &&
-                            free_it->second > 0;
+      // A per-instance override (Infernal Blade, Discovery, Transmutation)
+      // wins, and the CHEAPEST copy in hand is the one the engine plays
+      // (colorless-effects.md D2). Re-derived from the hand rather than asked
+      // of the query layer, which is the whole point of this oracle.
+      int override_cost = -1;
+      for (const Card& c : state.current_hand) {
+        if (c.card_id != card || c.cost_override == kNoCostOverride) continue;
+        if (override_cost < 0 || c.cost_override < override_cost) {
+          override_cost = c.cost_override;
+        }
+      }
       bool corrupted = false;
       auto cp = state.character.powers.find(Power::Corruption);
       if (cp != state.character.powers.end() && cp->second > 0) corrupted = true;
-      if (free_now) {
-        cost = 0;  // Infernal Blade's discount wins over the others
+      if (override_cost >= 0) {
+        cost = override_cost;
       } else if (data.type == CardType::Skill && corrupted) {
         cost = 0;
       } else if (data.cost_drops_per_hp_loss) {
@@ -164,13 +172,16 @@ TEST(MaskOracle, EngineMaskMatchesAnIndependentDerivation) {
         if (rng() % 6 == 0) {
           s.character.hp_loss_events = static_cast<int>(rng() % 6);
         }
-        // Infernal Blade's discount. Previously only reachable if a random
-        // play happened to resolve Infernal Blade, so the reference's
-        // free-cost branch was barely exercised — now driven directly.
+        // A per-instance discount (Infernal Blade, Discovery, Transmutation).
+        // Previously only reachable if a random play happened to resolve
+        // Infernal Blade, so the reference's free-cost branch was barely
+        // exercised — now driven directly. Set on ONE copy, which is what the
+        // instance override buys over the per-type counter it replaced: the
+        // oracle and the engine must agree that a second copy still pays.
         if (rng() % 10 == 0 && !s.current_hand.empty()) {
-          const CardId victim =
-              s.current_hand[rng() % s.current_hand.size()].card_id;
-          s.character.free_this_turn[victim] = 1;
+          Card& victim = s.current_hand[rng() % s.current_hand.size()];
+          victim.cost_override = 0;
+          victim.cost_duration = CostDuration::ThisTurn;
           ++saw_free;
         }
         // Choice mode, including the optional/decline variant.

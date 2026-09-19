@@ -57,6 +57,10 @@ std::vector<Card> starter_deck();
 // never existed.
 struct CombatSetup {
   uint32_t seed = 0;
+  // Seed for the fight's card-generation stream (§3.5, RngStream::CardRandom).
+  // Defaulted to 0 rather than derived from `seed`, so a standalone CombatEnv
+  // still generates deterministically; a run supplies its own per-floor seed.
+  uint32_t card_seed = 0;
   EncounterPool pool = EncounterPool::Weak;
   std::vector<Card> deck;
 

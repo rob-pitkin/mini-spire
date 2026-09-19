@@ -401,6 +401,10 @@ enum class ChoiceKind {
   ExhaustToHand,            // Exhume: exhaust pile -> hand
   CopyAttackOrPowerInHand,  // Dual Wield: copy an Attack/Power in hand
   ExhaustCardInHand,        // Burning Pact, True Grit+: exhaust a chosen card
+  DiscoverCard,             // Discovery: pick 1 of 3 GENERATED cards. Its
+                            // options are rolled rather than taken from a pile,
+                            // which is why the RequestChoice executor builds
+                            // them instead of build_choice.
   // v2.0.0 (map / shop / events) appends here — no encoding change.
 };
 
@@ -420,6 +424,31 @@ enum class GeneratedPile {
   Hand,          // Power Through's Wounds
   ShuffleDraw,   // Wild Strike's Wound, Reckless Charge's Dazed
 };
+
+// Which pool a RANDOM in-combat generator draws from (colorless-effects.md,
+// batch 2). StS keeps two: the player's class pool and the colorless pool, each
+// holding only shop/reward-obtainable cards, and every in-combat generator
+// skips cards tagged HEALING (see card_is_healing).
+enum class GenerationPool : uint8_t {
+  None,         // not a generator
+  Colorless,    // Jack of All Trades, Transmutation, Magnetism
+  ClassAny,     // Discovery — any type from the class pool
+  ClassAttack,  // Infernal Blade — class Attacks only
+};
+
+// How long a per-instance cost override lasts (colorless-effects.md D2). The
+// override lives on the CARD INSTANCE, because "this card costs 0" is a fact
+// about one copy: Madness discounts one card, not every copy of its type.
+enum class CostDuration : uint8_t {
+  None,         // no override
+  ThisTurn,     // Infernal Blade, Discovery, Transmutation
+  ThisCombat,   // Madness, Chrysalis, Metamorphosis (batch 3)
+  UntilPlayed,  // Forethought (batch 4)
+};
+
+// "No override" — a real cost of 0 is a legal override value, so the sentinel
+// cannot be 0.
+inline constexpr int kNoCostOverride = -1;
 
 // How a card's base damage is computed (Stage 4b). Most cards just use
 // CardData::damage; a few derive it from state, which is a QUERY (pulled at
@@ -475,19 +504,34 @@ struct Card {
   // perceives, and a raw id in a float slot would assert a false ordinal.
   int uid = kCombatScopedCardUid;
 
+  // A cost this COPY pays, overriding CardData::cost for `cost_duration`
+  // (colorless-effects.md D2). kNoCostOverride means "use the printed cost".
+  // Combat-scoped: piles are discarded at the end of a fight, so an override
+  // can never reach the master deck.
+  int cost_override = kNoCostOverride;
+  CostDuration cost_duration = CostDuration::None;
+
   // Do these two instances play identically? Used to decide whether they
   // collapse into one option in a choice.
   //
   // uid is deliberately NOT compared. Two Strikes play the same whichever copy
   // they are; including uid would make every card unique, stop duplicate options
   // collapsing, and change shipped v1.0.0 choice behaviour.
+  //
+  // The cost override IS compared: a free Strike and a printed Strike do not
+  // play the same, and a human sees the difference on the card.
   bool same_as(const Card& other) const {
     return card_id == other.card_id && bonus_damage == other.bonus_damage &&
-           upgrades == other.upgrades;
+           upgrades == other.upgrades &&
+           cost_override == other.cost_override &&
+           cost_duration == other.cost_duration;
   }
   // Does this instance carry any state beyond its id? Same reasoning as
   // same_as: uid is not "state" in this sense.
-  bool has_instance_state() const { return bonus_damage != 0 || upgrades != 0; }
+  bool has_instance_state() const {
+    return bonus_damage != 0 || upgrades != 0 ||
+           cost_override != kNoCostOverride;
+  }
 };
 
 struct CardData {
@@ -632,6 +676,20 @@ struct CardData {
   // Hand of Greed: gold when this card's damage is FATAL. Recorded on the
   // combat state; RunState writes it back (colorless-effects.md D5).
   int gold_on_kill = 0;
+  // --- Colorless effects, batch 2: random in-combat generation. ---
+  //
+  // Which pool to roll from, and how many. `generates_x_count` means the count
+  // is X (the energy spent) rather than the fixed number — Transmutation.
+  GenerationPool generates_pool = GenerationPool::None;
+  int generates_count = 0;
+  bool generates_x_count = false;
+  // Transmutation+ generates the UPGRADED form of whatever it rolls.
+  bool generates_upgraded = false;
+  // Transmutation and Infernal Blade: the generated copies cost 0 this turn.
+  // Jack of All Trades and Magnetism deliberately do NOT — they add cards at
+  // full price.
+  bool generates_free_this_turn = false;
+  GeneratedPile generates_into = GeneratedPile::Hand;
 };
 
 // What a card becomes when upgraded (Armaments; v2's rest-site smith).
@@ -1390,18 +1448,18 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     // this turn. Exhaust." The upgrade REMOVES the Exhaust rather than changing
     // a number — so the two rows differ in a flag, not a value.
     //
-    // UNPLAYABLE: needs a choice over three GENERATED cards. The choice
-    // machinery exists (ChoiceKind), but not a choice whose options are rolled
-    // rather than drawn from a pile.
+    // The three come from the IRONCLAD pool (any type), not the colorless one —
+    // Discovery offers cards of the character you are playing. Taking one is
+    // mandatory, so the choice is not optional.
     {CardId::Discovery, [] {
        CardData d = colorless("Discovery", 1, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.requests_choice = ChoiceKind::DiscoverCard;
        return d;
      }()},
     {CardId::DiscoveryPlus, [] {
        CardData d = colorless("Discovery+", 1, CardType::Skill);
-       d.unplayable = true;
+       d.requests_choice = ChoiceKind::DiscoverCard;
        return d;
      }()},
 
@@ -1518,22 +1576,23 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
      }()},
 
     // Jack of All Trades: "Add 1 random Colorless card into your hand.
-    // Exhaust."
+    // Exhaust." The upgrade adds 2 — each an independent roll, so it can hand
+    // you the same card twice.
     //
-    // UNPLAYABLE: needs generation from the colorless pool, which is only
-    // partly populated while this block is being added one card at a time.
-    // Wiring it before the pool is complete would make the card's randomness
-    // depend on how far through the list we happened to be.
+    // At FULL PRICE: unlike Transmutation, the card says "add", not "add for
+    // free".
     {CardId::JackOfAllTrades, [] {
        CardData d = colorless("Jack of All Trades", 0, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.generates_pool = GenerationPool::Colorless;
+       d.generates_count = 1;
        return d;
      }()},
     {CardId::JackOfAllTradesPlus, [] {
        CardData d = colorless("Jack of All Trades+", 0, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.generates_pool = GenerationPool::Colorless;
+       d.generates_count = 2;
        return d;
      }()},
 
@@ -1771,18 +1830,21 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     // Transmutation: "Add X random Colorless cards into your hand. They cost 0
     // this turn. Exhaust." The upgrade generates UPGRADED colorless cards — a
     // change to what is generated, not how many.
-    //
-    // UNPLAYABLE: colorless generation, and the pool is still being populated.
     {CardId::Transmutation, [] {
        CardData d = colorless("Transmutation", kXCost, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.generates_pool = GenerationPool::Colorless;
+       d.generates_x_count = true;
+       d.generates_free_this_turn = true;
        return d;
      }()},
     {CardId::TransmutationPlus, [] {
        CardData d = colorless("Transmutation+", kXCost, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.generates_pool = GenerationPool::Colorless;
+       d.generates_x_count = true;
+       d.generates_upgraded = true;
+       d.generates_free_this_turn = true;
        return d;
      }()},
 
@@ -1790,16 +1852,16 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     // your hand." The only colorless POWER, and the upgrade changes only the
     // cost, 2 to 1.
     //
-    // UNPLAYABLE: a turn-start power that generates. The power registry can
-    // hold it, but the generation it needs does not exist.
+    // The generation lives in the power registry (Power::Magnetism), fired at
+    // turn start. Stacks intensify, so two copies add two cards a turn.
     {CardId::Magnetism, [] {
        CardData d = colorless("Magnetism", 2, CardType::Power);
-       d.unplayable = true;
+       d.applies_powers = {{Power::Magnetism, 1, Target::Character}};
        return d;
      }()},
     {CardId::MagnetismPlus, [] {
        CardData d = colorless("Magnetism+", 1, CardType::Power);
-       d.unplayable = true;
+       d.applies_powers = {{Power::Magnetism, 1, Target::Character}};
        return d;
      }()},
 
@@ -2017,6 +2079,95 @@ inline bool card_targets_enemy(const CardData& data) {
 // Display name for a card (ROB-79) — reads CardData::name, the single source of
 // truth. The TUI uses this so it never maintains its own name map.
 inline const char* card_name(CardId id) { return CARD_DATABASE.at(id).name; }
+
+// --- Random in-combat generation (colorless-effects.md batch 2) ------------
+//
+// StS marks a few cards `CardTags.HEALING`, and since patch 44 EVERY source of
+// random temporary card generation skips them ("it cannot generate a healing
+// card"). Verified against the decompiled game rather than the wiki's card
+// lists, which also name cards excluded merely for belonging to another
+// character or to an event.
+//
+// Enumerated, not derived from the effect fields: the tag is an authored
+// property in StS, and deriving it would quietly capture any future card that
+// happens to heal — a different rule that would drift from the game's.
+inline bool card_is_healing(CardId id) {
+  switch (id) {
+    case CardId::Feed:
+    case CardId::FeedPlus:
+    case CardId::Reaper:
+    case CardId::ReaperPlus:
+    case CardId::BandageUp:
+    case CardId::BandageUpPlus:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// The colorless cards an in-combat generator can roll: the obtainable pool
+// minus healing, so 34 of the 35 (Bandage Up is out).
+inline const std::vector<CardId>& generatable_colorless_pool() {
+  static const std::vector<CardId> pool = [] {
+    std::vector<CardId> v;
+    for (const std::vector<CardId>* p :
+         {&COLORLESS_UNCOMMON_POOL, &COLORLESS_RARE_POOL}) {
+      for (CardId id : *p) {
+        if (!card_is_healing(id)) v.push_back(id);
+      }
+    }
+    return v;
+  }();
+  return pool;
+}
+
+// The class cards an in-combat generator can roll (Discovery): the three
+// Ironclad rarity pools minus healing. Starters are absent because they are not
+// in those pools — StS rolls from the obtainable pools, so Strike and Defend
+// are not offered.
+inline const std::vector<CardId>& generatable_class_pool() {
+  static const std::vector<CardId> pool = [] {
+    std::vector<CardId> v;
+    for (const std::vector<CardId>* p : {&IRONCLAD_COMMON_POOL,
+                                         &IRONCLAD_UNCOMMON_POOL,
+                                         &IRONCLAD_RARE_POOL}) {
+      for (CardId id : *p) {
+        if (!card_is_healing(id)) v.push_back(id);
+      }
+    }
+    return v;
+  }();
+  return pool;
+}
+
+// Infernal Blade's pool: the class pool filtered to Attacks. Feed and Reaper
+// are both Attacks AND healing, so they are excluded here twice over.
+inline const std::vector<CardId>& generatable_class_attack_pool() {
+  static const std::vector<CardId> pool = [] {
+    std::vector<CardId> v;
+    for (CardId id : generatable_class_pool()) {
+      if (CARD_DATABASE.at(id).type == CardType::Attack) v.push_back(id);
+    }
+    return v;
+  }();
+  return pool;
+}
+
+// The pool for one generator kind. Returned by reference — these are built once.
+inline const std::vector<CardId>& generation_pool(GenerationPool pool) {
+  switch (pool) {
+    case GenerationPool::Colorless:
+      return generatable_colorless_pool();
+    case GenerationPool::ClassAny:
+      return generatable_class_pool();
+    case GenerationPool::ClassAttack:
+      return generatable_class_attack_pool();
+    case GenerationPool::None:
+      break;
+  }
+  static const std::vector<CardId> empty;
+  return empty;
+}
 
 // --- Card descriptions (ROB-97) -------------------------------------------
 //

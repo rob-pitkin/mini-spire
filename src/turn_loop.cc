@@ -10,6 +10,7 @@
 #include "encounter.h"
 #include "enemy.h"
 #include "query.h"
+#include "run_rng.h"  // splitmix64 — the card-generation stream's seed mix
 #include "status_effect.h"
 
 namespace minispire {
@@ -128,23 +129,6 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     } else {
       spend_energy(state, cost);
     }
-    // Infernal Blade's discount is CONSUMED by the play (ROB-85). It used to be
-    // set and never decremented, so "It costs 0 this turn" applied to the whole
-    // CARD TYPE: rolling a Strike — 5 of them in the starter deck — made every
-    // Strike in hand, and every Strike drawn later that turn, free.
-    //
-    // A counter is the honest fit for this action space. Actions are indexed by
-    // CardId, not by hand slot, so the agent cannot say "play THAT Strike";
-    // decrementing per play makes exactly one card of the type free, which is
-    // the observable StS behaviour given cards of a type are interchangeable
-    // here. (Residual: if the generated copy carries different instance state
-    // than one already in hand — a fresh Rampage vs an accumulated one — the
-    // engine cannot express which copy got the discount.)
-    auto free_it = state.character.free_this_turn.find(card_id);
-    if (free_it != state.character.free_this_turn.end() &&
-        free_it->second > 0) {
-      if (--free_it->second <= 0) state.character.free_this_turn.erase(free_it);
-    }
   } else if (ctx_play.forced_x >= 0) {
     x = ctx_play.forced_x;
   }
@@ -158,10 +142,30 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
   // the pile it lands in.
   Card played = ctx_play.instance;
   if (ctx_play.take_from_hand) {
-    const int idx = find_first_in_hand(state.current_hand, card_id);
+    // The CHEAPEST copy of this id, not the first (colorless-effects.md D2,
+    // option A). Actions are indexed by CardId, so "play Bludgeon" cannot name
+    // a copy; when one copy is discounted and another is not, a human clicks
+    // the free one. Playing the cheapest is therefore both the optimal line and
+    // the one a player would take.
+    int idx = -1;
+    int best_cost = 0;
+    for (int i = 0; i < static_cast<int>(state.current_hand.size()); ++i) {
+      if (state.current_hand[i].card_id != card_id) continue;
+      const int this_cost = instance_effective_cost(state, state.current_hand[i]);
+      if (idx < 0 || this_cost < best_cost) {
+        idx = i;
+        best_cost = this_cost;
+      }
+    }
     assert(idx >= 0 && "mask should have rejected this action");
     played = state.current_hand[idx];
     state.current_hand.erase(state.current_hand.begin() + idx);
+    // "Costs 0 until played" (Forethought) ends here, on the copy that leaves
+    // the hand — the override rides the instance into whatever pile it lands in.
+    if (played.cost_duration == CostDuration::UntilPlayed) {
+      played.cost_override = kNoCostOverride;
+      played.cost_duration = CostDuration::None;
+    }
   }
 
   // The set of enemy slots this card resolves against.
@@ -570,9 +574,27 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
   if (data.upgrades_whole_hand) {
     q.push_back(Action{ActionKind::UpgradeHand});
   }
-  // Infernal Blade: add a random Attack to hand, free for the rest of the turn.
+  // Infernal Blade: a random class ATTACK, free for the rest of the turn.
   if (data.generates_random_attack) {
-    q.push_back(Action{ActionKind::MakeCardFree});
+    Action a;
+    a.kind = ActionKind::GenerateCards;
+    a.amount = 1;
+    a.gen_pool = GenerationPool::ClassAttack;
+    a.gen_pile = GeneratedPile::Hand;
+    a.gen_free_this_turn = true;
+    q.push_back(a);
+  }
+  // Random generation proper (Jack of All Trades, Transmutation). Transmutation
+  // generates X cards, where X is the energy this play spent.
+  if (data.generates_pool != GenerationPool::None) {
+    Action a;
+    a.kind = ActionKind::GenerateCards;
+    a.amount = data.generates_x_count ? x : data.generates_count;
+    a.gen_pool = data.generates_pool;
+    a.gen_pile = data.generates_into;
+    a.gen_upgraded = data.generates_upgraded;
+    a.gen_free_this_turn = data.generates_free_this_turn;
+    q.push_back(a);
   }
   // Havoc: play the top card of the draw pile and force-exhaust it. Pushed as
   // a PlayCard action (the kind the effects-architecture doc specced for
@@ -886,7 +908,18 @@ void handle_end_turn(CombatState& state) {
   state.character.energy = state.character.energy_per_turn;
   // Battle Trance's NoDraw needs no clear here — it is a Debuff now (ROB-40 B2)
   // and the end-of-turn tick already expired it.
-  state.character.free_this_turn.clear();  // Infernal Blade's discount
+  // "Costs 0 this turn" ends here, wherever the card sits: a discounted card
+  // shuffled into the draw pile must not arrive still free next turn.
+  for (std::vector<Card>* pile :
+       {&state.current_hand, &state.draw_pile, &state.discard_pile,
+        &state.exhaust_pile}) {
+    for (Card& c : *pile) {
+      if (c.cost_duration == CostDuration::ThisTurn) {
+        c.cost_override = kNoCostOverride;
+        c.cost_duration = CostDuration::None;
+      }
+    }
+  }
   state.turn_number += 1;
   state.character_turn = true;
   {
@@ -949,6 +982,11 @@ CombatState start_combat(CombatSetup setup) {
   CombatState state;
   state.seed = setup.seed;
   state.rng = std::mt19937(setup.seed);
+  // A SEPARATE generator for in-combat card generation (§3.5). Mixed rather
+  // than used raw so that a standalone fight, whose card_seed defaults to 0,
+  // still differs from its shuffle stream instead of tracking it.
+  state.card_rng = std::mt19937(static_cast<std::mt19937::result_type>(
+      splitmix64(static_cast<uint64_t>(setup.card_seed) << 32 | setup.seed)));
 
   state.character.max_hp = setup.max_hp;
   state.character.hp = setup.hp;

@@ -78,7 +78,7 @@ constexpr std::array<Power, kNumPlayerPowers> kObsPlayerPowerOrder = {
     Power::Berserk,      Power::Corruption,    Power::Barricade,
     Power::DoubleTap,    Power::Vigor,         Power::Thorns,
     Power::PlatedArmor,  Power::Intangible,    Power::Buffer,
-    Power::PenNibCharge, Power::StrengthDown,
+    Power::PenNibCharge, Power::Magnetism,     Power::StrengthDown,
 };
 static_assert(kObsPlayerPowerOrder.size() == kNumPlayerPowers,
               "kObsPlayerPowerOrder must list every power");
@@ -102,6 +102,8 @@ int choice_source_pile(ChoiceKind kind) {
       return 2;  // discard
     case ChoiceKind::ExhaustToHand:
       return 3;  // exhaust
+    case ChoiceKind::DiscoverCard:
+      return 4;  // external — Discovery's three are generated, not from a pile
     case ChoiceKind::None:
       break;
   }
@@ -333,11 +335,15 @@ void CombatEnv::compute_obs() {
   count_pile(state_.discard_pile, 2);
   count_pile(state_.exhaust_pile, 3);
   // Plane 5 is not a pile: it holds how many copies of each type cost 0 for the
-  // rest of this turn (ROB-40 B3). Walk the map, which is empty on almost every
-  // step — probing it once per card type was 189 hash lookups to discover
-  // nothing.
-  for (const auto& [id, n] : state_.character.free_this_turn) {
-    o[kPileBase + 4 * kStride + static_cast<int>(id)] = static_cast<float>(n);
+  // rest of this turn (ROB-40 B3). Read off the HAND's instances since
+  // colorless-effects.md D2 moved the discount onto the card itself — the
+  // player sees a 0 printed on that specific card, which is what this plane
+  // says. Cards discounted elsewhere (a Chrysalis card waiting in the draw
+  // pile) are not visible to the player either.
+  for (const Card& c : state_.current_hand) {
+    if (c.cost_override == 0) {
+      o[kPileBase + 4 * kStride + static_cast<int>(c.card_id)] += 1.0f;
+    }
   }
 
   // --- Turn number ---

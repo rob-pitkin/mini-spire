@@ -80,7 +80,11 @@ enum class ActionKind {
                     // goes to the discard pile
   GainGold,         // Hand of Greed: record `amount` gold earned in this fight.
                     // Combat has no gold — RunState writes it back (§3.2)
-  MakeCardFree,   // Infernal Blade: `card` costs 0 for the rest of this turn
+  GenerateCards,  // roll `amount` cards from `gen_pool` into `gen_pile`
+                  // (Infernal Blade, Jack of All Trades, Transmutation,
+                  // Magnetism). Rolled from the CardRandom stream at execution.
+                  // Replaces MakeCardFree, whose pool was every Attack id in
+                  // CARD_DATABASE and whose rolls came from the combat stream.
   AddCardToPile,  // generate a card into a pile (Wild Strike's Wound, Power
                   // Through's Wounds, Immolate's Burn, Anger's self-copy).
                   // `amount` is the GeneratedPile.
@@ -124,6 +128,12 @@ struct Action {
   // separate field rather than reusing `card`, which names a specific card —
   // Violence wants "any Attack", not "this Attack".
   CardType card_type = CardType::Attack;
+  // GenerateCards payload: which pool, where the cards land, and what happens
+  // to them on arrival.
+  GenerationPool gen_pool = GenerationPool::None;
+  GeneratedPile gen_pile = GeneratedPile::Hand;
+  bool gen_upgraded = false;        // Transmutation+
+  bool gen_free_this_turn = false;  // Transmutation, Infernal Blade
   MoveName move = MoveName::None;  // RewriteIntent payload
   bool card_block = false;  // GainBlock from a played card: apply Dex/Frail
   int copies = 1;  // ApplyChoice: how many copies to add (Dual Wield+ = 2)

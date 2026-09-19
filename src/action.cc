@@ -981,6 +981,7 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
   const int strength_down = get_status(powers, Power::StrengthDown);
   const int thorns = get_status(powers, Power::Thorns);
   const int plated_armor = get_status(powers, Power::PlatedArmor);
+  const int magnetism = get_status(powers, Power::Magnetism);
 
   switch (hook) {
     case Hook::TurnStartPlayer:
@@ -994,6 +995,15 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
       if (berserk > 0) {
         Action a = make_action(ActionKind::GainEnergy);
         a.amount = berserk;
+        q.push_back(a);
+      }
+      // Magnetism: `stacks` random colorless cards, at full price — the card
+      // says "add", not "add for free", unlike Transmutation.
+      if (magnetism > 0) {
+        Action a = make_action(ActionKind::GenerateCards);
+        a.amount = magnetism;
+        a.gen_pool = GenerationPool::Colorless;
+        a.gen_pile = GeneratedPile::Hand;
         q.push_back(a);
       }
       // Flame Barrier is "this turn" from the play until the START of the next
@@ -1434,22 +1444,43 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // and RunState writes it back (colorless-effects.md D5).
       state.gold_gained += a.amount;
       break;
-    case ActionKind::MakeCardFree: {
-      // Infernal Blade: a random Attack joins the hand, free for this turn.
-      // Rolled here (execution) rather than at translation, so it draws from
-      // the queue's RNG position like every other random effect.
-      std::vector<CardId> attacks;
-      for (const auto& [id, data] : CARD_DATABASE) {
-        if (data.type == CardType::Attack) attacks.push_back(id);
+    case ActionKind::GenerateCards: {
+      // Random in-combat generation: Infernal Blade, Jack of All Trades,
+      // Transmutation and Magnetism all land here.
+      //
+      // The pool is a published, ordered list (card.h) of obtainable cards
+      // minus the HEALING-tagged ones, NOT a scan of CARD_DATABASE — which is
+      // what the old Infernal Blade did, and which since v2 would have rolled
+      // colorless cards, upgraded ids and rung ladders as if they were Ironclad
+      // Attacks. Rolls come from card_rng, the dedicated generation stream.
+      const std::vector<CardId>& pool = generation_pool(a.gen_pool);
+      if (pool.empty()) break;
+      std::uniform_int_distribution<std::size_t> pick(0, pool.size() - 1);
+      for (int i = 0; i < a.amount; ++i) {
+        // Each card is an INDEPENDENT roll — Jack of All Trades+ can hand you
+        // the same card twice, and in StS it does.
+        Card made{pool[pick(state.card_rng)]};
+        if (a.gen_upgraded) made.card_id = upgraded_card(made.card_id);
+        if (a.gen_free_this_turn) {
+          made.cost_override = 0;
+          made.cost_duration = CostDuration::ThisTurn;
+        }
+        switch (a.gen_pile) {
+          case GeneratedPile::Hand:
+            add_card_to_hand(state, made);
+            break;
+          case GeneratedPile::Discard:
+            move_to_discard(state, made);
+            break;
+          case GeneratedPile::ShuffleDraw: {
+            std::uniform_int_distribution<std::size_t> pos(
+                0, state.draw_pile.size());
+            state.draw_pile.insert(state.draw_pile.begin() + pos(state.rng),
+                                   made);
+            break;
+          }
+        }
       }
-      // CARD_DATABASE is unordered, so sort for a deterministic candidate list
-      // — otherwise the same seed could pick differently between runs.
-      std::sort(attacks.begin(), attacks.end());
-      if (attacks.empty()) break;
-      std::uniform_int_distribution<std::size_t> pick(0, attacks.size() - 1);
-      const CardId chosen_attack = attacks[pick(state.rng)];
-      add_card_to_hand(state, Card{chosen_attack});
-      state.character.free_this_turn[chosen_attack] += 1;
       break;
     }
     case ActionKind::PlayCard: {
@@ -1616,11 +1647,39 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       }
       break;
     case ActionKind::RequestChoice: {
+      const ChoiceKind requested = static_cast<ChoiceKind>(a.amount);
+      if (requested == ChoiceKind::DiscoverCard) {
+        // Discovery's options are ROLLED, not taken from a pile, so it cannot
+        // go through build_choice (which reads piles and takes a const state).
+        //
+        // Three DISTINCT cards, drawn WITHOUT REPLACEMENT. StS re-rolls until
+        // it has three different ids, which has the same distribution but a
+        // variable number of draws — and a variable draw count shifts every
+        // later roll in the stream. A fixed three draws keeps replay stable
+        // (Rob, 2026-09-19); the offer itself is identical.
+        std::vector<CardId> candidates = generation_pool(GenerationPool::ClassAny);
+        PendingChoice pc;
+        pc.kind = ChoiceKind::DiscoverCard;
+        pc.source_card = a.card;
+        pc.is_optional = false;  // "Adding one is mandatory" (wiki)
+        pc.copies = 1;
+        const int wanted =
+            std::min<int>(3, static_cast<int>(candidates.size()));
+        for (int i = 0; i < wanted; ++i) {
+          std::uniform_int_distribution<std::size_t> pick(
+              0, candidates.size() - 1);
+          const std::size_t idx = pick(state.card_rng);
+          pc.options[pc.num_options++] = Card{candidates[idx]};
+          candidates.erase(candidates.begin() + static_cast<long>(idx));
+        }
+        if (pc.num_options == 0) break;
+        state.pending_choice = pc;
+        break;
+      }
       // Build the candidate list. If nothing qualifies, the choice is simply
       // skipped — StS plays the card, the choice just has no legal target
       // (e.g. Exhume with an empty exhaust pile). No pause, drain continues.
-      PendingChoice pc =
-          build_choice(state, static_cast<ChoiceKind>(a.amount), a.card);
+      PendingChoice pc = build_choice(state, requested, a.card);
       pc.copies = CARD_DATABASE.at(a.card).choice_copies;  // Dual Wield+ = 2
       if (pc.num_options == 0) break;
       if (pc.num_options == 1 && !pc.is_optional) {
@@ -1695,6 +1754,15 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
             q.push_front(ex);
           }
           break;
+        case ChoiceKind::DiscoverCard: {
+          // Discovery: the chosen card is a fresh copy that costs 0 this turn.
+          // It is generated, so it comes from no pile and nothing is removed.
+          Card made = chosen;
+          made.cost_override = 0;
+          made.cost_duration = CostDuration::ThisTurn;
+          add_card_to_hand(state, made);
+          break;
+        }
         case ChoiceKind::None:
           break;
       }
@@ -1794,6 +1862,11 @@ bool card_qualifies(ChoiceKind kind, CardId id) {
     case ChoiceKind::ExhaustToHand:
     case ChoiceKind::ExhaustCardInHand:
       return true;  // any card in the source pile
+    case ChoiceKind::DiscoverCard:
+      // Never reaches here: Discovery's options are ROLLED, so the
+      // RequestChoice executor builds them and build_choice is not called.
+      // Listed rather than defaulted so a new kind still has to be considered.
+      return false;
     case ChoiceKind::None:
       return false;
   }
@@ -1812,6 +1885,7 @@ const std::vector<Card>& source_pile(const CombatState& state,
     case ChoiceKind::HandToTopOfDraw:
     case ChoiceKind::CopyAttackOrPowerInHand:
     case ChoiceKind::ExhaustCardInHand:
+    case ChoiceKind::DiscoverCard:  // no pile at all — the options are rolled
     case ChoiceKind::None:
       break;
   }

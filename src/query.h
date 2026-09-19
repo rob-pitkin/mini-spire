@@ -23,6 +23,15 @@ namespace minispire {
 // Returns kXCost unchanged for X-cost cards — "spend all" isn't a number.
 int effective_cost(const CombatState& state, CardId card);
 
+// As above, for a specific card INSTANCE. A copy can carry its own cost
+// (Infernal Blade's generated attack, Discovery's pick, Madness' target), and
+// that override wins over every other modifier — colorless-effects.md D2.
+//
+// The id-based form answers "what does playing this card cost?", which is the
+// mask's question; since the engine plays the CHEAPEST copy, it reports the
+// cheapest copy's cost. Use this one whenever a specific copy is in hand.
+int instance_effective_cost(const CombatState& state, const Card& card);
+
 // Does the player's block clear at the start of their turn? Barricade keeps it.
 bool block_resets_at_turn_start(const CombatState& state);
 

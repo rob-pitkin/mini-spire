@@ -198,7 +198,7 @@ machinery lands with the cards that need it.
 | batch | cards | machinery |
 |---|---|---|
 | 1 ✅ | Thinking Ahead, Apotheosis, Violence, Dark Shackles, Panic Button, Hand of Greed | small, self-contained; D5 |
-| 2 | Jack of All Trades, Transmutation, Magnetism, Discovery + Infernal Blade fix | generation; `CardRandom` (D4); cost this turn (first use of D2) |
+| 2 ✅ | Jack of All Trades, Transmutation, Magnetism, Discovery + Infernal Blade fix | generation; `CardRandom` (D4); cost this turn (first use of D2) |
 | 3 | Madness, Enlightenment, Chrysalis, Metamorphosis | the rest of D2 |
 | 4 | Secret Technique, Secret Weapon, Forethought | new choice sources |
 | 5 | Panache, Sadistic Nature, Mayhem, The Bomb | power triggers; D3 |
@@ -237,3 +237,37 @@ Toolbox, and update `relic-effects.md` §7.
   `CARD_DATABASE` (colorless and upgraded ids included) and draws from the combat
   RNG rather than `CardRandom`. It is the same primitive batch 2 builds, so it is
   fixed there rather than twice.
+
+### Batch 2
+
+- **The generation pool rule is one filter, not the wiki's long list.** Each
+  card's wiki page lists a dozen "excluded cards", but the game applies exactly
+  one: skip cards tagged `CardTags.HEALING`, over pools that already hold only
+  shop/reward-obtainable cards of your class. Eight cards carry that tag and
+  three are in our vocabulary — **Feed, Reaper** (Ironclad Attacks, so Infernal
+  Blade loses both) and **Bandage Up** (colorless, leaving 34 of 35). The rest of
+  the wiki's list is other characters' cards and event-only cards, which are not
+  in the pools at all. Verified against the decompiled game, not the wiki text.
+- **Discovery draws its three WITHOUT REPLACEMENT (Rob, 2026-09-19).** StS
+  re-rolls until it has three distinct ids. That has the same distribution but a
+  *variable* number of draws, and a variable draw count shifts every later roll
+  in the stream. Three draws without replacement gives an identical offer with a
+  fixed cost, which is what keeps replay stable. **A deliberate mechanism
+  divergence with no behavioural difference.**
+- **"Add a card" is not "add it for free."** Jack of All Trades and Magnetism add
+  at full price; only Transmutation, Discovery and Infernal Blade discount what
+  they make. Easy to get wrong from the card text alone.
+- **The cheapest-copy rule (D2 option A) has a sharp edge, and a test found it.**
+  `instance_effective_cost` initially fell back to the id-based `effective_cost`,
+  which scans the hand for a discounted copy — so an *undiscounted* Strike
+  reported 0 because a *different* Strike was free, every copy looked free, and
+  the cheapest-copy search picked an arbitrary one. The fix is a split: one
+  helper for the type-level modifiers (Corruption, Blood for Blood), which
+  neither entry point may re-enter. The migrated "only one copy is free" test
+  caught it.
+- **`Character::free_this_turn` is gone.** The per-card-type counter could say
+  "one copy of this type is free" but never which; the instance override says it
+  exactly. The observation's free-cost plane is now read off the hand's
+  instances, which is also what the player sees — a 0 printed on a specific card.
+- **Task #14 is closed by this batch**, as planned: Infernal Blade now rolls from
+  the class Attack pool and draws from `CardRandom`.

@@ -1937,32 +1937,42 @@ TEST(MetaCards, InfernalBladesDiscountExpiresNextTurn) {
   for (int i = 0; i < 10; ++i) s.draw_pile.push_back(Card{CardId::Strike});
 
   ASSERT_TRUE(play(s, CardId::InfernalBlade));
-  const CardId got = s.current_hand[0].card_id;
-  ASSERT_EQ(effective_cost(s, got), 0);
-  ASSERT_GT(s.character.free_this_turn.count(got), 0u);
+  const Card granted = s.current_hand[0];
+  ASSERT_EQ(instance_effective_cost(s, granted), 0);
+  ASSERT_EQ(granted.cost_duration, CostDuration::ThisTurn);
 
   ASSERT_TRUE(apply_action(s, kEndTurnAction));
 
-  // The DISCOUNT is gone. Asserted on the free-list rather than on
+  // The DISCOUNT is gone. Asserted on the card's own override rather than on
   // effective_cost returning the printed cost: a randomly-picked card may
   // legitimately still be discounted by something else (Blood for Blood costs
   // less per HP-loss event, and the enemy attacks during the end-turn), which
   // is engine-correct but would fail a printed-cost comparison. This is a real
   // platform-dependent failure the macOS run missed and Linux CI caught.
-  EXPECT_EQ(s.character.free_this_turn.count(got), 0u);
+  for (const Card& c : s.current_hand) {
+    if (c.card_id == granted.card_id) {
+      EXPECT_EQ(c.cost_override, kNoCostOverride);
+      EXPECT_EQ(c.cost_duration, CostDuration::None);
+    }
+  }
 }
 
 TEST(MetaCards, InfernalBladesDiscountAppliesOnlyToTheGeneratedCard) {
-  // The free-cost flag is keyed per card type, so an unrelated card in hand
-  // keeps its printed cost.
+  // The discount rides the generated COPY, so an unrelated card in hand keeps
+  // its printed cost. Bash is not in the generatable pool (it is a starter), so
+  // the roll cannot collide with it — which is what lets this assert plainly
+  // rather than guarding on the roll as the free-list version had to.
   CombatState s = make_minimal_state(0);
   s.character.energy = 3;
   s.current_hand.push_back(Card{CardId::Bash});  // cost 2, not generated
 
   ASSERT_TRUE(play(s, CardId::InfernalBlade));
 
-  if (s.character.free_this_turn.count(CardId::Bash) == 0) {
-    EXPECT_EQ(effective_cost(s, CardId::Bash), 2);
+  EXPECT_EQ(effective_cost(s, CardId::Bash), 2);
+  for (const Card& c : s.current_hand) {
+    if (c.card_id == CardId::Bash) {
+      EXPECT_EQ(c.cost_override, kNoCostOverride);
+    }
   }
 }
 
@@ -2029,7 +2039,10 @@ TEST(WikiAudit, InfernalBladeDiscountIsConsumedByOnePlay) {
   s.character.energy = 5;
   s.current_hand.push_back(Card{CardId::Strike});
   s.current_hand.push_back(Card{CardId::Strike});
-  s.character.free_this_turn[CardId::Strike] = 1;
+  // Exactly ONE copy is discounted, which is now expressible: the override is
+  // on the instance rather than on the card type.
+  s.current_hand.back().cost_override = 0;
+  s.current_hand.back().cost_duration = CostDuration::ThisTurn;
 
   const int start = s.character.energy;
   ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));

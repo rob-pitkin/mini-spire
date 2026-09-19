@@ -31,17 +31,17 @@ int count_strikes_in_deck(const CombatState& state) {
 
 }  // namespace
 
-int effective_cost(const CombatState& state, CardId card) {
+namespace {
+
+// The cost modifiers that depend only on the card TYPE — no instance state.
+//
+// Split out deliberately. Folding the instance override into this would make
+// the two public entry points mutually recursive in effect: asking an
+// undiscounted copy what it costs would find a DIFFERENT discounted copy in
+// hand and answer 0, so every copy would look free and the cheapest-copy search
+// below would pick an arbitrary one. A real test caught exactly that.
+int type_modified_cost(const CombatState& state, CardId card) {
   const CardData& data = CARD_DATABASE.at(card);
-  if (data.cost == kXCost) return kXCost;  // "spend all" — not a number
-
-  // Infernal Blade's generated attack costs 0 for the rest of this turn.
-  // Checked first: a free card is free regardless of the other modifiers.
-  auto free_it = state.character.free_this_turn.find(card);
-  if (free_it != state.character.free_this_turn.end() && free_it->second > 0) {
-    return 0;
-  }
-
   // Corruption: Skills cost 0.
   if (data.type == CardType::Skill &&
       get_status(state.character.powers, Power::Corruption) > 0) {
@@ -54,6 +54,35 @@ int effective_cost(const CombatState& state, CardId card) {
     return reduced < 0 ? 0 : reduced;
   }
   return data.cost;
+}
+
+}  // namespace
+
+int instance_effective_cost(const CombatState& state, const Card& card) {
+  const CardData& data = CARD_DATABASE.at(card.card_id);
+  if (data.cost == kXCost) return kXCost;  // "spend all" — not a number
+  // A per-instance override wins outright: "this card costs 0" is a statement
+  // about THIS copy, and it is what the player reads off that card
+  // (colorless-effects.md D2). It never consults other copies.
+  if (card.cost_override != kNoCostOverride) return card.cost_override;
+  return type_modified_cost(state, card.card_id);
+}
+
+int effective_cost(const CombatState& state, CardId card) {
+  const CardData& data = CARD_DATABASE.at(card);
+  if (data.cost == kXCost) return kXCost;  // "spend all" — not a number
+
+  // The CHEAPEST copy in hand decides what "play this card" costs, because the
+  // action names a CardId rather than a copy and the engine plays the cheapest
+  // (colorless-effects.md D2, option A). With no copy in hand — the TUI asking
+  // about a card in a pile — this is the type's cost.
+  int best = -1;
+  for (const Card& c : state.current_hand) {
+    if (c.card_id != card) continue;
+    const int cost = instance_effective_cost(state, c);
+    if (best < 0 || cost < best) best = cost;
+  }
+  return best >= 0 ? best : type_modified_cost(state, card);
 }
 
 bool block_resets_at_turn_start(const CombatState& state) {

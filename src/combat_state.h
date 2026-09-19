@@ -57,16 +57,12 @@ struct Character {
   // Battle Trance's "no further draws this turn" is Debuff::NoDraw, not a field
   // here (ROB-40 B2) — StS renders it as a debuff icon.
   //
-  // Cards that cost 0 for the rest of THIS turn (Infernal Blade's generated
-  // attack), keyed by card type and consumed one play at a time (ROB-85).
-  //
-  // This comment used to claim "a duplicate of the same type would be
-  // indistinguishable to the player anyway". That is false and was the
-  // assumption ROB-40 was opened to fix: the discounted copy displays cost 0
-  // while its siblings display their printed cost, so a human tells them apart
-  // at a glance. The counter is a faithful model of "exactly one copy is free"
-  // but cannot say WHICH — see docs/design/observation-space.md §4.1.
-  std::unordered_map<CardId, int> free_this_turn;
+  // "This card costs 0" is NOT tracked here. It was, as a per-card-type counter
+  // (`free_this_turn`), which could say "one copy of this type is free" but
+  // never WHICH copy. Since colorless-effects.md D2 the discount lives on the
+  // Card INSTANCE (`cost_override` + `cost_duration`), because Madness
+  // discounts one copy and Enlightenment only the cards in hand right now —
+  // neither is expressible per type.
 };
 
 struct CombatState {
@@ -81,6 +77,14 @@ struct CombatState {
   Outcome outcome;
   std::mt19937 rng;
   uint32_t seed;
+
+  // In-combat card GENERATION draws from its own generator, never from `rng`
+  // (v2-spec.md §3.5, RngStream::CardRandom). StS keeps `cardRandomRng`
+  // separate for a reason a player can observe: because almost nothing advances
+  // it, an Attack Potion offers the same cards whether drunk on turn 1 or turn
+  // 5 — but playing an Infernal Blade first DOES change them. Sharing the
+  // combat stream would break both halves of that.
+  std::mt19937 card_rng;
 
   // Suspended mid-card choice (Stage 4c). `pending_choice.active()` means the
   // drain stopped to await the agent; the not-yet-executed actions live in
