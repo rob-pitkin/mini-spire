@@ -1515,6 +1515,22 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
                                                 : CostDuration::ThisTurn;
       }
       break;
+    case ActionKind::PlaceOnBottomOfDraw: {
+      // front() is the BOTTOM: draw_one pops the back. Cards placed in
+      // selection order therefore come back in that order, which is what StS
+      // describes — the card chosen first is drawn first.
+      //
+      // The discount only marks a card whose PRINTED cost is above 0, exactly
+      // as StS guards it: a card that already costs 0 gains nothing and must
+      // not come back marked as discounted.
+      Card moved = a.as_card();
+      if (CARD_DATABASE.at(moved.card_id).cost > 0) {
+        moved.cost_override = 0;
+        moved.cost_duration = CostDuration::UntilPlayed;
+      }
+      state.draw_pile.insert(state.draw_pile.begin(), moved);
+      break;
+    }
     case ActionKind::ArmBomb:
       // A fuse starts at its full length and the end-of-turn tick walks it
       // down, so a Bomb played this turn goes off at the end of the third —
@@ -1811,6 +1827,12 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // (e.g. Exhume with an empty exhaust pile). No pause, drain continues.
       PendingChoice pc = build_choice(state, requested, a.card);
       pc.copies = CARD_DATABASE.at(a.card).choice_copies;  // Dual Wield+ = 2
+      // Multi-select (Purity, Forethought+): the choice stays open for several
+      // picks, and Decline means "done" — so it is always optional, which also
+      // keeps the single-option auto-resolve below from stealing a pick the
+      // agent might not want to make.
+      pc.max_picks = CARD_DATABASE.at(a.card).choice_max_picks;
+      if (pc.max_picks > 1) pc.is_optional = true;
       if (pc.num_options == 0) break;
       if (pc.num_options == 1 && !pc.is_optional) {
         // Exactly one legal option: StS applies it without prompting ("if
@@ -1889,23 +1911,16 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
             add_card_to_hand(state, chosen);
           }
           break;
-        case ChoiceKind::HandToBottomOfDraw: {
-          // Forethought: hand -> the BOTTOM of the draw pile, costing 0 until
-          // it is played. front() is the bottom, since draw_one pops the back.
-          //
-          // The discount only applies to a card whose PRINTED cost is above 0,
-          // exactly as StS guards it — a 0-cost card gains nothing and must not
-          // come back marked as discounted.
+        case ChoiceKind::HandToBottomOfDraw:
+          // Forethought: hand -> the BOTTOM of the draw pile. Queued rather
+          // than moved here, so the single pick and Forethought+'s multi-select
+          // take the same path.
           if (take_from_pile(state.current_hand, chosen)) {
-            Card moved = chosen;
-            if (CARD_DATABASE.at(moved.card_id).cost > 0) {
-              moved.cost_override = 0;
-              moved.cost_duration = CostDuration::UntilPlayed;
-            }
-            state.draw_pile.insert(state.draw_pile.begin(), moved);
+            Action place = make_action(ActionKind::PlaceOnBottomOfDraw);
+            place.carry(chosen);
+            q.push_back(place);
           }
           break;
-        }
         case ChoiceKind::DiscoverCard: {
           // Discovery: the chosen card is a fresh copy that costs 0 this turn.
           // It is generated, so it comes from no pile and nothing is removed.
@@ -2093,6 +2108,51 @@ PendingChoice build_choice(const CombatState& state, ChoiceKind kind,
   return pc;
 }
 
+namespace {
+
+// Finish a multi-select: every staged card's effect resolves now, together
+// (colorless-effects.md D1). Resolving per pick instead would let a Dark
+// Embrace draw land between two of Purity's exhausts, so the agent could see —
+// and pick — a card it had not drawn when the choice opened.
+bool finish_multi_select(CombatState& state) {
+  PendingChoice& pc = state.pending_choice;
+  const ChoiceKind kind = pc.kind;
+  const std::array<Card, kMaxMultiSelectPicks> staged = pc.staged;
+  const int count = pc.picks_made;
+
+  // Clear the pause BEFORE resuming, for the same reason the single-pick path
+  // does: the resumed drain may request another choice.
+  pc = PendingChoice{};
+  ActionQueue q = state.suspended_queue;
+  state.suspended_queue = ActionQueue{};
+
+  // Walk backwards because each push_front puts its action ahead of the last,
+  // so the first card picked ends up first in the queue. Forethought+ depends
+  // on that: the card chosen first sits nearest the top of the draw pile and is
+  // drawn first.
+  for (int i = count - 1; i >= 0; --i) {
+    Action a;
+    switch (kind) {
+      case ChoiceKind::ExhaustCardInHand:
+        a = make_action(ActionKind::ExhaustCard);
+        break;
+      case ChoiceKind::HandToBottomOfDraw:
+        a = make_action(ActionKind::PlaceOnBottomOfDraw);
+        break;
+      default:
+        continue;  // no other kind is multi-select today
+    }
+    a.carry(staged[i]);
+    q.push_front(a);
+  }
+
+  ResolutionContext ctx;
+  drain(state, q, ctx);
+  return true;
+}
+
+}  // namespace
+
 bool resolve_choice(CombatState& state, int option_index) {
   PendingChoice& pc = state.pending_choice;
   if (!pc.active()) return false;
@@ -2103,6 +2163,33 @@ bool resolve_choice(CombatState& state, int option_index) {
     if (!pc.is_optional) return false;
   } else if (option_index < 0 || option_index >= pc.num_options) {
     return false;
+  }
+
+  // Multi-select: a pick STAGES a card and the choice stays open. Decline means
+  // "done", and reaching the limit — or running out of options — finishes it.
+  if (pc.is_multi()) {
+    if (!declining) {
+      const Card chosen = pc.options[option_index];
+      // Both multi-select cards pick from the HAND. Staging takes the copy out
+      // now, which is what StS's selection screen shows, and is what keeps a
+      // second copy of the same card selectable: the offer is rebuilt from what
+      // remains, so three Strikes can be picked one at a time.
+      if (!take_from_pile(state.current_hand, chosen)) return false;
+      pc.staged[pc.picks_made++] = chosen;
+      if (pc.picks_made < pc.max_picks) {
+        PendingChoice rebuilt = build_choice(state, pc.kind, pc.source_card);
+        if (rebuilt.num_options > 0) {
+          rebuilt.copies = pc.copies;
+          rebuilt.is_optional = true;
+          rebuilt.max_picks = pc.max_picks;
+          rebuilt.picks_made = pc.picks_made;
+          rebuilt.staged = pc.staged;
+          pc = rebuilt;
+          return true;  // still open — the drain stays suspended
+        }
+      }
+    }
+    return finish_multi_select(state);
   }
 
   const ChoiceKind kind = pc.kind;

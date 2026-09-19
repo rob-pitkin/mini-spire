@@ -88,6 +88,10 @@ enum class ActionKind {
                              // 0 for the rest of the combat
   CapHandCost,    // Enlightenment: every card in hand costing more than 1 drops
                   // to 1, for this turn or (upgraded) the whole combat
+  PlaceOnBottomOfDraw,  // Forethought: the carried card goes UNDER the draw
+                        // pile, costing 0 until played. An action rather than
+                        // an inline move so the multi-select path and the
+                        // single-pick path share one implementation.
   ArmBomb,        // The Bomb: start a fuse at its full length (`card` says
                   // which Bomb, since the two differ only in damage)
   TickBombs,      // The Bomb: end of turn — the slot that has run out fires at

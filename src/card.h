@@ -720,6 +720,16 @@ struct CardData {
   // flag because Bomb and Bomb+ differ only in this number, and each Bomb fires
   // as its own hit.
   int bomb_damage = 0;
+  // --- Colorless effects, batch 6. ---
+  //
+  // How many cards this card's choice may take: Purity's "up to 3",
+  // Forethought+'s "any number". 1 is an ordinary single-select.
+  //
+  // APPENDED, like every block above. This field first went in beside
+  // choice_copies, in the MIDDLE of the struct — which silently shifts every
+  // positional value in the 189 original CARD_DATABASE rows. The compiler
+  // caught it that time; the next one might not.
+  int choice_max_picks = 1;
 };
 
 // What a card becomes when upgraded (Armaments; v2's rest-site smith).
@@ -1065,11 +1075,27 @@ inline constexpr int kNumOptionSlots = kNumCardTypes;
 // state. Options are DEDUPLICATED distinct card types in ascending CardId
 // order — the canonical ordering is part of the public interface, since slot
 // indices are actions.
+// How many cards one choice may take. Purity+ takes 5; Forethought+ is "any
+// number", which the hand limit bounds.
+inline constexpr int kMaxMultiSelectPicks = 10;
+
 struct PendingChoice {
   ChoiceKind kind = ChoiceKind::None;
   CardId source_card = CardId::Strike;  // the card that caused the pause
   bool is_optional = false;             // may the agent decline?
   int copies = 1;                       // Dual Wield+ adds 2
+  // Multi-select (colorless-effects.md D1): the choice stays open for up to
+  // `max_picks` SEQUENTIAL single picks, and Decline means "done" — which is
+  // why a multi-select choice is always optional.
+  //
+  // A picked card is STAGED: it leaves its pile immediately, which is what StS
+  // shows (a selected card lifts out of the hand) and is what makes "it leaves
+  // the offer" fall out even when you hold three Strikes and pick two. Every
+  // staged card's effect resolves TOGETHER at the finish, so a Dark Embrace
+  // draw can never land between two picks.
+  int max_picks = 1;
+  int picks_made = 0;
+  std::array<Card, kMaxMultiSelectPicks> staged{};
   int num_options = 0;
   // Card INSTANCES, not just ids: two Rampages at different bonuses are
   // genuinely different choices, so they occupy separate slots (only truly
@@ -1077,6 +1103,7 @@ struct PendingChoice {
   std::array<Card, kNumOptionSlots> options{};
 
   bool active() const { return kind != ChoiceKind::None; }
+  bool is_multi() const { return max_picks > 1; }
 };
 
 // The upgraded form of `id`, or `id` itself if it cannot be upgraded. Total —
@@ -1584,9 +1611,13 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
        d.requests_choice = ChoiceKind::HandToBottomOfDraw;
        return d;
      }()},
+    // Forethought+: "any number", so the same multi-select as Purity with the
+    // hand limit as its bound. The ORDER of selection sets the order at the
+    // bottom of the draw pile — the card picked first is drawn first.
     {CardId::ForethoughtPlus, [] {
        CardData d = colorless("Forethought+", 0, CardType::Skill);
-       d.unplayable = true;
+       d.requests_choice = ChoiceKind::HandToBottomOfDraw;
+       d.choice_max_picks = kMaxMultiSelectPicks;
        return d;
      }()},
 
@@ -1697,20 +1728,25 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
        return d;
      }()},
 
-    // Purity: "Exhaust up to 3 cards in your hand. Exhaust."
+    // Purity: "Exhaust up to 3 cards in your hand. Exhaust." The upgrade takes
+    // up to 5.
     //
-    // UNPLAYABLE: "up to N" is a multi-select with an optional count, which
-    // §9 defers — the choice machinery answers one option at a time.
+    // "Up to" is a multi-select, built as sequential single picks (D1): each
+    // pick stages a card, Decline means "done", and all of them exhaust
+    // together at the finish. StS passes "any number, may pick zero", so it
+    // prompts even when the hand is smaller than the limit.
     {CardId::Purity, [] {
        CardData d = colorless("Purity", 0, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.requests_choice = ChoiceKind::ExhaustCardInHand;
+       d.choice_max_picks = 3;
        return d;
      }()},
     {CardId::PurityPlus, [] {
        CardData d = colorless("Purity+", 0, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.requests_choice = ChoiceKind::ExhaustCardInHand;
+       d.choice_max_picks = 5;
        return d;
      }()},
 

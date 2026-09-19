@@ -781,14 +781,9 @@ TEST(Colorless, AllTwentyUncommonsArePresentAndConsistent) {
 // The unplayable ones are exactly the ones whose machinery is missing — not a
 // drifting set. If a card leaves this list, its effect landed; if one joins,
 // something regressed.
-TEST(Colorless, PurityIsTheLastUnplayableUncommon) {
-  const CardId expected[] = {CardId::Purity};
-
-  for (CardId id : expected) {
-    EXPECT_TRUE(CARD_DATABASE.at(id).unplayable)
-        << card_name(id) << " became playable — update this list";
-  }
-  for (CardId id : {CardId::BandageUp, CardId::Blind, CardId::DarkShackles,
+TEST(Colorless, EveryUncommonIsPlayable) {
+  for (CardId id : {CardId::Purity, CardId::BandageUp, CardId::Blind,
+                    CardId::DarkShackles,
                     CardId::DeepBreath, CardId::Discovery,
                     CardId::DramaticEntrance, CardId::Enlightenment,
                     CardId::Finesse, CardId::FlashOfSteel,
@@ -1448,9 +1443,10 @@ TEST(Colorless, ForethoughtDoesNotDiscountAFreeCard) {
 }
 
 // The + is "any number", a multi-select, which waits for batch 6.
-TEST(Colorless, ForethoughtPlusIsStillMultiSelectAndUnplayable) {
-  EXPECT_TRUE(CARD_DATABASE.at(CardId::ForethoughtPlus).unplayable);
+TEST(Colorless, BothForethoughtsArePlayable) {
   EXPECT_FALSE(CARD_DATABASE.at(CardId::Forethought).unplayable);
+  EXPECT_FALSE(CARD_DATABASE.at(CardId::ForethoughtPlus).unplayable)
+      << "the multi-select landed in batch 6";
 }
 
 // ====================== batch 5: power triggers and the delayed effect
@@ -1475,6 +1471,28 @@ TEST(Colorless, PanacheFiresOnEveryFifthCardPlayed) {
   EXPECT_EQ(s.enemies[0].hp, hp_before - 10) << "the fifth card sets it off";
   EXPECT_EQ(s.character.panache_counter, kPanacheCardsPerTrigger)
       << "the countdown rolls back to 5";
+}
+
+// Playing Panache is itself one of the five (Rob, 2026-09-19, from play). It
+// falls out of the ordering — the power lands, then the card-played hook fires
+// — so this pins it against a reordering.
+TEST(Colorless, PanacheCountsItsOwnPlay) {
+  CombatState s = fight_holding(CardId::Panache);
+  for (int i = 0; i < 4; ++i) s.current_hand.push_back(Card{CardId::Defend});
+  const int hp_before = s.enemies[0].hp;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Panache)));
+  EXPECT_EQ(s.character.panache_counter, kPanacheCardsPerTrigger - 1)
+      << "its own play is the first of the five";
+
+  for (int i = 0; i < 3; ++i) {
+    ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
+  }
+  EXPECT_EQ(s.enemies[0].hp, hp_before) << "four cards in all is not five";
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
+  EXPECT_EQ(s.enemies[0].hp, hp_before - 10)
+      << "the fifth card, counting Panache itself";
 }
 
 TEST(Colorless, PanacheCountdownRestartsEachTurn) {
@@ -1644,6 +1662,176 @@ TEST(Colorless, TwoBombsInOneTurnBothFire) {
   EXPECT_EQ(s.enemies[0].hp, before - 90) << "40 and 50, as two separate hits";
 }
 
+// ============================ batch 6: multi-select as sequential picks
+
+TEST(Colorless, PurityExhaustsUpToThreeChosenCards) {
+  CombatState s = fight_holding(CardId::Purity);
+  for (int i = 0; i < 4; ++i) s.current_hand.push_back(Card{CardId::Defend});
+  s.exhaust_pile.clear();
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Purity)));
+  ASSERT_TRUE(s.pending_choice.active());
+  EXPECT_TRUE(s.pending_choice.is_multi());
+  EXPECT_EQ(s.pending_choice.max_picks, 3);
+  EXPECT_TRUE(s.pending_choice.is_optional) << "Decline means done";
+
+  ASSERT_TRUE(resolve_choice(s, 0));
+  EXPECT_TRUE(s.pending_choice.active()) << "still open after one pick";
+  ASSERT_TRUE(resolve_choice(s, 0));
+  ASSERT_TRUE(resolve_choice(s, 0));
+  EXPECT_FALSE(s.pending_choice.active()) << "the third pick finishes it";
+
+  int exhausted_defends = 0;
+  for (const Card& c : s.exhaust_pile) {
+    if (c.card_id == CardId::Defend) ++exhausted_defends;
+  }
+  EXPECT_EQ(exhausted_defends, 3);
+  EXPECT_EQ(s.current_hand.size(), 1u) << "one Defend is left";
+}
+
+// The whole point of D1: nothing resolves until the choice finishes, so a Dark
+// Embrace draw cannot arrive between two picks and offer a card that was not
+// in hand when the choice opened.
+TEST(Colorless, PurityStagesPicksAndExhaustsThemOnlyAtTheEnd) {
+  CombatState s = fight_holding(CardId::Purity);
+  for (int i = 0; i < 3; ++i) s.current_hand.push_back(Card{CardId::Defend});
+  s.exhaust_pile.clear();
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Purity)));
+
+  ASSERT_TRUE(resolve_choice(s, 0));
+
+  EXPECT_TRUE(s.exhaust_pile.empty())
+      << "a staged card has left the hand but has NOT been exhausted yet";
+  EXPECT_EQ(s.pending_choice.picks_made, 1);
+
+  ASSERT_TRUE(resolve_choice(s, kDeclineChoice));
+  int exhausted_defends = 0;
+  for (const Card& c : s.exhaust_pile) {
+    if (c.card_id == CardId::Defend) ++exhausted_defends;
+  }
+  EXPECT_EQ(exhausted_defends, 1) << "and now it resolves";
+}
+
+TEST(Colorless, PurityTakesFewerWhenYouDecline) {
+  CombatState s = fight_holding(CardId::Purity);
+  for (int i = 0; i < 3; ++i) s.current_hand.push_back(Card{CardId::Defend});
+  s.exhaust_pile.clear();
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Purity)));
+
+  ASSERT_TRUE(resolve_choice(s, 0));
+  ASSERT_TRUE(resolve_choice(s, kDeclineChoice));
+
+  EXPECT_FALSE(s.pending_choice.active());
+  int exhausted_defends = 0;
+  for (const Card& c : s.exhaust_pile) {
+    if (c.card_id == CardId::Defend) ++exhausted_defends;
+  }
+  EXPECT_EQ(exhausted_defends, 1) << "only the one that was picked";
+  EXPECT_EQ(s.current_hand.size(), 2u);
+}
+
+// Options dedupe by identity, so three Strikes are ONE option — and picking it
+// must stay legal while copies remain. That is what staging buys.
+TEST(Colorless, PurityCanPickTheSameCardTwice) {
+  CombatState s = fight_holding(CardId::Purity);
+  for (int i = 0; i < 3; ++i) s.current_hand.push_back(Card{CardId::Strike});
+  s.exhaust_pile.clear();
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Purity)));
+  ASSERT_EQ(s.pending_choice.num_options, 1) << "three Strikes, one option";
+
+  ASSERT_TRUE(resolve_choice(s, 0));
+  ASSERT_TRUE(s.pending_choice.active());
+  EXPECT_EQ(s.pending_choice.num_options, 1) << "two copies still there";
+  ASSERT_TRUE(resolve_choice(s, 0));
+  ASSERT_TRUE(resolve_choice(s, kDeclineChoice));
+
+  int exhausted = 0;
+  for (const Card& c : s.exhaust_pile) {
+    if (c.card_id == CardId::Strike) ++exhausted;
+  }
+  EXPECT_EQ(exhausted, 2);
+}
+
+TEST(Colorless, PurityPlusTakesUpToFive) {
+  CombatState s = fight_holding(CardId::PurityPlus);
+  for (int i = 0; i < 6; ++i) s.current_hand.push_back(Card{CardId::Defend});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::PurityPlus)));
+
+  EXPECT_EQ(s.pending_choice.max_picks, 5);
+  for (int i = 0; i < 5; ++i) ASSERT_TRUE(resolve_choice(s, 0));
+  EXPECT_FALSE(s.pending_choice.active()) << "the fifth pick finishes it";
+  EXPECT_EQ(s.current_hand.size(), 1u);
+}
+
+// The choice closes on its own when nothing is left to pick.
+TEST(Colorless, PurityFinishesWhenTheHandRunsOut) {
+  CombatState s = fight_holding(CardId::Purity);
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.exhaust_pile.clear();
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Purity)));
+
+  ASSERT_TRUE(resolve_choice(s, 0));
+
+  EXPECT_FALSE(s.pending_choice.active()) << "no cards left to offer";
+  // Purity exhausts ITSELF as well, and its own pile move was deferred until
+  // the choice finished — so the pile holds the picked Defend and Purity.
+  int exhausted_defends = 0;
+  for (const Card& c : s.exhaust_pile) {
+    if (c.card_id == CardId::Defend) ++exhausted_defends;
+  }
+  EXPECT_EQ(exhausted_defends, 1);
+}
+
+// ------------------------------------------------------------ Forethought+
+
+TEST(Colorless, ForethoughtPlusPutsEveryPickOnTheBottomInSelectionOrder) {
+  CombatState s = fight_holding(CardId::ForethoughtPlus);
+  s.draw_pile.clear();
+  s.current_hand.push_back(Card{CardId::Bash});
+  s.current_hand.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::ForethoughtPlus)));
+  ASSERT_TRUE(s.pending_choice.active());
+  EXPECT_TRUE(s.pending_choice.is_multi());
+
+  // Pick Bash first, then Strike.
+  int bash_index = -1;
+  for (int i = 0; i < s.pending_choice.num_options; ++i) {
+    if (s.pending_choice.options[i].card_id == CardId::Bash) bash_index = i;
+  }
+  ASSERT_GE(bash_index, 0);
+  ASSERT_TRUE(resolve_choice(s, bash_index));
+  // The second pick empties the hand, so the choice finishes on its own —
+  // there is nothing left to offer and no Decline to give.
+  ASSERT_TRUE(resolve_choice(s, 0));
+  EXPECT_FALSE(s.pending_choice.active());
+
+  ASSERT_EQ(s.draw_pile.size(), 2u);
+  // back() is the top of the pile, so the card picked FIRST is drawn first.
+  EXPECT_EQ(s.draw_pile.back().card_id, CardId::Bash);
+  EXPECT_EQ(s.draw_pile.front().card_id, CardId::Strike);
+}
+
+TEST(Colorless, ForethoughtPlusMarksEveryPickFreeUntilPlayed) {
+  CombatState s = fight_holding(CardId::ForethoughtPlus);
+  s.draw_pile.clear();
+  // Two Bashes: the discount only marks a card whose PRINTED cost is above 0,
+  // so a 0-cost card in this hand would correctly get no override and the
+  // assertion below would be testing the wrong thing.
+  s.current_hand.push_back(Card{CardId::Bash});
+  s.current_hand.push_back(Card{CardId::Bash});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::ForethoughtPlus)));
+  ASSERT_TRUE(resolve_choice(s, 0));
+  ASSERT_TRUE(resolve_choice(s, 0));  // empties the hand, so this finishes it
+
+  ASSERT_EQ(s.draw_pile.size(), 2u);
+  for (const Card& c : s.draw_pile) {
+    EXPECT_EQ(c.cost_override, 0) << card_name(c.card_id);
+    EXPECT_EQ(c.cost_duration, CostDuration::UntilPlayed) << card_name(c.card_id);
+  }
+}
+
 // ================================================ all 35, as a complete block
 
 // The pools are the authority on what exists. sts_lightspeed's
@@ -1695,7 +1883,7 @@ TEST(Colorless, TheTwoPoolsAreDisjoint) {
 // Of the 35, these are the ones whose effects are wired. The rest hold correct
 // data and a stable action index and are masked out. A card leaving this list
 // means an effect landed; one joining means something regressed.
-TEST(Colorless, ExactlyThirtyFourOfThirtyFiveArePlayable) {
+TEST(Colorless, AllThirtyFiveArePlayable) {
   const CardId playable[] = {
       CardId::BandageUp,     CardId::Blind,        CardId::DarkShackles,
       CardId::DeepBreath,    CardId::DramaticEntrance, CardId::Finesse,
@@ -1715,7 +1903,9 @@ TEST(Colorless, ExactlyThirtyFourOfThirtyFiveArePlayable) {
       CardId::SecretTechnique, CardId::SecretWeapon, CardId::Forethought,
       // Batch 5: power triggers and the delayed effect.
       CardId::Panache, CardId::SadisticNature, CardId::Mayhem,
-      CardId::TheBomb};
+      CardId::TheBomb,
+      // Batch 6: multi-select. The block is complete.
+      CardId::Purity};
 
   int wired = 0;
   for (const std::vector<CardId>* pool :

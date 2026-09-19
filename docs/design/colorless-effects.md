@@ -11,12 +11,18 @@ colorless effects → relic effects → potions → events.
 
 ## 1. Scope
 
-The colorless vocabulary (35 cards, 70 ids) is in `CARD_DATABASE`. **22 of the
-35 are marked `unplayable` because their effect is not implemented**, not
-because of a game rule. For curses, `unplayable` *is* the game rule; they are
-out of scope here.
+The colorless vocabulary (35 cards, 70 ids) is in `CARD_DATABASE`. When this
+document was written, **22 of the 35 were marked `unplayable` because their
+effect was not implemented**, not because of a game rule. For curses,
+`unplayable` *is* the game rule; they are out of scope here.
 
-| pool | unplayable |
+**✅ ALL 35 ARE NOW PLAYABLE** (batches 1–6). The `unplayable` flag no longer
+appears on any colorless card, and `Colorless.AllThirtyFiveArePlayable` fails if
+one comes back.
+
+The 22 that had to be built, by pool:
+
+| pool | was unplayable |
 |---|---|
 | uncommon (8) | Dark Shackles, Discovery, Enlightenment, Forethought, Jack of All Trades, Madness, Panic Button, Purity |
 | rare (14) | Apotheosis, Chrysalis, Hand of Greed, Magnetism, Mayhem, Metamorphosis, Panache, Sadistic Nature, Secret Technique, Secret Weapon, The Bomb, Thinking Ahead, Transmutation, Violence |
@@ -202,7 +208,7 @@ machinery lands with the cards that need it.
 | 3 ✅ | Madness, Enlightenment, Chrysalis, Metamorphosis | the rest of D2 |
 | 4 ✅ | Secret Technique, Secret Weapon, Forethought | new choice sources |
 | 5 ✅ | Panache, Sadistic Nature, Mayhem, The Bomb | power triggers; D3 |
-| 6 | Purity, Forethought+ | D1 |
+| 6 ✅ | Purity, Forethought+ | D1 |
 
 **After batch 6:** stock the shop's two colorless slots (`v2-spec.md` §4.3), wire
 Toolbox, and update `relic-effects.md` §7.
@@ -335,12 +341,12 @@ Toolbox, and update `relic-effects.md` §7.
   The countdown lives on `Character::panache_counter`, resets every turn, and is
   decremented in the **card-played executor** rather than the power registry —
   that registry pushes actions and never mutates state.
-- ⚠️ **Open: does playing Panache itself count toward the first five?** Our
-  order says yes (the power is applied, then the card-played hook fires). StS's
-  action order looks the same — `use()` queues the power before `UseCardAction`
-  triggers `onUseCard` — but no source states it outright, and the wiki's note
-  ("the counter begins at 5") is about earlier cards, not this one. The test
-  drives the counter directly so it does not depend on the answer.
+- **Playing Panache itself counts as one of the five (Rob, 2026-09-19, from
+  play).** Our ordering gives that for free — the power is applied, then the
+  card-played hook fires — and StS's action order matches: `use()` queues the
+  power before `UseCardAction` triggers `onUseCard`. No written source states
+  it, which is why it was carried as an open question until Rob ruled; it now
+  has its own test, so a reordering cannot change it silently.
 - **Mayhem is Havoc as a recurring power, minus the Exhaust**, and it fires
   BEFORE the turn's draw, so it plays the card already on top. The two share one
   executor branch with a single flag between them.
@@ -349,3 +355,23 @@ Toolbox, and update `relic-effects.md` §7.
   previous turn is still standing and absorbs part of it. That is correct, and
   it made three of my tests wrong: they expected the full 40 and, in two cases,
   negative HP on an enemy the blast killed.
+
+### Batch 6
+
+- **STAGING is what makes sequential picks work.** A picked card leaves the hand
+  immediately and its effect waits for the finish. That is what StS's selection
+  screen shows (a chosen card lifts out of the hand), and it solves the problem
+  deduplicated options create: three Strikes are ONE option, so "the picked card
+  leaves the offer" would wrongly remove all three. With staging, the offer is
+  rebuilt from what remains and the same card stays pickable while copies last.
+- **A multi-select can finish without a Decline.** When the offer empties — a
+  hand of two into Forethought+ — the choice closes on its own. Two of my tests
+  assumed Decline was always available and got `false` from `resolve_choice`.
+- **Purity exhausts itself too**, and its own pile move is deferred until the
+  choice finishes, so the exhaust pile holds the picks *and* Purity. Two more
+  of my tests counted that wrongly; they now count the picked cards by id.
+- ⚠️ **A `CardData` field must be APPENDED, never inserted.** `choice_max_picks`
+  first went in beside `choice_copies`, in the middle of the struct — which
+  shifts every positional value in the 189 original `CARD_DATABASE` rows. The
+  compiler caught it this time, by a type mismatch several fields later. It
+  would not always.
