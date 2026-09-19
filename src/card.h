@@ -612,6 +612,26 @@ struct CardData {
   int max_hp_loss_on_removal = 0;
   // Curse of the Bell: cannot be removed or transformed, by any means.
   bool cannot_be_removed = false;
+  // --- Colorless effects, batch 1 (docs/design/colorless-effects.md §5).
+  // Appended, never inserted, for the same reason as every block above. ---
+  //
+  // Apotheosis: upgrade every upgradable card in hand, draw, discard AND
+  // exhaust. Never itself (the card is in flight while it resolves) and never
+  // cards generated afterwards.
+  bool upgrades_all_piles = false;
+  // Violence: move `draw_pile_to_hand_count` random cards of this type from the
+  // draw pile into the hand. Fewer matches than asked for simply yields fewer.
+  int draw_pile_to_hand_count = 0;
+  CardType draw_pile_to_hand_type = CardType::Attack;
+  // Dark Shackles: the target loses this much Strength for the rest of the
+  // turn. StS models "for the turn" as a permanent loss PLUS a Shackled power
+  // that hands it back at the end of the enemy's turn — and it applies Shackled
+  // only when the target has no Artifact, since a charge negates the loss and
+  // leaves nothing to give back.
+  int enemy_strength_loss_for_turn = 0;
+  // Hand of Greed: gold when this card's damage is FATAL. Recorded on the
+  // combat state; RunState writes it back (colorless-effects.md D5).
+  int gold_on_kill = 0;
 };
 
 // What a card becomes when upgraded (Armaments; v2's rest-site smith).
@@ -1329,26 +1349,24 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
        return d;
      }()},
 
-    // Dark Shackles: "Enemy loses 9 Strength this turn. Exhaust."
+    // Dark Shackles: "Enemy loses 9 Strength this turn. Exhaust." The upgrade
+    // deepens the loss to 15.
     //
-    // UNPLAYABLE for now. Temporary Strength loss on an ENEMY needs the
-    // enemy-side analogue of Power::StrengthDown — the enemy restores the
-    // Strength at the end of its own turn — and fire_enemy_power_hooks handles
-    // only Ritual and Metallicize today. Data and action index are correct; the
-    // effect is not wired, so the mask keeps it unplayable rather than letting
-    // it resolve as a no-op.
+    // "This turn" is a Strength loss plus Power::Shackled, which returns it at
+    // the end of the enemy's turn — StS's own two-power model, and the reason
+    // the give-back is skipped when the target holds Artifact.
     {CardId::DarkShackles, [] {
        CardData d =
            colorless("Dark Shackles", 0, CardType::Skill, CardTarget::Enemy);
        d.exhaust = true;
-       d.unplayable = true;
+       d.enemy_strength_loss_for_turn = 9;
        return d;
      }()},
     {CardId::DarkShacklesPlus, [] {
        CardData d =
            colorless("Dark Shackles+", 0, CardType::Skill, CardTarget::Enemy);
        d.exhaust = true;
-       d.unplayable = true;
+       d.enemy_strength_loss_for_turn = 15;
        return d;
      }()},
 
@@ -1574,21 +1592,22 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     // Panic Button: "Gain 30 Block. You cannot gain Block from cards for 2
     // turns. Exhaust."
     //
-    // UNPLAYABLE: the drawback needs a 2-turn "no block FROM CARDS" state.
-    // Shipping the 30 Block without it would be a strictly-better card, which
-    // is worse than shipping nothing — the block half is the upside.
+    // The drawback is Debuff::NoBlock, applied AFTER this card's own block is
+    // queued — so Panic Button keeps its 30 and the ban starts immediately
+    // afterwards. 2 turns counts the turn it is played, which is what the
+    // debuff tick gives for free.
     {CardId::PanicButton, [] {
        CardData d = colorless("Panic Button", 0, CardType::Skill);
        d.block = 30;
+       d.applies_debuffs = {{Debuff::NoBlock, 2, Target::Character}};
        d.exhaust = true;
-       d.unplayable = true;
        return d;
      }()},
     {CardId::PanicButtonPlus, [] {
        CardData d = colorless("Panic Button+", 0, CardType::Skill);
        d.block = 40;
+       d.applies_debuffs = {{Debuff::NoBlock, 2, Target::Character}};
        d.exhaust = true;
-       d.unplayable = true;
        return d;
      }()},
 
@@ -1642,43 +1661,43 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
     // Apotheosis: "Upgrade ALL your cards for the rest of combat. Exhaust."
     // The upgrade changes only the cost, 2 to 1.
     //
-    // UNPLAYABLE: UpgradeHand exists (Armaments+) but touches only the hand.
-    // This upgrades hand, draw, discard AND exhaust piles, does not upgrade
-    // itself, and does not reach cards generated afterwards — three conditions
-    // a hand-only action does not express.
+    // All four piles, and never itself: the action is queued before this card's
+    // own pile move, so it is still in flight and in no pile when it runs.
+    // Cards generated afterwards are likewise untouched, which falls out of
+    // upgrading once rather than setting a lasting flag.
     {CardId::Apotheosis, [] {
        CardData d = colorless("Apotheosis", 2, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.upgrades_all_piles = true;
        return d;
      }()},
     {CardId::ApotheosisPlus, [] {
        CardData d = colorless("Apotheosis+", 1, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.upgrades_all_piles = true;
        return d;
      }()},
 
     // Hand of Greed: "Deal 20 damage. If Fatal, gain 20 Gold."
     //
-    // UNPLAYABLE, and the reason is STRUCTURAL rather than a missing effect:
-    // gold lives in RunState and combat has no channel to it. Every effect so
-    // far has stayed inside CombatState. Feed's max_hp_on_kill shows the
-    // if-Fatal detection already exists — what is missing is somewhere for the
-    // gold to go. See relic-effects.md for the same shape in Runic Dome, whose
-    // drawback lives in the observation.
+    // The gold is recorded on the combat state and written back by RunState
+    // (colorless-effects.md D5), which is what gives combat a channel to a
+    // run-layer resource without reaching into the run. It goes through the
+    // run's gold-gain path, so Ectoplasm refuses it — but Golden Idol's +25%
+    // does NOT apply, because in StS that bonus is on the reward pile, not on
+    // gainGold.
     {CardId::HandOfGreed, [] {
        CardData d =
            colorless("Hand of Greed", 2, CardType::Attack, CardTarget::Enemy);
        d.damage = 20;
-       d.unplayable = true;
+       d.gold_on_kill = 20;
        return d;
      }()},
     {CardId::HandOfGreedPlus, [] {
        CardData d =
            colorless("Hand of Greed+", 2, CardType::Attack, CardTarget::Enemy);
        d.damage = 25;
-       d.unplayable = true;
+       d.gold_on_kill = 25;
        return d;
      }()},
 
@@ -1697,21 +1716,23 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
      }()},
 
     // Violence: "Put 3 random Attacks from your draw pile into your hand.
-    // Exhaust."
+    // Exhaust." The upgrade pulls 4.
     //
-    // UNPLAYABLE: needs a move of N random cards MATCHING A TYPE from the draw
-    // pile to the hand. Nothing moves cards draw->hand selectively today; the
-    // draw path takes from the top without filtering.
+    // Random from ANYWHERE in the pile, not off the top — so it neither reveals
+    // nor disturbs draw order. A pull that would overflow the hand goes to the
+    // discard pile instead, which is the generic hand-full rule.
     {CardId::Violence, [] {
        CardData d = colorless("Violence", 0, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.draw_pile_to_hand_count = 3;
+       d.draw_pile_to_hand_type = CardType::Attack;
        return d;
      }()},
     {CardId::ViolencePlus, [] {
        CardData d = colorless("Violence+", 0, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.draw_pile_to_hand_count = 4;
+       d.draw_pile_to_hand_type = CardType::Attack;
        return d;
      }()},
 
@@ -1871,18 +1892,23 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
 
     // Thinking Ahead: "Draw 2 cards. Put a card from your hand on top of your
     // draw pile. Exhaust." The upgrade removes the Exhaust.
-    // UNPLAYABLE: the hand-to-top-of-draw choice. ChoiceKind::HandToTopOfDraw
-    // exists, but this card pairs it with a draw that must resolve FIRST — the
-    // card put back can be one just drawn.
+    //
+    // Exactly Warcry's shape, which the engine already resolves in the right
+    // order: the choice queues AFTER the draw, so a just-drawn card is a legal
+    // option. sts_lightspeed implements it as literally DrawCards(2) followed
+    // by Warcry's own action. An earlier comment here claimed this needed new
+    // machinery; it does not.
     {CardId::ThinkingAhead, [] {
        CardData d = colorless("Thinking Ahead", 0, CardType::Skill);
        d.exhaust = true;
-       d.unplayable = true;
+       d.draw = 2;
+       d.requests_choice = ChoiceKind::HandToTopOfDraw;
        return d;
      }()},
     {CardId::ThinkingAheadPlus, [] {
        CardData d = colorless("Thinking Ahead+", 0, CardType::Skill);
-       d.unplayable = true;
+       d.draw = 2;
+       d.requests_choice = ChoiceKind::HandToTopOfDraw;
        return d;
      }()},
 

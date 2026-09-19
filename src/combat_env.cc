@@ -49,6 +49,7 @@ constexpr std::array<Debuff, kNumDebuffs> kObsDebuffOrder = {
     Debuff::Frail,
     Debuff::Entangle,
     Debuff::NoDraw,
+    Debuff::NoBlock,
 };
 static_assert(kObsDebuffOrder.size() == kNumDebuffs,
               "kObsDebuffOrder must list every debuff");
@@ -63,20 +64,21 @@ constexpr std::array<Power, kNumEnemyPowers> kObsEnemyPowerOrder = {
     Power::Metallicize,
     Power::Enrage,
     Power::Artifact,
+    Power::Shackled,
 };
 static_assert(kObsEnemyPowerOrder.size() == kNumEnemyPowers,
               "kObsEnemyPowerOrder must list every enemy power");
 constexpr std::array<Power, kNumPlayerPowers> kObsPlayerPowerOrder = {
     Power::Strength,     Power::Dexterity,     Power::Ritual,
     Power::Metallicize,  Power::Enrage,        Power::Artifact,
-    Power::DemonForm,    Power::Combust,       Power::FeelNoPain,
-    Power::DarkEmbrace,  Power::Evolve,        Power::FireBreathing,
-    Power::Rupture,      Power::Juggernaut,    Power::Rage,
-    Power::FlameBarrier, Power::Brutality,     Power::Berserk,
-    Power::Corruption,   Power::Barricade,     Power::DoubleTap,
-    Power::Vigor,        Power::Thorns,        Power::PlatedArmor,
-    Power::Intangible,   Power::Buffer,        Power::PenNibCharge,
-    Power::StrengthDown,
+    Power::Shackled,     Power::DemonForm,     Power::Combust,
+    Power::FeelNoPain,   Power::DarkEmbrace,   Power::Evolve,
+    Power::FireBreathing, Power::Rupture,      Power::Juggernaut,
+    Power::Rage,         Power::FlameBarrier,  Power::Brutality,
+    Power::Berserk,      Power::Corruption,    Power::Barricade,
+    Power::DoubleTap,    Power::Vigor,         Power::Thorns,
+    Power::PlatedArmor,  Power::Intangible,    Power::Buffer,
+    Power::PenNibCharge, Power::StrengthDown,
 };
 static_assert(kObsPlayerPowerOrder.size() == kNumPlayerPowers,
               "kObsPlayerPowerOrder must list every power");

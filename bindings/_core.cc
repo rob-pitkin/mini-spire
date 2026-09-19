@@ -410,7 +410,8 @@ PYBIND11_MODULE(_core, m) {
       .value("Weak", Debuff::Weak)
       .value("Frail", Debuff::Frail)
       .value("Entangle", Debuff::Entangle)
-      .value("NoDraw", Debuff::NoDraw);
+      .value("NoDraw", Debuff::NoDraw)
+      .value("NoBlock", Debuff::NoBlock);
   py::enum_<Power>(m, "Power")
       .value("Strength", Power::Strength)
       .value("Dexterity", Power::Dexterity)
@@ -418,6 +419,7 @@ PYBIND11_MODULE(_core, m) {
       .value("Metallicize", Power::Metallicize)
       .value("Enrage", Power::Enrage)
       .value("Artifact", Power::Artifact)
+      .value("Shackled", Power::Shackled)
       // Player powers (Stage 4a). Order matters: the Python side derives the
       // obs status labels from __members__, and enum order IS obs order.
       .value("DemonForm", Power::DemonForm)

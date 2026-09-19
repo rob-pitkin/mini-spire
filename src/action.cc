@@ -1,10 +1,10 @@
-#include "action.h"
-
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <vector>
 
+#include "action.h"
+#include "action_types.h"
 #include "query.h"      // can_draw (Battle Trance)
 #include "turn_loop.h"  // compute_attack_damage, HAND_SIZE_LIMIT
 
@@ -264,7 +264,8 @@ int count_living(const CombatState& state) {
 }
 
 // First slot not holding a living enemy (dead corpse OR empty), or -1 if all
-// slots are occupied by the living. A split overwrites a corpse (ROB-61 rule A).
+// slots are occupied by the living. A split overwrites a corpse (ROB-61 rule
+// A).
 int find_free_slot(const CombatState& state) {
   for (int i = 0; i < static_cast<int>(state.enemies.size()); ++i) {
     if (state.enemies[i].hp <= 0) return i;
@@ -364,13 +365,27 @@ void fire_enemy_hooks(CombatState& state, int slot, Hook hook, ActionQueue& q) {
   // analog (player-power hooks) are no-ops here.
   Trigger which;
   switch (hook) {
-    case Hook::CardPlayed:      which = Trigger::OnPlayerSkill; break;
-    case Hook::EnemyDamaged:    which = Trigger::OnDamaged; break;
-    case Hook::OnAnyDamage:     which = Trigger::OnAnyDamage; break;
-    case Hook::EnemyHpThreshold: which = Trigger::HpAtOrBelow; break;
-    case Hook::EnemyDeath:      which = Trigger::OnDeath; break;
-    case Hook::EnemyWake:       which = Trigger::OnWake; break;
-    case Hook::BecameLastEnemy: which = Trigger::BecameLastEnemy; break;
+    case Hook::CardPlayed:
+      which = Trigger::OnPlayerSkill;
+      break;
+    case Hook::EnemyDamaged:
+      which = Trigger::OnDamaged;
+      break;
+    case Hook::OnAnyDamage:
+      which = Trigger::OnAnyDamage;
+      break;
+    case Hook::EnemyHpThreshold:
+      which = Trigger::HpAtOrBelow;
+      break;
+    case Hook::EnemyDeath:
+      which = Trigger::OnDeath;
+      break;
+    case Hook::EnemyWake:
+      which = Trigger::OnWake;
+      break;
+    case Hook::BecameLastEnemy:
+      which = Trigger::BecameLastEnemy;
+      break;
     case Hook::TurnStartPlayer:
     case Hook::TurnEndPlayer:
     case Hook::TurnStartEnemy:
@@ -434,6 +449,23 @@ void fire_enemy_power_hooks(CombatState& state, int slot, Hook hook,
       a.power = Power::Strength;
       a.amount = ritual;
       q.push_back(a);
+    }
+    // Shackled (Dark Shackles): hand the Strength back at the end of the
+    // bearer's turn, then remove the marker — StS's GainStrengthPower. The loss
+    // therefore covers the enemy's own attack this round, which is the point of
+    // the card.
+    const int shackled =
+        get_status(state.enemies[slot].powers, Power::Shackled);
+    if (shackled > 0) {
+      Action give_back = make_action(ActionKind::ApplyPower);
+      give_back.target = slot;
+      give_back.power = Power::Strength;
+      give_back.amount = shackled;
+      q.push_back(give_back);
+      Action clear = make_action(ActionKind::RemovePower);
+      clear.target = slot;
+      clear.power = Power::Shackled;
+      q.push_back(clear);
     }
     return;
   }
@@ -541,8 +573,8 @@ namespace {
 //
 // Shared by two call sites on purpose: the turn boundary fires it for turns 2+,
 // and start_combat's CombatStart sub-phase fires it for turn 1 — because combat
-// start IS turn 1's start. Counting turns in only one of those places is the bug
-// this factoring exists to prevent, and it is exactly how Brimstone and Red
+// start IS turn 1's start. Counting turns in only one of those places is the
+// bug this factoring exists to prevent, and it is exactly how Brimstone and Red
 // Skull ended up misclassified (relic-effects.md §6.3): from the reference's
 // single init call site, a per-turn effect and a once-per-fight effect are
 // indistinguishable.
@@ -1170,8 +1202,8 @@ int pick_random_living_enemy(CombatState& state) {
     if (state.enemies[i].hp > 0) living.push_back(static_cast<int>(i));
   }
   if (living.empty()) return -1;
-  std::uniform_int_distribution<int> pick(
-      0, static_cast<int>(living.size()) - 1);
+  std::uniform_int_distribution<int> pick(0,
+                                          static_cast<int>(living.size()) - 1);
   return living[pick(state.rng)];
 }
 
@@ -1257,10 +1289,23 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       if (a.card_block) {
         // Card block math (Dexterity adds, then Frail reduces 25%, floored —
         // StS order). Applies ONLY to block gained from cards.
-        amount += get_status(state.character.powers, Power::Dexterity);
+        // If Dexterity is negative, we don't subtract block (you can't gain
+        // negative block), the min is 0.
+        amount =
+            amount + get_status(state.character.powers, Power::Dexterity) >= 0
+                ? amount + get_status(state.character.powers, Power::Dexterity)
+                : 0;
         if (get_status(state.character.debuffs, Debuff::Frail) > 0) {
-          amount = static_cast<int>(
-              std::floor(static_cast<float>(amount) * 0.75f));
+          amount =
+              static_cast<int>(std::floor(static_cast<float>(amount) * 0.75f));
+        }
+        // Panic Button's No Block (Debuff::NoBlock) belongs here: it zeroes
+        // block gained FROM CARDS for 2 turns, and this branch is exactly the
+        // card-block path. Everything else — Metallicize, Plated Armor,
+        // Entrench, relics — reaches gain_block with card_block false and must
+        // keep working.
+        if (get_status(state.character.debuffs, Debuff::NoBlock) > 0) {
+          amount = 0;
         }
       }
       gain_block(state, a.target, amount);
@@ -1286,19 +1331,23 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       break;
     case ActionKind::ApplyDebuff:
       if (a.target == kPlayerSlot) {
-        apply_debuff(state, DebuffApplication{a.debuff, a.amount,
-                                              Target::Character}, kNoSlot);
+        apply_debuff(state,
+                     DebuffApplication{a.debuff, a.amount, Target::Character},
+                     kNoSlot);
       } else {
-        apply_debuff(state, DebuffApplication{a.debuff, a.amount,
-                                              Target::Enemy}, a.target);
+        apply_debuff(state,
+                     DebuffApplication{a.debuff, a.amount, Target::Enemy},
+                     a.target);
       }
       break;
     case ActionKind::ApplyPower:
       if (a.target == kPlayerSlot) {
-        apply_power(state, PowerApplication{a.power, a.amount,
-                                            Target::Character}, kNoSlot);
+        apply_power(state,
+                    PowerApplication{a.power, a.amount, Target::Character},
+                    kNoSlot);
         // Combust's second counter: stacks hold the accumulated damage, so the
-        // per-cast 1 HP loss is counted here (Combust + Combust+ = 2 HP, 12 dmg).
+        // per-cast 1 HP loss is counted here (Combust + Combust+ = 2 HP, 12
+        // dmg).
         if (a.power == Power::Combust) state.character.combust_casts += 1;
       } else {
         apply_power(state, PowerApplication{a.power, a.amount, Target::Enemy},
@@ -1316,8 +1365,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       break;
     case ActionKind::RewriteIntent:
       // Only meaningful for a living enemy (a dead one takes no turn).
-      if (valid_enemy_slot(state, a.target) &&
-          state.enemies[a.target].hp > 0) {
+      if (valid_enemy_slot(state, a.target) && state.enemies[a.target].hp > 0) {
         state.enemies[a.target].last_move = a.move;
       }
       break;
@@ -1344,6 +1392,47 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // Armaments+: upgrade every card in hand, in place (Searing Blow bumps
       // its counter rather than swapping id).
       for (Card& c : state.current_hand) upgrade_card_in_place(c);
+      break;
+    case ActionKind::UpgradeAllPiles:
+      // Apotheosis. upgrade_card_in_place already refuses what cannot be
+      // upgraded — already-upgraded cards, Status and Curse — which is exactly
+      // StS's canUpgrade filter, so no second guard is needed here.
+      for (std::vector<Card>* pile :
+           {&state.current_hand, &state.draw_pile, &state.discard_pile,
+            &state.exhaust_pile}) {
+        for (Card& c : *pile) upgrade_card_in_place(c);
+      }
+      break;
+    case ActionKind::DrawPileToHand: {
+      // Violence: N random cards of a type, taken from ANYWHERE in the draw
+      // pile. Selection is without replacement, so a pile holding fewer
+      // matches than asked for simply yields fewer — StS does the same.
+      std::vector<int> matching;
+      for (int i = 0; i < static_cast<int>(state.draw_pile.size()); ++i) {
+        if (CARD_DATABASE.at(state.draw_pile[i].card_id).type == a.card_type) {
+          matching.push_back(i);
+        }
+      }
+      std::shuffle(matching.begin(), matching.end(), state.rng);
+      const int take =
+          std::min(static_cast<int>(matching.size()), std::max(a.amount, 0));
+      std::vector<int> chosen(matching.begin(), matching.begin() + take);
+      // Erase from the highest index down, so the earlier indices stay valid.
+      std::sort(chosen.begin(), chosen.end(),
+                [](int lhs, int rhs) { return lhs > rhs; });
+      for (int idx : chosen) {
+        const Card card = state.draw_pile[static_cast<std::size_t>(idx)];
+        state.draw_pile.erase(state.draw_pile.begin() + idx);
+        // Overflow past the hand limit goes to the discard pile, which is what
+        // add_card_to_hand already does for every other generated card.
+        add_card_to_hand(state, card);
+      }
+      break;
+    }
+    case ActionKind::GainGold:
+      // Hand of Greed. Combat has no gold of its own; it records what it earned
+      // and RunState writes it back (colorless-effects.md D5).
+      state.gold_gained += a.amount;
       break;
     case ActionKind::MakeCardFree: {
       // Infernal Blade: a random Attack joins the hand, free for this turn.
@@ -1382,8 +1471,8 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         if (state.draw_pile.empty()) break;
         const Card top = state.draw_pile.back();
         state.draw_pile.pop_back();
-        // An unplayable card (Dazed, Wound) still exhausts but resolves nothing.
-        // Routed through the ExhaustCard ACTION rather than a bare
+        // An unplayable card (Dazed, Wound) still exhausts but resolves
+        // nothing. Routed through the ExhaustCard ACTION rather than a bare
         // move_to_exhaust: that executor is the only place Feel No Pain, Dark
         // Embrace and Sentinel's energy_when_exhausted fire, and "whenever a
         // card is Exhausted" is unconditional on cause (ROB-85). Every other
@@ -1530,8 +1619,8 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // Build the candidate list. If nothing qualifies, the choice is simply
       // skipped — StS plays the card, the choice just has no legal target
       // (e.g. Exhume with an empty exhaust pile). No pause, drain continues.
-      PendingChoice pc = build_choice(state, static_cast<ChoiceKind>(a.amount),
-                                      a.card);
+      PendingChoice pc =
+          build_choice(state, static_cast<ChoiceKind>(a.amount), a.card);
       pc.copies = CARD_DATABASE.at(a.card).choice_copies;  // Dual Wield+ = 2
       if (pc.num_options == 0) break;
       if (pc.num_options == 1 && !pc.is_optional) {
@@ -1571,7 +1660,8 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
           }
           break;
         case ChoiceKind::HandToTopOfDraw:
-          // Warcry: hand -> top of draw. `back()` is the top (draw_one pops it).
+          // Warcry: hand -> top of draw. `back()` is the top (draw_one pops
+          // it).
           if (take_from_pile(state.current_hand, chosen)) {
             state.draw_pile.push_back(chosen);
           }
@@ -1674,8 +1764,8 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       if (ctx.died_count > 0 && count_living(state) == 1) {
         for (std::size_t i = 0; i < state.enemies.size(); ++i) {
           if (state.enemies[i].hp > 0) {
-            fire_enemy_hooks(state, static_cast<int>(i),
-                             Hook::BecameLastEnemy, q);
+            fire_enemy_hooks(state, static_cast<int>(i), Hook::BecameLastEnemy,
+                             q);
           }
         }
       }
@@ -1714,8 +1804,10 @@ bool card_qualifies(ChoiceKind kind, CardId id) {
 const std::vector<Card>& source_pile(const CombatState& state,
                                      ChoiceKind kind) {
   switch (kind) {
-    case ChoiceKind::DiscardToTopOfDraw: return state.discard_pile;
-    case ChoiceKind::ExhaustToHand:      return state.exhaust_pile;
+    case ChoiceKind::DiscardToTopOfDraw:
+      return state.discard_pile;
+    case ChoiceKind::ExhaustToHand:
+      return state.exhaust_pile;
     case ChoiceKind::UpgradeCardInHand:
     case ChoiceKind::HandToTopOfDraw:
     case ChoiceKind::CopyAttackOrPowerInHand:

@@ -325,6 +325,10 @@ struct RunState {
   // Pays out a fight's gold (§4.2): 10–20 normal, 25–35 elite, 100±5 boss.
   void award_combat_gold(RewardSource source);
 
+  // Add gold from any source, refusing it if Ectoplasm is held. Every gain goes
+  // through here; award_combat_gold applies Golden Idol first and then calls it.
+  void gain_gold(int amount);
+
   // --- relics and potions ---
 
   bool has_relic(RelicId id) const;

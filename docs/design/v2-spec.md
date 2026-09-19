@@ -1817,6 +1817,15 @@ them.
 (Gambling Chip is auto-resolved, §9), and the retrofit is additive. Revisit when
 a real multi-select case arrives.
 
+> ⚠️ **Amended 2026-09-15: the premise was wrong, and the case has arrived.** Two
+> reachable colorless cards are subset choices: **Purity** ("Exhaust up to 3
+> cards") and **Forethought+** ("any number"). Neither needs the Confirm action
+> or the accumulate flag costed above. Rob ruled they are **sequential single
+> picks**: a picked card leaves the offer, Decline means "done", and every pick
+> resolves together once the choice finishes. See `colorless-effects.md` D1.
+> This section's table still stands for any future subset choice that cannot be
+> framed that way.
+
 **Why this is not the mistake `decision-points.md` records making.** That mistake
 was shipping a *positional* channel that v2 then had to tear out — the shape was
 wrong, and every index moved when it was fixed. Deferring an additive feature

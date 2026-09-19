@@ -126,6 +126,14 @@ struct CombatState {
   bool is_elite = false;
   std::vector<PotionId> potions;
 
+  // Gold earned during THIS fight (Hand of Greed's "if Fatal, gain 20 Gold").
+  // Gold itself belongs to RunState; combat only records what it earned, and
+  // RunState::end_combat writes it back through the run's gold-gain path so
+  // Ectoplasm can refuse it (colorless-effects.md D5). A standalone CombatEnv
+  // simply never reads this, which is why the channel is a counter rather than
+  // a reach into the run layer.
+  int gold_gained = 0;
+
   bool has_relic(RelicId id) const {
     for (const HeldRelic& r : relics) {
       if (r.id == id) return true;

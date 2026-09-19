@@ -293,11 +293,19 @@ void RunState::award_combat_gold(RewardSource source) {
         std::lround(static_cast<float>(amount) * kGoldenIdolBonus));
   }
 
-  // Ectoplasm: no gold, at all. Applied LAST so it overrides Golden Idol rather
+  // Ectoplasm is applied by gain_gold, LAST, so it overrides Golden Idol rather
   // than racing it — a run holding both gains nothing, which is the only
   // reading that makes sense of "you can no longer gain Gold".
-  if (has_relic(RelicId::Ectoplasm)) return;
+  gain_gold(amount);
+}
 
+void RunState::gain_gold(int amount) {
+  if (amount <= 0) return;
+  // The single gold-gain path, so Ectoplasm cannot be forgotten by a new
+  // caller. Golden Idol deliberately does NOT live here: in StS its +25% is
+  // applied to a combat's REWARD pile, so Hand of Greed's kill gold — which
+  // comes straight through here — is not boosted by it.
+  if (has_relic(RelicId::Ectoplasm)) return;
   gold += amount;
 }
 
@@ -823,6 +831,13 @@ void RunState::end_combat() {
   if (combat.character.hp > 0) {
     fire_relic_hooks_sequentially(combat, Hook::CombatEnd);
   }
+
+  // Hand of Greed's kill gold, earned inside the fight and recorded there
+  // because combat owns no gold (colorless-effects.md D5). Through gain_gold,
+  // so Ectoplasm refuses it, and NOT through award_combat_gold, whose Golden
+  // Idol bonus belongs to the reward pile rather than to a card's effect.
+  gain_gold(combat.gold_gained);
+  combat.gold_gained = 0;
 
   // Carried: HP and Max HP. Max HP because Feed and Neow can raise it mid-fight.
   hp = combat.character.hp;

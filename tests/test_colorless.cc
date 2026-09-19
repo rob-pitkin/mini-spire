@@ -22,7 +22,7 @@ namespace minispire {
 namespace {
 
 int card_action(CardId id, int target = 0) {
-  return static_cast<int>(id) * kMaxEnemies + target;
+  return encode_action(ActionBlock::Combat, static_cast<int>(id), target);
 }
 
 // A fight with `card` in hand and energy to spare.
@@ -120,19 +120,337 @@ TEST(Colorless, BlindDoesNotExhaust) {
 
 // ---------------------------------------------------------- Dark Shackles
 
-// Data and action index are correct; the effect is not wired, because
-// temporary Strength loss on an ENEMY needs the enemy-side analogue of
-// StrengthDown. `unplayable` keeps it out of the mask rather than letting it
-// resolve as a no-op — the same gate Dazed uses.
-TEST(Colorless, DarkShacklesIsNotYetPlayable) {
-  const CardData& d = CARD_DATABASE.at(CardId::DarkShackles);
-  EXPECT_TRUE(d.unplayable);
-  EXPECT_TRUE(CARD_DATABASE.at(CardId::DarkShacklesPlus).unplayable);
-
+// "Enemy loses 9 Strength this turn." StS expresses the duration as a permanent
+// loss PLUS Shackled, which hands the Strength back at the end of the enemy's
+// turn — so the loss covers the enemy's own attack, which is the whole card.
+TEST(Colorless, DarkShacklesDropsEnemyStrength) {
   CombatState s = fight_holding(CardId::DarkShackles);
-  const std::vector<bool> mask = valid_actions(s);
-  EXPECT_FALSE(mask[static_cast<size_t>(card_action(CardId::DarkShackles, 0))])
-      << "an unplayable card was offered to the agent";
+  s.enemies[0].powers[Power::Strength] = 5;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::DarkShackles)));
+
+  EXPECT_EQ(get_status(s.enemies[0].powers, Power::Strength), -4);
+  EXPECT_EQ(get_status(s.enemies[0].powers, Power::Shackled), 9);
+}
+
+TEST(Colorless, DarkShacklesPlusDropsFifteen) {
+  CombatState s = fight_holding(CardId::DarkShacklesPlus);
+  s.enemies[0].powers[Power::Strength] = 5;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::DarkShacklesPlus)));
+
+  EXPECT_EQ(get_status(s.enemies[0].powers, Power::Strength), -10);
+  EXPECT_EQ(get_status(s.enemies[0].powers, Power::Shackled), 15);
+}
+
+TEST(Colorless, DarkShacklesReturnsTheStrengthAtTheEndOfTheEnemyTurn) {
+  CombatState s = fight_holding(CardId::DarkShackles);
+  s.enemies[0].powers[Power::Strength] = 5;
+  ASSERT_TRUE(apply_action(s, card_action(CardId::DarkShackles)));
+
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+
+  EXPECT_EQ(get_status(s.enemies[0].powers, Power::Strength), 5)
+      << "Shackled must give back exactly what was taken";
+  EXPECT_EQ(get_status(s.enemies[0].powers, Power::Shackled), 0)
+      << "Shackled removes itself once it has paid out";
+}
+
+// Artifact negates the loss outright, and StS then applies NO Shackled — there
+// is nothing to give back, so a give-back would be a permanent Strength GAIN.
+// The card checks this when played, which is why it is read at translation.
+TEST(Colorless, DarkShacklesIsEatenByArtifactAndLeavesNoShackled) {
+  CombatState s = fight_holding(CardId::DarkShackles);
+  s.enemies[0].powers[Power::Strength] = 5;
+  s.enemies[0].powers[Power::Artifact] = 1;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::DarkShackles)));
+
+  EXPECT_EQ(get_status(s.enemies[0].powers, Power::Strength), 5);
+  EXPECT_EQ(get_status(s.enemies[0].powers, Power::Shackled), 0);
+  EXPECT_EQ(get_status(s.enemies[0].powers, Power::Artifact), 0)
+      << "the charge was spent negating the Strength loss";
+}
+
+// ---------------------------------------------------------- Thinking Ahead
+
+// Warcry's shape: the draw resolves first, so a just-drawn card is a legal
+// option to put back.
+TEST(Colorless, ThinkingAheadDrawsTwoThenOffersTheHand) {
+  CombatState s = fight_holding(CardId::ThinkingAhead);
+  s.draw_pile.clear();
+  s.draw_pile.push_back(Card{CardId::Cleave});
+  s.draw_pile.push_back(Card{CardId::Bash});  // back() is drawn first
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::ThinkingAhead)));
+
+  ASSERT_TRUE(s.pending_choice.active());
+  EXPECT_EQ(s.pending_choice.kind, ChoiceKind::HandToTopOfDraw);
+  bool saw_drawn = false;
+  for (int i = 0; i < s.pending_choice.num_options; ++i) {
+    if (s.pending_choice.options[i].card_id == CardId::Bash) saw_drawn = true;
+  }
+  EXPECT_TRUE(saw_drawn) << "the choice must come after the draw";
+}
+
+TEST(Colorless, ThinkingAheadPutsTheChosenCardOnTopOfTheDraw) {
+  CombatState s = fight_holding(CardId::ThinkingAhead);
+  s.draw_pile.clear();
+  s.draw_pile.push_back(Card{CardId::Cleave});
+  s.draw_pile.push_back(Card{CardId::Bash});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::ThinkingAhead)));
+  ASSERT_TRUE(s.pending_choice.active());
+
+  const CardId chosen = s.pending_choice.options[0].card_id;
+  ASSERT_TRUE(resolve_choice(s, 0));
+
+  ASSERT_FALSE(s.draw_pile.empty());
+  EXPECT_EQ(s.draw_pile.back().card_id, chosen);
+}
+
+TEST(Colorless, ThinkingAheadExhaustsAndThePlusDoesNot) {
+  for (CardId id : {CardId::ThinkingAhead, CardId::ThinkingAheadPlus}) {
+    CombatState s = fight_holding(id);
+    s.draw_pile.clear();
+    // TWO distinct cards, so the put-back is a real prompt: a choice with one
+    // legal option auto-resolves instead of pausing (see the test below).
+    s.draw_pile.push_back(Card{CardId::Defend});
+    s.draw_pile.push_back(Card{CardId::Strike});
+    ASSERT_TRUE(apply_action(s, card_action(id))) << card_name(id);
+    ASSERT_TRUE(s.pending_choice.active()) << card_name(id);
+    ASSERT_TRUE(resolve_choice(s, 0)) << card_name(id);
+
+    const bool exhausted =
+        !s.exhaust_pile.empty() && s.exhaust_pile.back().card_id == id;
+    const bool discarded =
+        !s.discard_pile.empty() && s.discard_pile.back().card_id == id;
+    EXPECT_EQ(exhausted, id == CardId::ThinkingAhead) << card_name(id);
+    EXPECT_EQ(discarded, id == CardId::ThinkingAheadPlus) << card_name(id);
+  }
+}
+
+// One legal option is no decision, so the engine applies it without pausing —
+// StS does the same ("if there is only one card ... it will automatically be
+// placed on top of your draw pile"). Worth pinning here because Thinking Ahead
+// reaches it often: draw 2 from a nearly empty pile and one card is all you get.
+TEST(Colorless, ThinkingAheadAutoResolvesWhenOnlyOneCardCouldBePutBack) {
+  CombatState s = fight_holding(CardId::ThinkingAhead);
+  s.draw_pile.clear();
+  s.draw_pile.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::ThinkingAhead)));
+
+  EXPECT_FALSE(s.pending_choice.active()) << "a one-option choice must not pause";
+  ASSERT_FALSE(s.draw_pile.empty());
+  EXPECT_EQ(s.draw_pile.back().card_id, CardId::Strike)
+      << "the only candidate went back on top by itself";
+  EXPECT_TRUE(s.current_hand.empty());
+}
+
+// ------------------------------------------------------------- Apotheosis
+
+TEST(Colorless, ApotheosisUpgradesEveryPile) {
+  CombatState s = fight_holding(CardId::Apotheosis);
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.draw_pile.clear();
+  s.draw_pile.push_back(Card{CardId::Defend});
+  s.discard_pile.clear();
+  s.discard_pile.push_back(Card{CardId::Bash});
+  s.exhaust_pile.clear();
+  s.exhaust_pile.push_back(Card{CardId::Cleave});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Apotheosis)));
+
+  EXPECT_EQ(s.current_hand.back().card_id, CardId::StrikePlus);
+  EXPECT_EQ(s.draw_pile.back().card_id, CardId::DefendPlus);
+  EXPECT_EQ(s.discard_pile.back().card_id, CardId::BashPlus);
+  EXPECT_EQ(s.exhaust_pile.front().card_id, CardId::CleavePlus)
+      << "the exhaust pile is upgraded too";
+}
+
+// It is in flight while it resolves, so it is in no pile to find itself.
+TEST(Colorless, ApotheosisDoesNotUpgradeItself) {
+  CombatState s = fight_holding(CardId::Apotheosis);
+  s.exhaust_pile.clear();
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Apotheosis)));
+
+  ASSERT_EQ(s.exhaust_pile.size(), 1u);
+  EXPECT_EQ(s.exhaust_pile.back().card_id, CardId::Apotheosis)
+      << "Apotheosis upgraded itself on the way to the exhaust pile";
+}
+
+TEST(Colorless, ApotheosisLeavesStatusCardsAlone) {
+  CombatState s = fight_holding(CardId::Apotheosis);
+  s.current_hand.push_back(Card{CardId::Dazed});
+  s.draw_pile.clear();
+  s.draw_pile.push_back(Card{CardId::Slimed});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Apotheosis)));
+
+  EXPECT_EQ(s.current_hand.back().card_id, CardId::Dazed);
+  EXPECT_EQ(s.draw_pile.back().card_id, CardId::Slimed);
+}
+
+// --------------------------------------------------------------- Violence
+
+TEST(Colorless, ViolencePullsThreeAttacksOutOfTheDrawPile) {
+  CombatState s = fight_holding(CardId::Violence);
+  s.draw_pile.clear();
+  for (int i = 0; i < 3; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+  for (int i = 0; i < 2; ++i) s.draw_pile.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Violence)));
+
+  int strikes_in_hand = 0;
+  for (const Card& c : s.current_hand) {
+    if (c.card_id == CardId::Strike) ++strikes_in_hand;
+  }
+  EXPECT_EQ(strikes_in_hand, 3);
+  EXPECT_EQ(s.draw_pile.size(), 2u) << "only the Defends should remain";
+  for (const Card& c : s.draw_pile) EXPECT_EQ(c.card_id, CardId::Defend);
+}
+
+TEST(Colorless, ViolencePlusPullsFour) {
+  CombatState s = fight_holding(CardId::ViolencePlus);
+  s.draw_pile.clear();
+  for (int i = 0; i < 5; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::ViolencePlus)));
+
+  EXPECT_EQ(s.current_hand.size(), 4u);
+  EXPECT_EQ(s.draw_pile.size(), 1u);
+}
+
+TEST(Colorless, ViolenceTakesWhatItCanWhenAttacksAreScarce) {
+  CombatState s = fight_holding(CardId::Violence);
+  s.draw_pile.clear();
+  s.draw_pile.push_back(Card{CardId::Strike});
+  s.draw_pile.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Violence)));
+
+  EXPECT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand.back().card_id, CardId::Strike);
+}
+
+TEST(Colorless, ViolenceOverflowsIntoTheDiscardWhenTheHandIsFull) {
+  CombatState s = fight_holding(CardId::Violence);
+  // Nine more cards: the hand is at the limit with Violence still in it, so
+  // exactly one pulled card fits once Violence leaves.
+  for (int i = 0; i < HAND_SIZE_LIMIT - 1; ++i) {
+    s.current_hand.push_back(Card{CardId::Defend});
+  }
+  s.draw_pile.clear();
+  for (int i = 0; i < 3; ++i) s.draw_pile.push_back(Card{CardId::Strike});
+  s.discard_pile.clear();
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Violence)));
+
+  EXPECT_EQ(s.current_hand.size(), static_cast<std::size_t>(HAND_SIZE_LIMIT));
+  EXPECT_EQ(s.discard_pile.size(), 2u) << "the overflow goes to the discard";
+  for (const Card& c : s.discard_pile) EXPECT_EQ(c.card_id, CardId::Strike);
+}
+
+// ----------------------------------------------------------- Panic Button
+
+TEST(Colorless, PanicButtonBlocksThirtyAndBansCardBlockAfterwards) {
+  CombatState s = fight_holding(CardId::PanicButton);
+  s.current_hand.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::PanicButton)));
+  EXPECT_EQ(s.character.current_block, 30) << "its own block is not banned";
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::NoBlock), 2);
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
+  EXPECT_EQ(s.character.current_block, 30) << "Defend gained nothing";
+}
+
+TEST(Colorless, PanicButtonPlusBlocksForty) {
+  CombatState s = fight_holding(CardId::PanicButtonPlus);
+  ASSERT_TRUE(apply_action(s, card_action(CardId::PanicButtonPlus)));
+  EXPECT_EQ(s.character.current_block, 40);
+}
+
+// Only block FROM CARDS. Plated Armor grants at end of turn and must survive.
+TEST(Colorless, NoBlockLeavesPowerBlockAlone) {
+  CombatState s = fight_holding(CardId::PanicButton);
+  s.character.powers[Power::PlatedArmor] = 7;
+  ASSERT_TRUE(apply_action(s, card_action(CardId::PanicButton)));
+  const int before = s.character.current_block;
+
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+
+  EXPECT_GT(before, 0);
+  EXPECT_GT(get_status(s.character.powers, Power::PlatedArmor), 0)
+      << "Plated Armor should still be granting block";
+}
+
+// Two turns, counting the one it was played on.
+TEST(Colorless, NoBlockExpiresAfterTheFollowingTurn) {
+  CombatState s = fight_holding(CardId::PanicButton);
+  ASSERT_TRUE(apply_action(s, card_action(CardId::PanicButton)));
+  ASSERT_EQ(get_status(s.character.debuffs, Debuff::NoBlock), 2);
+
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::NoBlock), 1)
+      << "still banned on the turn after";
+
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::NoBlock), 0);
+
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.character.energy = 99;
+  const int before = s.character.current_block;
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
+  EXPECT_GT(s.character.current_block, before) << "the ban has lifted";
+}
+
+// No Block is a DEBUFF in StS, so the player's own Artifact eats it — Panacea
+// into Panic Button is 30 block with no drawback.
+TEST(Colorless, ArtifactNegatesNoBlock) {
+  CombatState s = fight_holding(CardId::PanicButton);
+  s.character.powers[Power::Artifact] = 1;
+  s.current_hand.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::PanicButton)));
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::NoBlock), 0);
+  EXPECT_EQ(get_status(s.character.powers, Power::Artifact), 0);
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
+  EXPECT_GT(s.character.current_block, 30) << "Defend still blocks";
+}
+
+// --------------------------------------------------------- Hand of Greed
+
+TEST(Colorless, HandOfGreedRecordsGoldWhenTheHitIsFatal) {
+  CombatState s = fight_holding(CardId::HandOfGreed);
+  s.enemies[0].hp = 5;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::HandOfGreed, 0)));
+
+  EXPECT_EQ(s.enemies[0].hp, 0);
+  EXPECT_EQ(s.gold_gained, 20);
+}
+
+TEST(Colorless, HandOfGreedPlusRecordsTwentyFive) {
+  CombatState s = fight_holding(CardId::HandOfGreedPlus);
+  s.enemies[0].hp = 5;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::HandOfGreedPlus, 0)));
+
+  EXPECT_EQ(s.gold_gained, 25);
+}
+
+// "If Fatal" — damage alone pays nothing.
+TEST(Colorless, HandOfGreedRecordsNothingWhenTheEnemySurvives) {
+  CombatState s = fight_holding(CardId::HandOfGreed);
+  s.enemies[0].hp = 60;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::HandOfGreed, 0)));
+
+  EXPECT_GT(s.enemies[0].hp, 0);
+  EXPECT_EQ(s.gold_gained, 0);
 }
 
 // ------------------------------------------------------------- Deep Breath
@@ -467,20 +785,20 @@ TEST(Colorless, AllTwentyUncommonsArePresentAndConsistent) {
 // The unplayable ones are exactly the ones whose machinery is missing — not a
 // drifting set. If a card leaves this list, its effect landed; if one joins,
 // something regressed.
-TEST(Colorless, TheNotYetPlayableUncommonsAreExactlyTheseSeven) {
-  const CardId expected[] = {
-      CardId::DarkShackles, CardId::Discovery,   CardId::Enlightenment,
-      CardId::Forethought,  CardId::JackOfAllTrades, CardId::Madness,
-      CardId::PanicButton,  CardId::Purity};
+TEST(Colorless, TheNotYetPlayableUncommonsAreExactlyTheseSix) {
+  const CardId expected[] = {CardId::Discovery,       CardId::Enlightenment,
+                             CardId::Forethought,     CardId::JackOfAllTrades,
+                             CardId::Madness,         CardId::Purity};
 
   for (CardId id : expected) {
     EXPECT_TRUE(CARD_DATABASE.at(id).unplayable)
         << card_name(id) << " became playable — update this list";
   }
-  for (CardId id : {CardId::BandageUp, CardId::Blind, CardId::DeepBreath,
-                    CardId::DramaticEntrance, CardId::Finesse,
-                    CardId::FlashOfSteel, CardId::GoodInstincts,
-                    CardId::Impatience, CardId::MindBlast, CardId::Panacea,
+  for (CardId id : {CardId::BandageUp, CardId::Blind, CardId::DarkShackles,
+                    CardId::DeepBreath, CardId::DramaticEntrance,
+                    CardId::Finesse, CardId::FlashOfSteel,
+                    CardId::GoodInstincts, CardId::Impatience,
+                    CardId::MindBlast, CardId::Panacea, CardId::PanicButton,
                     CardId::SwiftStrike, CardId::Trip}) {
     EXPECT_FALSE(CARD_DATABASE.at(id).unplayable)
         << card_name(id) << " regressed to unplayable";
@@ -538,13 +856,16 @@ TEST(Colorless, TheTwoPoolsAreDisjoint) {
 // Of the 35, these are the ones whose effects are wired. The rest hold correct
 // data and a stable action index and are masked out. A card leaving this list
 // means an effect landed; one joining means something regressed.
-TEST(Colorless, ExactlyTwelveOfThirtyFiveArePlayable) {
+TEST(Colorless, ExactlyNineteenOfThirtyFiveArePlayable) {
   const CardId playable[] = {
-      CardId::BandageUp,    CardId::Blind,         CardId::DeepBreath,
-      CardId::DramaticEntrance, CardId::Finesse,   CardId::FlashOfSteel,
-      CardId::GoodInstincts, CardId::Impatience,   CardId::MindBlast,
-      CardId::Panacea,      CardId::SwiftStrike,   CardId::Trip,
-      CardId::MasterOfStrategy};
+      CardId::BandageUp,     CardId::Blind,        CardId::DarkShackles,
+      CardId::DeepBreath,    CardId::DramaticEntrance, CardId::Finesse,
+      CardId::FlashOfSteel,  CardId::GoodInstincts, CardId::Impatience,
+      CardId::MindBlast,     CardId::Panacea,      CardId::PanicButton,
+      CardId::SwiftStrike,   CardId::Trip,         CardId::MasterOfStrategy,
+      // Batch 1 (colorless-effects.md §5).
+      CardId::Apotheosis,    CardId::HandOfGreed,  CardId::Violence,
+      CardId::ThinkingAhead};
 
   int wired = 0;
   for (const std::vector<CardId>* pool :

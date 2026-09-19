@@ -47,6 +47,41 @@ TEST(RunState, DuplicateCardsAreDistinctInstancesButStillCompareEqual) {
   EXPECT_TRUE(a.same_as(b));
 }
 
+// ------------------------------------------------------------ gold from combat
+
+// Hand of Greed earns gold inside a fight, where there is no gold to earn —
+// combat records it and the write-back moves it (colorless-effects.md D5).
+TEST(RunState, KillGoldEarnedInCombatCarriesOutOfIt) {
+  // end_combat ALSO pays the fight's own gold reward, so the kill gold is
+  // measured as the difference between two otherwise identical runs rather
+  // than as an absolute total.
+  RunState control = RunState::start(7);
+  control.begin_combat(EncounterPool::Weak);
+  control.end_combat();
+
+  RunState run = RunState::start(7);
+  run.begin_combat(EncounterPool::Weak);
+  run.combat.gold_gained = 20;
+  run.end_combat();
+
+  EXPECT_EQ(run.gold - control.gold, 20);
+  EXPECT_EQ(run.combat.gold_gained, 0) << "the same gold must not pay twice";
+}
+
+// Ectoplasm refuses gold from every source, which is the reason gain_gold is
+// the single path rather than each caller adding to `gold` itself.
+TEST(RunState, EctoplasmRefusesKillGold) {
+  RunState run = RunState::start(7);
+  run.relics.push_back(HeldRelic{RelicId::Ectoplasm, 0});
+  run.begin_combat(EncounterPool::Weak);
+  const int before = run.gold;
+  run.combat.gold_gained = 20;
+
+  run.end_combat();
+
+  EXPECT_EQ(run.gold, before);
+}
+
 // ------------------------------------------------------ projection into combat
 
 TEST(RunState, CombatSeesTheRunsHpNotAFreshIronclad) {

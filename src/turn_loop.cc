@@ -342,6 +342,28 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
       }
     }
   }
+  // Dark Shackles: the target loses Strength for the rest of ITS turn. Two
+  // applications, and the second is conditional — StS applies the Shackled
+  // give-back only when the target has no Artifact, because a charge negates
+  // the loss outright and there is then nothing to hand back. Checked at
+  // translation, like Spot Weakness, against the state the player is looking at.
+  if (data.enemy_strength_loss_for_turn > 0) {
+    for (int slot : target_slots) {
+      Action loss;
+      loss.kind = ActionKind::ApplyPower;
+      loss.target = slot;
+      loss.power = Power::Strength;
+      loss.amount = -data.enemy_strength_loss_for_turn;
+      q.push_back(loss);
+      if (get_status(state.enemies[slot].powers, Power::Artifact) > 0) continue;
+      Action give_back;
+      give_back.kind = ActionKind::ApplyPower;
+      give_back.target = slot;
+      give_back.power = Power::Shackled;
+      give_back.amount = data.enemy_strength_loss_for_turn;
+      q.push_back(give_back);
+    }
+  }
   // Card-flow effects (ROB-80 Tier B). Energy gain, then lose-HP (an EFFECT,
   // not a cost: direct HP loss bypassing block, and it CAN kill the player).
   if (data.energy > 0) {
@@ -407,6 +429,22 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
       }
       q.push_back(a);
     }
+  }
+  // Violence: pull random cards of a type out of the draw pile. Queued before
+  // the pile move for the same reason Deep Breath is — the card is in flight,
+  // so it can never pull itself.
+  if (data.draw_pile_to_hand_count > 0) {
+    Action a;
+    a.kind = ActionKind::DrawPileToHand;
+    a.amount = data.draw_pile_to_hand_count;
+    a.card_type = data.draw_pile_to_hand_type;
+    q.push_back(a);
+  }
+  // Apotheosis: upgrade every pile. Also queued BEFORE the pile move, which is
+  // what keeps it from upgrading itself — in StS the played card is in flight
+  // for its whole resolution and is in no pile to be found.
+  if (data.upgrades_all_piles) {
+    q.push_back(Action{ActionKind::UpgradeAllPiles});
   }
   // Dropkick: if the TARGET is Vulnerable, gain 1 energy and draw 1. Checked at
   // translation, i.e. against the Vulnerable state before this card's own
@@ -605,6 +643,15 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
       Action a;
       a.kind = ActionKind::GainMaxHp;
       a.amount = data.max_hp_on_kill;
+      late.push_back(a);
+    }
+    // Hand of Greed: "If Fatal, gain 20 Gold" — the same shape as Feed, and
+    // late for the same reason: whether the card killed anything is only known
+    // once its damage has resolved.
+    if (data.gold_on_kill > 0 && ctx.died_count > 0) {
+      Action a;
+      a.kind = ActionKind::GainGold;
+      a.amount = data.gold_on_kill;
       late.push_back(a);
     }
     if (!late.empty()) drain(state, late, ctx);

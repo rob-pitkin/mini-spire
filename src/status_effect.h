@@ -21,6 +21,13 @@ enum class Debuff {
                // clears it, which is exactly "this turn" — the tick runs AFTER
                // the end-of-turn drain, so it still blocks a Dark Embrace draw
                // from an ethereal exhaust.
+  NoBlock,     // player: block gained FROM CARDS is zeroed (Panic Button). Only
+               // card block: Entrench, Metallicize, Plated Armor and relics are
+               // unaffected, which falls out of Action::card_block already
+               // marking exactly the card sources. A Debuff rather than a Power
+               // because StS types it as one — so it ticks down (2 turns,
+               // counting the turn it is played) and the player's Artifact
+               // negates it.
   None,        // sentinel: "no debuff" (default for unused fields)
 };
 
@@ -38,6 +45,12 @@ enum class Power {
   Metallicize,  // gain block = stacks (enemy: start of its turn; player: end of turn)
   Enrage,       // enemy: gain Strength = stacks whenever the player plays a Skill
   Artifact,     // enemy: negates the next `stacks` debuff applications, then decrements
+  Shackled,     // enemy: at the END of its turn, gain `stacks` Strength and
+                // remove self. StS's "Shackled" (GainStrengthPower), the other
+                // half of Dark Shackles: the Strength loss is permanent on its
+                // own, and this is what gives it back. The player's mirror
+                // image is StrengthDown (Flex), which LOSES at end of turn —
+                // opposite sign, so it cannot be reused here.
   // --- Player powers (Tier C, effects-architecture Stage 4a). Behavior lives
   // in the static registry fire_player_power_hooks (action.cc). ---
   DemonForm,     // turn start: gain `stacks` Strength
@@ -112,9 +125,9 @@ enum class Power {
 // Entangle and NoDraw are player-only; they occupy always-zero floats in the
 // enemy blocks. Kept in one shared order (rather than split per entity like the
 // powers) because two of five is not worth a second table.
-inline constexpr int kNumDebuffs = 5;
-inline constexpr int kNumEnemyPowers = 6;
-inline constexpr int kNumPlayerPowers = 28;
+inline constexpr int kNumDebuffs = 6;
+inline constexpr int kNumEnemyPowers = 7;
+inline constexpr int kNumPlayerPowers = 29;
 
 // FUTURE (multi-enemy): Target { Character, Enemy } collapses any "the enemy"
 // to a single entity, which is unambiguous in v1 with one enemy. Multi-enemy

@@ -72,6 +72,14 @@ enum class ActionKind {
                   // replay, Havoc playing off the draw pile). `amount` selects
                   // which, via the kPlay* constants below.
   UpgradeHand,    // Armaments+: upgrade every card in hand
+  UpgradeAllPiles,  // Apotheosis: upgrade every upgradable card in hand, draw,
+                    // discard AND exhaust. Queued BEFORE the card's own pile
+                    // move, because StS never upgrades Apotheosis itself.
+  DrawPileToHand,   // Violence: move `amount` random cards of `card_type` from
+                    // the draw pile to the hand; overflow past the hand limit
+                    // goes to the discard pile
+  GainGold,         // Hand of Greed: record `amount` gold earned in this fight.
+                    // Combat has no gold — RunState writes it back (§3.2)
   MakeCardFree,   // Infernal Blade: `card` costs 0 for the rest of this turn
   AddCardToPile,  // generate a card into a pile (Wild Strike's Wound, Power
                   // Through's Wounds, Immolate's Burn, Anger's self-copy).
@@ -112,6 +120,10 @@ struct Action {
   int strength_mult = 1;
   Debuff debuff = Debuff::None;    // ApplyDebuff payload
   Power power = Power::None;       // ApplyPower / RemovePower payload
+  // DrawPileToHand payload: which card type to filter the draw pile by. A
+  // separate field rather than reusing `card`, which names a specific card —
+  // Violence wants "any Attack", not "this Attack".
+  CardType card_type = CardType::Attack;
   MoveName move = MoveName::None;  // RewriteIntent payload
   bool card_block = false;  // GainBlock from a played card: apply Dex/Frail
   int copies = 1;  // ApplyChoice: how many copies to add (Dual Wield+ = 2)
