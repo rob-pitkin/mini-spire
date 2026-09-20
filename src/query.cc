@@ -106,6 +106,20 @@ int block_after_turn_start(const CombatState& state) {
   return 0;
 }
 
+int energy_after_turn_start(const CombatState& state) {
+  const int allowance = state.character.energy_per_turn;
+  // Ice Cream: "Energy is now conserved between turns." StS implements this in
+  // EnergyManager::recharge(), which ADDS the allowance when the relic is held
+  // and otherwise replaces the total — IceCream.java itself is an empty class
+  // with no hooks, which is why this lives in the query layer and not in a
+  // relic arm. No cap: leftover energy accumulates for as long as it goes
+  // unspent.
+  if (state.has_relic(RelicId::IceCream)) {
+    return state.character.energy + allowance;
+  }
+  return allowance;
+}
+
 bool player_is_immune_to(const CombatState& state, Debuff d) {
   // Ginger and Turnip. The ORDER matters and is the detail the wiki is explicit
   // about: both trigger BEFORE Artifact, so a player holding Ginger who would

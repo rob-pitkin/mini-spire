@@ -78,6 +78,17 @@ struct Character {
   // Battle Trance's "no further draws this turn" is Debuff::NoDraw, not a field
   // here (ROB-40 B2) — StS renders it as a debuff icon.
   //
+  // Which card TYPES have been played this turn. Orange Pellets clears every
+  // debuff once all three are played in one turn, and Art of War grants energy
+  // at turn start when no Attack was played on the turn that just ended — so
+  // these are read at the turn boundary and cleared immediately after.
+  //
+  // Per-turn, unlike hp_loss_events and panache's counter above: StS resets all
+  // three in Orange Pellets' own atTurnStart, and Art of War re-arms its flag
+  // the same way.
+  bool played_attack_this_turn = false;
+  bool played_skill_this_turn = false;
+  bool played_power_this_turn = false;
   // "This card costs 0" is NOT tracked here. It was, as a per-card-type counter
   // (`free_this_turn`), which could say "one copy of this type is free" but
   // never WHICH copy. Since colorless-effects.md D2 the discount lives on the

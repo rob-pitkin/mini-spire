@@ -816,8 +816,13 @@ void handle_end_turn(CombatState& state) {
   // one name instead of becoming a general mechanism.
   tick_debuffs(state.character.debuffs);
   tick_intangible(state.character.powers);
-  // 1c. Discard leftover energy
-  state.character.energy = 0;
+  // 1c. Leftover energy is NOT discarded here. The turn-start refill is the
+  // single authority on what energy a turn begins with (query.cc's
+  // energy_after_turn_start), and it replaces the total for everyone who does
+  // not hold Ice Cream — so zeroing here changed nothing except destroying the
+  // leftover Ice Cream exists to carry forward. Nothing reads the player's
+  // energy between this point and the refill: the enemy phase does not, and
+  // there is no agent decision point inside it.
 
   // 2. Enemy turn — each enemy that is ALIVE AT THE START OF THE PHASE acts, in
   // slot order. An enemy can leave via escape (ROB-74: hp->0) or spawn children
@@ -906,7 +911,10 @@ void handle_end_turn(CombatState& state) {
   // Evolve / Fire Breathing.
   // Barricade keeps block across the turn boundary (query, Stage 4b).
   state.character.current_block = block_after_turn_start(state);
-  state.character.energy = state.character.energy_per_turn;
+  // Ice Cream carries unspent energy forward, so this is a query rather than a
+  // plain assignment (query.cc). Turn 1 is set in start_combat, where there is
+  // nothing to carry.
+  state.character.energy = energy_after_turn_start(state);
   // Panache's countdown restarts every turn: four cards this turn and one the
   // next must not set it off.
   state.character.panache_counter = kPanacheCardsPerTrigger;
@@ -934,6 +942,13 @@ void handle_end_turn(CombatState& state) {
     // not handled here: start_combat's CombatStart sub-phase is turn 1's start,
     // so firing both would double-count anything that counts turns.
     fire_relic_hooks(state, Hook::TurnStartPlayer, q);
+    // Cleared AFTER the hooks have read them: Art of War grants its energy on
+    // the strength of the turn that just ended, and Orange Pellets needs all
+    // three to have been played within ONE turn. Cleared for every fight, not
+    // only when a relic cares, so the flags never carry a stale turn's value.
+    state.character.played_attack_this_turn = false;
+    state.character.played_skill_this_turn = false;
+    state.character.played_power_this_turn = false;
     Action draw;
     draw.kind = ActionKind::DrawCards;
     draw.amount = STARTING_HAND_SIZE;

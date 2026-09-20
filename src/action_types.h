@@ -88,6 +88,9 @@ enum class ActionKind {
                              // 0 for the rest of the combat
   CapHandCost,    // Enlightenment: every card in hand costing more than 1 drops
                   // to 1, for this turn or (upgraded) the whole combat
+  RemoveAllDebuffs,     // Orange Pellets: clear every debuff on the player at
+                        // once. An action rather than a direct map clear so it
+                        // goes through the executors like every other mutation.
   DrawOpeningHand,      // the fight's first hand, Innate-aware. An ACTION so a
                         // pre-draw relic that pauses for a choice (Toolbox)
                         // parks the draw behind it instead of being overtaken

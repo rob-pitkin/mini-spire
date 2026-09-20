@@ -40,6 +40,13 @@ bool block_resets_at_turn_start(const CombatState& state);
 // all of it goes. Prefer this at the turn-start call site.
 int block_after_turn_start(const CombatState& state);
 
+// Energy at the start of the player's turn. Normally the per-turn allowance,
+// but Ice Cream ADDS it to whatever was left instead of replacing it, so
+// unspent energy carries forward. A query rather than a relic hook because
+// that is where StS puts it: IceCream.java is an empty class, and
+// EnergyManager::recharge() branches on holding it.
+int energy_after_turn_start(const CombatState& state);
+
 // Ginger (Weak) and Turnip (Frail). Consulted BEFORE Artifact, so an immune
 // player does not spend an Artifact charge on a debuff that cannot land.
 bool player_is_immune_to(const CombatState& state, Debuff d);

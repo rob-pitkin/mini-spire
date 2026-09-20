@@ -611,6 +611,46 @@ namespace {
 void fire_turn_start_relic(CombatState& state, HeldRelic& relic,
                            ActionQueue& q) {
   switch (relic.id) {
+    case RelicId::MercuryHourglass: {
+      // 3 damage to every enemy at the start of EVERY turn, turn 1 included.
+      // THORNS-type in StS (createDamageMatrix(3, true)): unscaled by Strength,
+      // Weak or Vulnerable, and it cannot trigger an enemy's Thorns — which is
+      // what DamageAllEnemies already means here.
+      Action a = make_action(ActionKind::DamageAllEnemies);
+      a.amount = 3;
+      q.push_back(a);
+      break;
+    }
+
+    case RelicId::HornCleat:
+      // "At the start of your 2nd turn, gain 14 Block." Keyed on turn_number
+      // rather than a counter: StS resets the counter in atBattleStart, but
+      // this function runs BEFORE the CombatStart arm, so a reset there would
+      // erase turn 1's increment. turn_number is per-combat by construction and
+      // cannot fire twice. The counter still carries the displayed countdown.
+      relic.counter = 2 - state.turn_number;
+      if (state.turn_number == 2) push_player_block(q, 14);
+      break;
+
+    case RelicId::CaptainsWheel:
+      // The same, on the 3rd turn, for 18.
+      relic.counter = 3 - state.turn_number;
+      if (state.turn_number == 3) push_player_block(q, 18);
+      break;
+
+    case RelicId::ArtOfWar: {
+      // "If you do not play any Attacks during your turn, gain an extra Energy
+      // next turn." Read at the start of a turn against the flag the turn that
+      // just ended left behind, and never on turn 1 — there is no previous turn
+      // to have played an Attack in. StS uses a firstTurn flag for that.
+      if (state.turn_number > 1 && !state.character.played_attack_this_turn) {
+        Action a = make_action(ActionKind::GainEnergy);
+        a.amount = 1;
+        q.push_back(a);
+      }
+      break;
+    }
+
     case RelicId::Brimstone:
       // Every turn, not once per fight. The enemies' Strength is the drawback,
       // and it compounds for as long as the fight runs.
@@ -659,12 +699,13 @@ namespace {
 // entry points cannot diverge — they differ only in when they drain.
 void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
                     ActionQueue& q, int slot = kNoSlot);
-void fire_card_played_relic(HeldRelic& relic, CardType type, ActionQueue& q);
+void fire_card_played_relic(CombatState& state, HeldRelic& relic, CardType type,
+                            ActionQueue& q);
 }  // namespace
 
 void fire_relic_card_played(CombatState& state, CardType type, ActionQueue& q) {
   for (HeldRelic& relic : state.relics) {
-    fire_card_played_relic(relic, type, q);
+    fire_card_played_relic(state, relic, type, q);
   }
 }
 
@@ -695,7 +736,22 @@ namespace {
 // One relic's response to a card being played. Split out because the two
 // counter kinds behave differently enough that inlining them into the main
 // switch would obscure which is which.
-void fire_card_played_relic(HeldRelic& relic, CardType type, ActionQueue& q) {
+void fire_card_played_relic(CombatState& state, HeldRelic& relic, CardType type,
+                            ActionQueue& q) {
+  // Orange Pellets: "whenever you play a Power, Attack, and Skill in the same
+  // turn, remove all of your Debuffs." The flags are set by the CardPlayedHook
+  // executor just above this call, so the card being played is already counted.
+  // StS clears the three flags after firing as well as at turn start, so a
+  // second Attack/Skill/Power set in one turn fires it again.
+  if (relic.id == RelicId::OrangePellets &&
+      state.character.played_attack_this_turn &&
+      state.character.played_skill_this_turn &&
+      state.character.played_power_this_turn) {
+    q.push_back(make_action(ActionKind::RemoveAllDebuffs));
+    state.character.played_attack_this_turn = false;
+    state.character.played_skill_this_turn = false;
+    state.character.played_power_this_turn = false;
+  }
   // Counts a card of `wanted` type and reports whether the threshold was just
   // reached, resetting when it was.
   const auto counted = [&](CardType wanted, int threshold) {
@@ -1618,6 +1674,25 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
                                                 : CostDuration::ThisTurn;
       }
       break;
+    case ActionKind::RemoveAllDebuffs:
+      // Orange Pellets. StS's RemoveDebuffsAction removes every power whose
+      // type is DEBUFF — and StrengthPower reports DEBUFF whenever its amount
+      // is negative (StrengthPower.updateDescription). So a Strength reduction
+      // from Disarm or Shockwave is cleared along with Weak and Vulnerable.
+      //
+      // Our Debuff enum is therefore NOT the whole set: negative Strength and
+      // Dexterity live in `powers`. Clearing only the debuff map would leave a
+      // -3 Strength in place, which the real relic removes.
+      state.character.debuffs.clear();
+      for (auto it = state.character.powers.begin();
+           it != state.character.powers.end();) {
+        if (it->second < 0) {
+          it = state.character.powers.erase(it);
+        } else {
+          ++it;
+        }
+      }
+      break;
     case ActionKind::DrawOpeningHand:
       draw_opening_hand(state, q);
       break;
@@ -1853,6 +1928,18 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       break;
     }
     case ActionKind::CardPlayedHook:
+      // Which types have been played this turn, for Art of War (no Attack) and
+      // Orange Pellets (all three). Recorded here rather than at translation so
+      // a card played from inside a resolution — Havoc, Mayhem, Double Tap —
+      // counts exactly as a hand-played one does; they all reach this hook.
+      switch (CARD_DATABASE.at(a.card).type) {
+        case CardType::Attack: state.character.played_attack_this_turn = true; break;
+        case CardType::Skill:  state.character.played_skill_this_turn = true; break;
+        case CardType::Power:  state.character.played_power_this_turn = true; break;
+        case CardType::Status:
+        case CardType::Curse:
+          break;  // neither relic counts them
+      }
       // Panache counts cards played THIS TURN, firing on every fifth. The
       // countdown is mutated here, in an executor, rather than in the power
       // registry — that registry pushes actions and never touches state.

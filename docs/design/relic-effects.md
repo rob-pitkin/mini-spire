@@ -245,13 +245,13 @@ per §1.
 
 ---
 
-## 7. Status: 74 of 140 wired
+## 7. Status: 80 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
 Running the count is what caught the Juzu Bracelet / Tiny Chest error in §3.2.
 
-The 66 remaining are not one backlog. **Most are blocked on engine pieces that
+The 60 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
@@ -265,7 +265,7 @@ have nothing to do with relics**, and those blockers are shared:
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell | all pause for player input |
-| **Nothing blocking — just unwritten** | ~25, including Maw Bank, Meal Ticket, Ceramic Fish, Old Coin, Horn Cleat, Captain's Wheel, Mercury Hourglass, Tungsten Rod, Torii, Magic Flower, Ice Cream, Unceasing Top, Champion Belt, Charon's Ashes, Self-Forming Clay, Centennial Puzzle, Eternal Feather, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest | the remainder, with nothing blocking them |
+| **Nothing blocking — just unwritten** | **~36**: Maw Bank, Meal Ticket, Ceramic Fish, Old Coin, Tungsten Rod, Torii, Magic Flower, Unceasing Top, Champion Belt, Charon's Ashes, Self-Forming Clay, Centennial Puzzle, Eternal Feather, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest, Runic Cube, Dead Branch, Snecko Eye, Mummified Hand, Medical Kit, Strange Spoon, Red Skull, Ancient Tea Set, Pocketwatch, Chemical X, Tiny House, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 remaining against the blocker rows leaves ~42 with nothing blocking them, of which 6 shipped in §6.11. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
 was to build the missing Powers and the curse and colorless card gaps before
@@ -572,3 +572,48 @@ to block breaks it (same branch as `>`), and `DamageType.HP_LOSS` never breaks
 block at all. Thorns-type damage is not HP loss, so our fixed-damage path fires
 the hook alongside the attack path — wiring only the attack path would have left
 Combust and Fire Breathing unable to trigger the relic.
+
+### 6.11 The turn-boundary batch, and the energy bug it exposed
+
+Six relics on §5's batch 4: Art of War, Captain's Wheel, Horn Cleat, Mercury
+Hourglass, Orange Pellets and Ice Cream. 74 → 80. Each needed a small piece of
+shared machinery rather than a bespoke arm.
+
+**End-of-turn energy was being discarded, and that destroyed Ice Cream.**
+`handle_end_turn` set `character.energy = 0` before the enemy phase. Without Ice
+Cream this is invisible — the turn-start refill replaces the total either way —
+so no test could have caught it. With Ice Cream the leftover is exactly what
+carries forward, and the relic silently did nothing. The discard is removed:
+`query.cc`'s `energy_after_turn_start` is now the single authority on what
+energy a turn begins with, and it replaces the total unless Ice Cream is held,
+in which case it adds. Nothing reads energy between the two points.
+
+Ice Cream lives in the query layer and not in a relic arm because that is where
+StS puts it: `IceCream.java` is an empty class with no hooks, and
+`EnergyManager::recharge()` branches on holding it.
+
+**Orange Pellets clears more than the Debuff enum.** StS's `RemoveDebuffsAction`
+removes every power whose `type` is DEBUFF, and `StrengthPower` reports DEBUFF
+whenever its amount is negative. So a Strength reduction from Disarm or
+Shockwave is cleared along with Weak and Vulnerable. Our Strength is a `Power`,
+so clearing the debuff map alone would have left it — the executor now also
+erases any power holding a negative value. Two tests pin both halves: the
+reduction goes, and Inflame's +2 stays.
+
+**Horn Cleat and Captain's Wheel key on `turn_number`, not a counter.** StS
+resets their counters in `atBattleStart`, but our `fire_turn_start_relic` runs
+BEFORE the CombatStart arm (§6.6's two call sites), so a reset there would erase
+turn 1's increment. `turn_number` is per-combat by construction and cannot
+double-fire; the relic counter still carries the countdown the icon displays.
+
+**Art of War reads the flag the previous turn left behind.** Three per-turn
+`played_*_this_turn` flags on `Character` are set by the `CardPlayedHook`
+executor — so a card played by Havoc, Mayhem or Double Tap counts exactly as a
+hand-played one does — and cleared at turn start immediately AFTER the hooks
+have read them. Art of War never fires on turn 1, matching StS's `firstTurn`
+guard: there is no previous turn to have played an Attack in.
+
+**Lizard Tail was split out** (§3.1 row 15 pairs it with Sacred Bark under
+PlayerDeath). `Hook::PlayerDeath` does not exist in the enum at all, and adding
+it means intercepting `check_character_terminal` so a listener can cancel the
+death — a change to how a fight ends, not a turn-boundary addition.

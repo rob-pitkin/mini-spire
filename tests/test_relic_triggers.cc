@@ -100,6 +100,189 @@ TEST(RelicTriggers, VajraGrantsStrengthAtCombatStart) {
   EXPECT_EQ(get_status(with.character.powers, Power::Strength), 1);
 }
 
+// End the player's turn through the real action path, so the enemy phase and
+// the next turn's start hooks both run.
+bool end_turn(CombatState& s) {
+  return apply_action(s, encode_action(ActionBlock::EndTurn));
+}
+
+// ------------------------------------------------- turn-boundary relics
+//
+// Every relic here fires from fire_turn_start_relic, which runs at BOTH the
+// combat-start sub-phase (turn 1) and the turn-start hook (turns 2+) — §6.6's
+// two call sites. Numbers are from the decompiled classes, wiki cross-checked.
+
+// Mercury Hourglass: 3 damage to all enemies at the start of every turn,
+// turn 1 included. Asserted as a delta against the same fight without it.
+TEST(RelicTriggers, MercuryHourglassHitsEveryEnemyOnTurnOne) {
+  const CombatState with = fight_with({RelicId::MercuryHourglass});
+  const CombatState without = bare_fight();
+
+  ASSERT_EQ(with.enemies.size(), without.enemies.size());
+  for (std::size_t i = 0; i < with.enemies.size(); ++i) {
+    EXPECT_EQ(with.enemies[i].hp, without.enemies[i].hp - 3) << "slot " << i;
+  }
+}
+
+// ...and again every turn after, which is what separates it from a
+// combat-start relic.
+TEST(RelicTriggers, MercuryHourglassFiresAgainOnTheNextTurn) {
+  const auto two_turns = [](std::vector<RelicId> ids) {
+    CombatState s = fight_with(std::move(ids));
+    s.character.hp = 200;  // survive the enemy phase
+    s.character.max_hp = 200;
+    end_turn(s);
+    return s;
+  };
+  const CombatState with = two_turns({RelicId::MercuryHourglass});
+  const CombatState without = two_turns({});
+
+  ASSERT_EQ(with.outcome, Outcome::InProgress);
+  ASSERT_EQ(with.turn_number, 2);
+  for (std::size_t i = 0; i < with.enemies.size(); ++i) {
+    EXPECT_EQ(with.enemies[i].hp, without.enemies[i].hp - 6) << "slot " << i;
+  }
+}
+
+// Horn Cleat: 14 Block at the start of the SECOND turn, and only then.
+TEST(RelicTriggers, HornCleatBlocksOnTheSecondTurnOnly) {
+  CombatState s = fight_with({RelicId::HornCleat});
+  s.character.hp = 200;
+  s.character.max_hp = 200;
+  EXPECT_EQ(s.character.current_block, 0) << "fired on turn 1";
+
+  ASSERT_TRUE(end_turn(s));
+  ASSERT_EQ(s.turn_number, 2);
+  EXPECT_EQ(s.character.current_block, 14);
+
+  ASSERT_TRUE(end_turn(s));
+  ASSERT_EQ(s.turn_number, 3);
+  EXPECT_EQ(s.character.current_block, 0) << "fired twice";
+}
+
+// Captain's Wheel: the same shape on the THIRD turn, for 18.
+TEST(RelicTriggers, CaptainsWheelBlocksOnTheThirdTurn) {
+  CombatState s = fight_with({RelicId::CaptainsWheel});
+  s.character.hp = 200;
+  s.character.max_hp = 200;
+
+  EXPECT_EQ(s.character.current_block, 0) << "fired on turn 1";
+  ASSERT_TRUE(end_turn(s));
+  EXPECT_EQ(s.character.current_block, 0) << "fired on turn 2";
+  ASSERT_TRUE(end_turn(s));
+  ASSERT_EQ(s.turn_number, 3);
+  EXPECT_EQ(s.character.current_block, 18);
+}
+
+// Art of War: an extra Energy at the start of a turn that follows one where no
+// Attack was played. Never on turn 1 — there is no previous turn.
+TEST(RelicTriggers, ArtOfWarPaysAfterAnAttacklessTurn) {
+  CombatState with = fight_with({RelicId::ArtOfWar});
+  CombatState without = bare_fight();
+  with.character.hp = 200;
+  without.character.hp = 200;
+
+  EXPECT_EQ(with.character.energy, without.character.energy)
+      << "Art of War paid on turn 1";
+
+  ASSERT_TRUE(end_turn(with));
+  ASSERT_TRUE(end_turn(without));
+  EXPECT_EQ(with.character.energy, without.character.energy + 1);
+}
+
+TEST(RelicTriggers, ArtOfWarIsSilentWhenAnAttackWasPlayed) {
+  CombatState with = fight_with({RelicId::ArtOfWar});
+  CombatState without = bare_fight();
+  for (CombatState* s : {&with, &without}) {
+    s->character.hp = 200;
+    s->character.energy = 3;
+    s->current_hand.clear();
+    s->current_hand.push_back(Card{CardId::Strike});
+    ASSERT_TRUE(apply_action(*s, card_action(CardId::Strike, 0)));
+    ASSERT_TRUE(end_turn(*s));
+  }
+  EXPECT_EQ(with.character.energy, without.character.energy);
+}
+
+// Orange Pellets: playing an Attack, a Skill and a Power in ONE turn removes
+// every debuff.
+TEST(RelicTriggers, OrangePelletsClearsDebuffsOnAllThreeTypes) {
+  CombatState s = fight_with({RelicId::OrangePellets});
+  s.character.energy = 9;
+  s.character.debuffs[Debuff::Weak] = 2;
+  s.character.debuffs[Debuff::Vulnerable] = 3;
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Inflame});  // Power
+  s.current_hand.push_back(Card{CardId::Defend});   // Skill
+  s.current_hand.push_back(Card{CardId::Strike});   // Attack
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Inflame)));
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::Weak), 2) << "fired on one";
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::Weak), 2) << "fired on two";
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::Weak), 0);
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::Vulnerable), 0);
+}
+
+// A Strength reduction goes too. StS marks a negative StrengthPower as a
+// DEBUFF, so RemoveDebuffsAction strips it — and in our engine Strength is a
+// Power, so clearing the debuff map alone would leave it behind.
+TEST(RelicTriggers, OrangePelletsClearsANegativeStrength) {
+  CombatState s = fight_with({RelicId::OrangePellets});
+  s.character.energy = 9;
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Inflame});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Inflame)));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
+  // Applied after Inflame so its +2 cannot mask the reduction.
+  s.character.powers[Power::Strength] = -3;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 0)
+      << "the Strength reduction survived";
+}
+
+// A positive power is NOT a debuff and must survive.
+TEST(RelicTriggers, OrangePelletsLeavesBuffsAlone) {
+  CombatState s = fight_with({RelicId::OrangePellets});
+  s.character.energy = 9;
+  s.character.debuffs[Debuff::Weak] = 2;
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Inflame});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Inflame)));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::Weak), 0);
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 2)
+      << "Inflame's Strength was cleared as though it were a debuff";
+}
+
+// Ice Cream: unspent energy carries into the next turn instead of being
+// replaced. Implemented as a query, because StS's IceCream.java has no hooks.
+TEST(RelicTriggers, IceCreamCarriesUnspentEnergyForward) {
+  CombatState with = fight_with({RelicId::IceCream});
+  CombatState without = bare_fight();
+  with.character.hp = 200;
+  without.character.hp = 200;
+  const int per_turn = with.character.energy_per_turn;
+  ASSERT_EQ(with.character.energy, per_turn);
+
+  ASSERT_TRUE(end_turn(with));      // nothing spent
+  ASSERT_TRUE(end_turn(without));
+
+  EXPECT_EQ(with.character.energy, per_turn * 2);
+  EXPECT_EQ(without.character.energy, per_turn) << "the control carried energy";
+}
+
 // --------------------------------------------- the three previously-dead hooks
 //
 // EnemyDeath, ShuffleDrawPile and BlockBroken existed in the Hook enum with
