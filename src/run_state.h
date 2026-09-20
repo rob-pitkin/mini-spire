@@ -351,6 +351,21 @@ struct RunState {
   // StS, which is a general rule rather than a per-relic quirk.
   void gain_max_hp(int amount);
 
+  // Lower Max HP by `amount`. NOT gain_max_hp with a negative: gaining Max HP
+  // heals, losing it does not hurt. StS's decreaseMaxHealth lowers the maximum,
+  // floors it at 1, and clamps current HP only when it now exceeds that
+  // maximum — so a player at 20/80 who loses 3 Max HP is at 20/77, not 17/77.
+  void lose_max_hp(int amount);
+
+  // Take the card at `index` out of the master deck, applying the two rules
+  // every removal owes: Curse of the Bell refuses to leave at all, and Parasite
+  // charges 3 Max HP on the way out. Returns whether the card actually left, so
+  // a caller can decline to charge for a removal that did not happen.
+  //
+  // Every removal path goes through here — the shop's purchase and Peace Pipe's
+  // Toke — because the rules held in NEITHER while each erased the deck itself.
+  bool remove_card_from_deck(int index);
+
   // Upgrade up to `count` random upgradable cards of `type` in the master deck,
   // drawn without replacement. Returns how many were actually upgraded, which
   // can be fewer than asked when the deck has run out of eligible cards.

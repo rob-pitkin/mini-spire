@@ -346,15 +346,36 @@ Reading the wiki's effect text is what separated them.
 
 Both are deferred to batch 4/5 rather than implemented wrongly now.
 
-### 6.4 Du-Vu Doll is correct but unreachable: no curse card exists
+### 6.4 Du-Vu Doll is correct but unreachable: no curse can enter a deck
 
-`CardType::Curse` is in the enum, but **no curse card is implemented**, so a
-deck's curse count is always zero and Du-Vu Doll always grants 0 Strength. The
-counting logic is right and cannot be tested.
+**Corrected 2026-09-20.** This section used to say "no curse card is
+implemented". That is no longer true and was misleading even then: all 11 curse
+rows exist in `CARD_DATABASE` (the vocabulary is 189 + 70 + **11**). The real
+blocker is ACQUISITION — nothing puts a curse into a deck, so a deck's curse
+count is always zero and Du-Vu Doll always grants 0 Strength. Cursed Key
+(§6.2) is in the same state, and both stay blocked until events, Neow and
+Cursed Key's own chest can add one.
 
-Same state as Cursed Key (§6.2), and the same blocker: curses need to exist as
-cards before either relic does anything. Ascender's Bane is out of scope
-(Ascension is pinned at 0, §15), so the first curses will arrive with events.
+Of the 11, **4 already work** by riding machinery that exists for other cards:
+Clumsy (`ethereal`), Decay (`end_of_turn_damage_in_hand`, Burn's field), Writhe
+(`innate`), and Injury, whose whole rule is being an unplayable clog.
+
+**7 are data-only.** Their `CardData` fields are set and asserted by
+`Curses.TheUnwiredCursesCarryTheirData`, and no engine code reads them —
+Regret, Doubt, Shame, Pain and Normality (combat), Parasite and Curse of the
+Bell (run layer). The test is honest about this; it says so in its name.
+
+Two of those seven were worse than unwired — they were **wrong**, because the
+deck already had removal paths that ignored them. `buy_card_removal` and
+`rest_toke` each erased from `master_deck` directly, so Curse of the Bell could
+be removed at a shop and Parasite cost nothing. Both now route through
+`RunState::remove_card_from_deck`, which is the only place a card leaves the
+master deck. Note `lose_max_hp` is deliberately NOT `gain_max_hp` with a
+negative: gaining Max HP heals by the same amount, losing it only clamps.
+
+⚠️ Still owed: when the run-layer action space lands, Curse of the Bell must be
+excluded from the removal MASK as well. Refusing it in the method keeps the
+state correct, but an agent can still spend a step asking.
 
 ### 6.7 Relics fire SEQUENTIALLY, not batched — found by a failing test
 

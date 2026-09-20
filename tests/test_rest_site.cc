@@ -323,6 +323,34 @@ TEST(CampfireRelics, PeacePipeOffersTokeAndRemovesACard) {
   EXPECT_EQ(run.master_deck.size(), before - 1);
 }
 
+// The same two rules as the shop's removal. They are one helper precisely so
+// that this path cannot drift from that one — it already had: both erased the
+// deck directly and neither checked the card.
+TEST(CampfireRelics, TokeCannotRemoveCurseOfTheBell) {
+  RunState run = at_a_campfire({RelicId::PeacePipe});
+  run.master_deck.push_back(Card{CardId::CurseOfTheBell});
+  const size_t deck = run.master_deck.size();
+
+  run.rest_toke(static_cast<int>(deck) - 1);
+
+  EXPECT_EQ(run.master_deck.size(), deck) << "the Bell was smoked";
+  EXPECT_EQ(run.phase, Phase::Rest)
+      << "a refused Toke consumed the rest site anyway";
+}
+
+TEST(CampfireRelics, TokingParasiteCostsThreeMaxHp) {
+  RunState run = at_a_campfire({RelicId::PeacePipe});
+  run.master_deck.push_back(Card{CardId::Parasite});
+  const int max_before = run.max_hp;
+  run.hp = max_before - 20;
+  const int hp_before = run.hp;
+
+  run.rest_toke(static_cast<int>(run.master_deck.size()) - 1);
+
+  EXPECT_EQ(run.max_hp, max_before - 3);
+  EXPECT_EQ(run.hp, hp_before);
+}
+
 TEST(CampfireRelics, TokeIsNotOfferedWithoutPeacePipe) {
   EXPECT_FALSE(offers(at_a_campfire({}), RestOption::Toke));
 }

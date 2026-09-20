@@ -330,6 +330,63 @@ TEST(Shop, OnlyOneRemovalPerShop) {
   EXPECT_EQ(run.master_deck.size(), deck) << "removed twice in one shop";
 }
 
+// Curse of the Bell's entire rule is that it cannot leave the deck. Removal
+// used to erase whatever index it was handed, so a shop could remove it.
+TEST(Shop, CurseOfTheBellCannotBeRemoved) {
+  RunState run = at_a_shop();
+  run.master_deck.push_back(Card{CardId::CurseOfTheBell});
+  const size_t deck = run.master_deck.size();
+  const int bell = static_cast<int>(deck) - 1;
+
+  run.buy_card_removal(bell);
+
+  EXPECT_EQ(run.master_deck.size(), deck) << "the Bell was removed";
+  EXPECT_EQ(run.gold, 500) << "a refused removal still charged";
+  EXPECT_EQ(run.shop_remove_price, kBaseRemovePrice)
+      << "a refused removal used up the shop's one removal";
+}
+
+// Parasite costs 3 Max HP on the way out (decompiled: onRemoveFromMasterDeck
+// -> decreaseMaxHealth(3)). Current HP is NOT charged — it only clamps.
+TEST(Shop, RemovingParasiteCostsThreeMaxHp) {
+  RunState run = at_a_shop();
+  run.master_deck.push_back(Card{CardId::Parasite});
+  const int max_before = run.max_hp;
+  run.hp = max_before - 20;  // comfortably below the new maximum
+  const int hp_before = run.hp;
+
+  run.buy_card_removal(static_cast<int>(run.master_deck.size()) - 1);
+
+  EXPECT_EQ(run.max_hp, max_before - 3);
+  EXPECT_EQ(run.hp, hp_before)
+      << "losing Max HP wounded the player; it should only clamp";
+}
+
+// The clamp, which is the only way current HP moves here.
+TEST(Shop, RemovingParasiteAtFullHpDragsCurrentHpDown) {
+  RunState run = at_a_shop();
+  run.master_deck.push_back(Card{CardId::Parasite});
+  run.hp = run.max_hp;
+  const int max_before = run.max_hp;
+
+  run.buy_card_removal(static_cast<int>(run.master_deck.size()) - 1);
+
+  EXPECT_EQ(run.max_hp, max_before - 3);
+  EXPECT_EQ(run.hp, run.max_hp) << "current HP must follow the maximum down";
+}
+
+// An ordinary card still removes, so the guards did not break the common path.
+TEST(Shop, RemovingAnOrdinaryCardCostsNoMaxHp) {
+  RunState run = at_a_shop();
+  const int max_before = run.max_hp;
+  const size_t deck = run.master_deck.size();
+
+  run.buy_card_removal(0);
+
+  EXPECT_EQ(run.master_deck.size(), deck - 1);
+  EXPECT_EQ(run.max_hp, max_before);
+}
+
 // Removal gets permanently dearer across the RUN, not per shop — which makes
 // deck thinning something the whole run competes for.
 TEST(Shop, RemovalGetsDearerForTheRestOfTheRun) {

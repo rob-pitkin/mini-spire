@@ -67,6 +67,32 @@ void RunState::gain_max_hp(int amount) {
   if (hp > max_hp) hp = max_hp;
 }
 
+void RunState::lose_max_hp(int amount) {
+  // Deliberately not the inverse of gain_max_hp. Decompiled decreaseMaxHealth:
+  // the maximum drops, floors at 1, and current HP follows ONLY if it is now
+  // above the maximum. Gaining heals; losing does not wound.
+  if (amount <= 0) return;
+  max_hp -= amount;
+  if (max_hp < 1) max_hp = 1;
+  if (hp > max_hp) hp = max_hp;
+}
+
+bool RunState::remove_card_from_deck(int index) {
+  if (index < 0 || index >= static_cast<int>(master_deck.size())) return false;
+  const CardData& data = CARD_DATABASE.at(master_deck[index].card_id);
+  // Curse of the Bell: "cannot be removed from your deck", and per the wiki it
+  // cannot be transformed either — the same gate, since a transform removes.
+  if (data.cannot_be_removed) return false;
+
+  // Parasite: 3 Max HP when it leaves the MASTER DECK (decompiled
+  // Parasite.onRemoveFromMasterDeck -> decreaseMaxHealth(3)). Not on exhaust,
+  // which is why Blue Candle is the intended out.
+  const int penalty = data.max_hp_loss_on_removal;
+  master_deck.erase(master_deck.begin() + index);
+  if (penalty > 0) lose_max_hp(penalty);
+  return true;
+}
+
 int RunState::upgrade_random_cards(CardType type, int count, RelicId source) {
   // Indexed by the relic's own id (see RngStream::RelicEffect): two relics can
   // be picked up on the same floor, so a floor index would give both the same
@@ -402,8 +428,9 @@ void RunState::rest_lift() {
 void RunState::rest_toke(int index) {
   if (phase != Phase::Rest) return;
   if (!has_relic(RelicId::PeacePipe)) return;
-  if (index < 0 || index >= static_cast<int>(master_deck.size())) return;
-  master_deck.erase(master_deck.begin() + index);
+  // A refused removal does not consume the rest site: in StS the card simply
+  // cannot be picked on the Toke screen, so the option is still there.
+  if (!remove_card_from_deck(index)) return;
   leave_room();
 }
 
@@ -675,12 +702,13 @@ void RunState::buy_card(int index) {
 void RunState::buy_card_removal(int deck_index) {
   if (phase != Phase::Shop) return;
   if (shop_remove_price < 0 || gold < shop_remove_price) return;
-  if (deck_index < 0 || deck_index >= static_cast<int>(master_deck.size())) {
-    return;
-  }
+
+  // The card leaves BEFORE the gold does. A refused removal — Curse of the
+  // Bell, or an index off the end — must not charge for nothing, and must
+  // leave the shop's one removal still unspent.
+  if (!remove_card_from_deck(deck_index)) return;
 
   gold -= shop_remove_price;
-  master_deck.erase(master_deck.begin() + deck_index);
   ++shop_remove_count;
   // One removal per shop; the next one costs more, for the rest of the run.
   shop_remove_price = -1;
