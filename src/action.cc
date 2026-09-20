@@ -814,6 +814,23 @@ void fire_card_played_relic(CombatState& state, HeldRelic& relic, CardType type,
       }
       break;
 
+    case RelicId::MummifiedHand:
+      // "Whenever you play a Power, a random card in your hand costs 0." The
+      // wiki corrects the card's own text: the discount lasts UNTIL THE CARD IS
+      // PLAYED, not until end of turn — "if you play the card, then return it
+      // to your hand, it no longer benefits". That is CostDuration::UntilPlayed,
+      // the duration Forethought already uses.
+      //
+      // Pushed as an action rather than reaching into the hand here: relic
+      // hooks push and never mutate. Madness shares the executor; the duration
+      // on the action is what separates them.
+      if (type == CardType::Power) {
+        Action a = make_action(ActionKind::DiscountRandomCardInHand);
+        a.card_cost_duration = CostDuration::UntilPlayed;
+        q.push_back(a);
+      }
+      break;
+
     case RelicId::PenNib:
       // Every 10th Attack is doubled, and the counter persists across turns and
       // combats like Nunchaku's. The tenth Attack must be doubled ITSELF, not
@@ -1694,6 +1711,12 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // how Madness still works on a card another effect made free this turn.
       // X-cost cards are never eligible (their cost is a sentinel, not a
       // number).
+      //
+      // Mummified Hand shares this executor but NOT the fallback tier: StS
+      // filters it on cost > 0 && costForTurn > 0 && !freeToPlayOnce, with no
+      // second pass, so a hand of already-free cards gives it nothing. The
+      // duration differs too, and rides on the action rather than being
+      // hardcoded — Madness is ThisCombat, Mummified Hand is UntilPlayed.
       std::vector<int> current_cost, printed_cost;
       for (int i = 0; i < static_cast<int>(state.current_hand.size()); ++i) {
         const Card& c = state.current_hand[i];
@@ -1702,13 +1725,16 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         if (instance_effective_cost(state, c) > 0) current_cost.push_back(i);
         if (d.cost > 0) printed_cost.push_back(i);
       }
+      const bool allow_fallback =
+          a.card_cost_duration == CostDuration::ThisCombat;
       const std::vector<int>& eligible =
-          !current_cost.empty() ? current_cost : printed_cost;
+          (!current_cost.empty() || !allow_fallback) ? current_cost
+                                                     : printed_cost;
       if (eligible.empty()) break;
       std::uniform_int_distribution<std::size_t> pick(0, eligible.size() - 1);
       Card& victim = state.current_hand[eligible[pick(state.card_rng)]];
       victim.cost_override = 0;
-      victim.cost_duration = CostDuration::ThisCombat;
+      victim.cost_duration = a.card_cost_duration;
       break;
     }
     case ActionKind::CapHandCost:

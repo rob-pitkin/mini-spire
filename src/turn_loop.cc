@@ -472,10 +472,26 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     const bool corrupted_skill =
         data.type == CardType::Skill &&
         get_status(state.character.powers, Power::Corruption) > 0;
+    // Medical Kit: playing a Status exhausts it. StS sets card.exhaust on use
+    // rather than editing the card's data, which is the same thing here.
+    const bool medical_kit_status =
+        data.type == CardType::Status &&
+        state.has_relic(RelicId::MedicalKit);
     // Havoc forces its card to exhaust regardless of what it would normally do.
-    pile_move.kind = (data.exhaust || corrupted_skill || ctx_play.force_exhaust)
-                         ? ActionKind::ExhaustCard
-                         : ActionKind::DiscardCard;
+    bool exhausts = data.exhaust || corrupted_skill || ctx_play.force_exhaust ||
+                    medical_kit_status;
+    // Strange Spoon: a card that would exhaust DISCARDS instead, half the time.
+    // Rolled from the card RNG, as StS does (cardRandomRng.randomBoolean in
+    // UseCardAction), and only for the PLAYED card's own exhaust — a card
+    // exhausted from hand by Second Wind or Fiend Fire is untouched, because
+    // those never reach this pile move. Powers do not reach here at all, which
+    // is StS's explicit `type != POWER` guard falling out of the branch above.
+    if (exhausts && state.has_relic(RelicId::StrangeSpoon)) {
+      std::uniform_int_distribution<int> coin(0, 1);
+      if (coin(state.card_rng) == 1) exhausts = false;
+    }
+    pile_move.kind =
+        exhausts ? ActionKind::ExhaustCard : ActionKind::DiscardCard;
     // played.card_id, NOT the card_id argument: since ROB-87 a card's id can
     // CHANGE during its own resolution (Rampage grows a rung), so the copy that
     // returns to the pile must be the one that leaves the queue, not the one
@@ -575,9 +591,15 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     a.gen_free_this_combat = data.generates_free_this_combat;
     q.push_back(a);
   }
-  // Madness: one random card in hand costs 0 for the rest of the combat.
+  // Madness: one random card in hand costs 0 for the rest of the combat. The
+  // duration is set HERE rather than in the executor, because Mummified Hand
+  // shares that executor with UntilPlayed — a bare Action would leave this at
+  // CostDuration::None and silently discount nothing.
   if (data.discounts_random_card_in_hand) {
-    q.push_back(Action{ActionKind::DiscountRandomCardInHand});
+    Action a;
+    a.kind = ActionKind::DiscountRandomCardInHand;
+    a.card_cost_duration = CostDuration::ThisCombat;
+    q.push_back(a);
   }
   // The Bomb: light a fuse. `card` names which Bomb, since the two differ only
   // in the damage they eventually deal.

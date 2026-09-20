@@ -245,13 +245,13 @@ per §1.
 
 ---
 
-## 7. Status: 85 of 140 wired
+## 7. Status: 88 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
 Running the count is what caught the Juzu Bracelet / Tiny Chest error in §3.2.
 
-The 55 remaining are not one backlog. **Most are blocked on engine pieces that
+The 52 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
@@ -265,7 +265,7 @@ have nothing to do with relics**, and those blockers are shared:
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell | all pause for player input |
-| **Nothing blocking — just unwritten** | **~30**: Maw Bank, Meal Ticket, Ceramic Fish, Old Coin, Magic Flower, Unceasing Top, Champion Belt, Charon's Ashes, Eternal Feather, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest, Dead Branch, Snecko Eye, Mummified Hand, Medical Kit, Strange Spoon, Ancient Tea Set, Pocketwatch, Chemical X, Tiny House, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11 and 5 in §6.12. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them |
+| **Nothing blocking — just unwritten** | **~27**: Maw Bank, Meal Ticket, Ceramic Fish, Old Coin, Magic Flower, Unceasing Top, Champion Belt, Charon's Ashes, Eternal Feather, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest, Dead Branch, Snecko Eye, Ancient Tea Set, Pocketwatch, Chemical X, Tiny House, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11 and 5 in §6.12. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them |
 | **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
@@ -441,12 +441,16 @@ Happy Flower is done (batch 3b) and Girya (2b) uses its counter too, so §3.3's
 run-scoped counters are now exercised end to end. Four counter relics remain,
 and each is blocked on a missing `Power`, not on the counter machinery:
 
-| relic | needs |
-|---|---|
-| **Incense Burner** | `Power::Intangible` — every 6 turns |
-| **Pen Nib** | a "next Attack deals double" power; the reference carries `PS::PEN_NIB` |
-| **Nunchaku** | nothing missing — needs the card-play hook (batch 5) |
-| **Ink Bottle** | nothing missing — needs the card-play hook (batch 5) |
+**✅ All four are now wired** (corrected 2026-09-20 — the table below described
+the state before `Power::Intangible`, `Power::PenNibCharge` and the card-play
+hook existed, and was read as current while planning a later batch):
+
+| relic | was blocked on | now |
+|---|---|---|
+| **Incense Burner** | `Power::Intangible` — every 6 turns | ✅ the Power exists; wired in `fire_turn_start_relic` |
+| **Pen Nib** | a "next Attack deals double" power | ✅ `Power::PenNibCharge`, granted on the ninth Attack so the tenth is the doubled one |
+| **Nunchaku** | the card-play hook | ✅ `fire_card_played_relic`, run-scoped counter |
+| **Ink Bottle** | the card-play hook | ✅ same, counting every card rather than a type |
 
 Intangible in particular is a real engine addition (damage reduced to 1 from all
 sources), not a relic detail.
@@ -660,6 +664,43 @@ the turn and expected 3 block, and read 6. The enemy's attack during the enemy
 phase is itself an HP loss, so the relic banks again — correct behaviour, and
 now pinned by its own test. Any test that ends a turn is also testing the enemy
 phase.
+
+### 6.13 The card-play batch: sharing an executor, and a near-miss
+
+Three relics — Mummified Hand, Medical Kit, Strange Spoon. 85 → 88. All three
+change what happens when a card is PLAYED, which is why they batch together.
+
+**Medical Kit** is a query-layer exception, not an effect: `is_playable` lets a
+Status through when the relic is held, and the pile move exhausts it. Status
+only — Blue Candle is the curse equivalent and stays blocked on curses reaching
+a deck. Slimed is untouched by either: it is already playable by design (cost 1,
+exhausts), exactly as in StS.
+
+**Strange Spoon** rolls 50% to discard a card that would exhaust. Three details
+from the source rather than the card text: it applies only to the PLAYED card's
+own exhaust (StS puts it in `UseCardAction`, so a card exhausted from hand by
+Second Wind or Fiend Fire is untouched), it excludes Powers, and it rolls from
+`cardRandomRng` — our `card_rng`, the same stream Discovery and Infernal Blade
+use. The Power exclusion needs no code: our pile move is already gated on
+non-Power.
+
+**Mummified Hand shares Madness's executor** rather than duplicating it, and the
+two differ in exactly two ways, both now carried on the action instead of being
+hardcoded: Madness lasts `ThisCombat` and falls back to printed cost when every
+card is already discounted, while Mummified Hand is `UntilPlayed` with no
+fallback — StS filters it on `cost > 0 && costForTurn > 0 && !freeToPlayOnce`
+and stops there. The `UntilPlayed` duration is the wiki correcting the card's
+own text: "the description states that it lasts until the end of the turn, but
+this is not in fact the case".
+
+⚠️ **The near-miss worth recording.** Madness pushed a bare
+`Action{ActionKind::DiscountRandomCardInHand}`, so `card_cost_duration`
+defaulted to `None`. Moving the duration onto the action would have silently set
+Madness's discount to `None` and disabled its fallback tier — a live bug in a
+shipped card, introduced by a change to a different relic. Caught by reading the
+push site before writing, not by a test, and now pinned by
+`RelicTriggers.MadnessStillDiscountsForTheWholeCombat`. Sharing an executor
+means auditing every existing caller for the fields it never had to set.
 
 **Red Skull was split out** (task, and a new blocker row above). It keys on
 crossing 50% Max HP in both directions — `onBloodied` and `onNotBloodied` — so

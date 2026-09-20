@@ -291,7 +291,15 @@ int strength_multiplier(CardId card) {
 
 bool is_playable(const CombatState& state, CardId card) {
   const CardData& data = CARD_DATABASE.at(card);
-  if (data.unplayable) return false;  // Dazed etc. (ROB-65)
+  if (data.unplayable) {
+    // Medical Kit: "Unplayable Status cards can now be played." STATUS only —
+    // Blue Candle is the curse equivalent and is blocked on curses reaching a
+    // deck. Slimed is untouched either way: it is already playable by design
+    // (cost 1, exhausts on play), exactly as in StS.
+    const bool medical_kit_status =
+        data.type == CardType::Status && state.has_relic(RelicId::MedicalKit);
+    if (!medical_kit_status) return false;  // Dazed etc. (ROB-65)
+  }
   // Entangle blocks all Attack-type cards for a turn (ROB-75).
   if (data.type == CardType::Attack &&
       get_status(state.character.debuffs, Debuff::Entangle) > 0) {

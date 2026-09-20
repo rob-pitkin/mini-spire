@@ -130,6 +130,149 @@ void lose_hp(CombatState& s, int amount) {
   drain(s, q, ctx);
 }
 
+// ------------------------------------------------- card-play relics
+
+// Medical Kit: "Unplayable Status cards can now be played. Playing a Status
+// will Exhaust the card."
+TEST(RelicTriggers, MedicalKitMakesAStatusPlayableAndExhaustsIt) {
+  CombatState s = fight_with({RelicId::MedicalKit});
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Wound});
+  s.exhaust_pile.clear();
+  s.discard_pile.clear();
+
+  EXPECT_TRUE(is_playable(s, CardId::Wound));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Wound)));
+
+  EXPECT_TRUE(s.current_hand.empty());
+  ASSERT_EQ(s.exhaust_pile.size(), 1u);
+  EXPECT_EQ(s.exhaust_pile.back().card_id, CardId::Wound);
+  EXPECT_TRUE(s.discard_pile.empty()) << "a played Status must exhaust";
+}
+
+TEST(RelicTriggers, WithoutMedicalKitAStatusStaysUnplayable) {
+  CombatState s = bare_fight();
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Wound});
+
+  EXPECT_FALSE(is_playable(s, CardId::Wound));
+  EXPECT_FALSE(apply_action(s, card_action(CardId::Wound)));
+}
+
+// Status only. Blue Candle is the curse equivalent, and is blocked on curses
+// being able to reach a deck at all.
+TEST(RelicTriggers, MedicalKitDoesNotMakeCursesPlayable) {
+  CombatState s = fight_with({RelicId::MedicalKit});
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Injury});
+
+  EXPECT_FALSE(is_playable(s, CardId::Injury));
+}
+
+// Mummified Hand: "whenever you play a Power, a random card in your hand costs
+// 0." The wiki corrects the card text — it lasts until the card is PLAYED.
+TEST(RelicTriggers, MummifiedHandDiscountsACardWhenAPowerIsPlayed) {
+  CombatState s = fight_with({RelicId::MummifiedHand});
+  s.character.energy = 9;
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Inflame});  // the Power
+  s.current_hand.push_back(Card{CardId::Bash});     // costs 2
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Inflame)));
+
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].cost_override, 0);
+  EXPECT_EQ(s.current_hand[0].cost_duration, CostDuration::UntilPlayed);
+}
+
+TEST(RelicTriggers, MummifiedHandIgnoresNonPowers) {
+  CombatState s = fight_with({RelicId::MummifiedHand});
+  s.character.energy = 9;
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Bash});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].cost_override, kNoCostOverride);
+}
+
+// Unlike Madness, there is no fallback tier: StS filters on
+// cost > 0 && costForTurn > 0, so a hand of already-free cards gives it
+// nothing rather than re-discounting one.
+TEST(RelicTriggers, MummifiedHandSkipsCardsThatAreAlreadyFree) {
+  CombatState s = fight_with({RelicId::MummifiedHand});
+  s.character.energy = 9;
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Inflame});
+  Card already_free{CardId::Bash};
+  already_free.cost_override = 0;
+  already_free.cost_duration = CostDuration::ThisTurn;
+  s.current_hand.push_back(already_free);
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Inflame)));
+
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].cost_duration, CostDuration::ThisTurn)
+      << "an already-free card was re-discounted";
+}
+
+// Madness shares that executor, and its duration now rides on the action. A
+// bare Action would leave it at CostDuration::None and discount nothing.
+TEST(RelicTriggers, MadnessStillDiscountsForTheWholeCombat) {
+  CombatState s = bare_fight();
+  s.character.energy = 9;
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Madness});
+  s.current_hand.push_back(Card{CardId::Bash});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Madness)));
+
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].cost_override, 0);
+  EXPECT_EQ(s.current_hand[0].cost_duration, CostDuration::ThisCombat);
+}
+
+// Strange Spoon: a card that would Exhaust when played instead discards, half
+// the time. Rolled per play, so this samples seeds rather than asserting one.
+TEST(RelicTriggers, StrangeSpoonSometimesDiscardsAnExhaustingCard) {
+  ASSERT_TRUE(CARD_DATABASE.at(CardId::Apotheosis).exhaust)
+      << "this test needs a card that exhausts on play";
+
+  int to_exhaust = 0, to_discard = 0;
+  for (uint32_t seed = 0; seed < 40; ++seed) {
+    CombatState s = fight_with({RelicId::StrangeSpoon}, seed);
+    s.character.energy = 9;
+    s.current_hand.clear();
+    s.current_hand.push_back(Card{CardId::Apotheosis});
+    s.exhaust_pile.clear();
+    s.discard_pile.clear();
+
+    ASSERT_TRUE(apply_action(s, card_action(CardId::Apotheosis)));
+    if (!s.exhaust_pile.empty()) ++to_exhaust;
+    if (!s.discard_pile.empty()) ++to_discard;
+  }
+
+  EXPECT_GT(to_exhaust, 0) << "the spoon procced every single time";
+  EXPECT_GT(to_discard, 0) << "the spoon never procced";
+}
+
+TEST(RelicTriggers, WithoutTheSpoonAnExhaustingCardAlwaysExhausts) {
+  for (uint32_t seed = 0; seed < 12; ++seed) {
+    CombatState s = fight_with({}, seed);
+    s.character.energy = 9;
+    s.current_hand.clear();
+    s.current_hand.push_back(Card{CardId::Apotheosis});
+    s.exhaust_pile.clear();
+    s.discard_pile.clear();
+
+    ASSERT_TRUE(apply_action(s, card_action(CardId::Apotheosis)));
+    EXPECT_EQ(s.exhaust_pile.size(), 1u) << "seed " << seed;
+    EXPECT_TRUE(s.discard_pile.empty()) << "seed " << seed;
+  }
+}
+
 // ------------------------------------------------- incoming-damage relics
 //
 // Tungsten Rod and Torii reduce HP loss; Centennial Puzzle, Runic Cube and
