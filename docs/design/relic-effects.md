@@ -24,8 +24,8 @@ rather than a guess.
   acquisition order, below.
 - **§4.2 — relic order in the observation: deferred, not blocking.** The engine
   fires in acquisition order for parity regardless of what the observation
-  shows, so `relics` vector order is load-bearing either way and no batch below
-  depends on the answer. The v2 observation is not built, so adding a channel
+  shows, so the order of the `relics` vector matters either way and no batch
+  below depends on the answer. The v2 observation is not built, so adding a channel
   later costs nothing that §5.4's published constants do not already cover.
   Revisit if an implemented relic turns out genuinely order-sensitive.
 
@@ -95,15 +95,15 @@ Coin, Shovel, Wing Boots, Peace Pipe, plus Ginger / Turnip / Champion Belt, whic
 live in headers as query modifiers rather than event hooks (§3.3).
 
 **Standing rule this confirms:** `sts_lightspeed` is evidence of how a mechanic
-*can* be structured, never evidence that a mechanic does not exist. Absence there
-is a fact about that codebase.
+*can* be structured, never evidence that a mechanic does not exist. Absence
+there means only that that codebase does not implement it.
 
 ---
 
 ## 3. The taxonomy
 
-Three kinds of hook, which is the shape the classification actually has rather
-than one imposed on it.
+Three kinds of hook, taken from how the relics group rather than from a
+structure chosen in advance.
 
 ### 3.1 Event triggers — combat
 
@@ -200,7 +200,8 @@ for the rest, exactly as `DamageRule` is one for cards.
 explicit and reviewable in one place, which is the parity-critical property. 140
 relics spread across ~21 switches, though most relics have one trigger.
 
-**Recommendation: A with B as the escape hatch** — the house idiom. Declarative
+**Recommendation: A with B as the escape hatch** — the idiom already used for
+cards. Declarative
 rows for the regular shapes, a named-rule enum for the irregular ones, dispatched
 at trigger sites. It keeps `CombatState::clone()` a plain copy, since the table
 is static and only `HeldRelic{id, counter}` is per-state.
@@ -208,8 +209,8 @@ is static and only `HeldRelic{id, counter}` is per-state.
 ### 4.2 Does relic *order* need to be observable?
 
 In StS, when several relics fire on one trigger, they fire in **acquisition
-order**. With 46 relics on CombatStart, that ordering is load-bearing rather than
-theoretical.
+order**. With 46 relics on CombatStart, that ordering changes results rather
+than being a formality.
 
 But §5.2 block 8 specifies relics-held as a **multi-hot**, which discards order.
 Under §1 — *the observation should match what a human player can see* — a human
@@ -226,15 +227,15 @@ the agent cannot see.** It is also independent of 4.1.
 
 ## 5. Proposed batching
 
-Ordered so that infrastructure lands before volume, and the largest homogeneous
-group is not first.
+Ordered so the trigger infrastructure is built before the bulk of the relics,
+and the largest single group is not first.
 
 | batch | contents | n |
 |---|---|---|
 | 0 | Trigger infrastructure: sites fire, nothing wired. Includes the three trigger points the reference lacks (EnemyDeath, BlockBroken, outgoing damage modifier). | — |
 | 1 | Query modifiers (§3.3) — no event plumbing, validates the declarative path | ~20 |
 | 2 | Run-layer triggers (§3.2) — no combat coupling | ~40 |
-| 3 | CombatStart (§3.1 row 1) — the big one, after the pattern is proven | 46 |
+| 3 | CombatStart (§3.1 row 1) — the largest group, after the pattern is proven | 46 |
 | 4 | Turn boundaries + CombatEnd | ~20 |
 | 5 | Card-play and damage triggers | ~25 |
 | 6 | Potions | 33 |
@@ -264,14 +265,18 @@ have nothing to do with relics**, and those blockers are shared:
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell | all pause for player input |
-| **Nothing blocking — just unwritten** | ~25, including Maw Bank, Meal Ticket, Ceramic Fish, Old Coin, Horn Cleat, Captain's Wheel, Mercury Hourglass, Tungsten Rod, Torii, Magic Flower, Ice Cream, Unceasing Top, Champion Belt, Charon's Ashes, Self-Forming Clay, Centennial Puzzle, Eternal Feather, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest | the honest remainder |
+| **Nothing blocking — just unwritten** | ~25, including Maw Bank, Meal Ticket, Ceramic Fish, Old Coin, Horn Cleat, Captain's Wheel, Mercury Hourglass, Tungsten Rod, Torii, Magic Flower, Ice Cream, Unceasing Top, Champion Belt, Charon's Ashes, Self-Forming Clay, Centennial Puzzle, Eternal Feather, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest | the remainder, with nothing blocking them |
 
-**What this says about sequencing.** Continuing to batch relics hits diminishing
-returns: the next batch would be ~25 relics of genuine work followed by a wall of
-blockers. The six missing Powers and the curse/colorless card gaps are each
-worth more than the relics behind them — Intangible, Thorns and Plated Armor are
-core mechanics that cards want too, and colorless cards also unblock two shop
-slots that have been empty since §4.3.
+**What this says about sequencing.** Updated 2026-09-20. The earlier advice here
+was to build the missing Powers and the curse and colorless card gaps before
+more relics, because each unblocked more than the relics behind it. The Powers
+are done, all 35 colorless cards are done, and the three dead hooks are wired,
+which is what moved the count from 69 to 74.
+
+What is left splits cleanly: about 25 relics with nothing blocking them, and the
+rest waiting on potions, events, curse acquisition, a boss encounter, or a
+choice screen. Those four are separate pieces of work with their own tasks, so
+the next relic batch is the 25, not another dependency hunt.
 
 ---
 
@@ -295,7 +300,7 @@ Needs a ruling then, not now: does a combat-start kill fire on-death hooks?
 damage an enemy must reach one of the two death paths* — so the answer is
 probably yes, and the fix is to call it after the second drain. What needs
 deciding is whether an enemy that dies before the player has acted should
-trigger Spore Cloud and friends at all.
+trigger Spore Cloud and the other on-death effects at all.
 
 ### 6.2 The boss energy relics have their upside but not their drawback
 
@@ -324,11 +329,11 @@ of these is Boss tier, and no run can obtain a Boss-tier relic today: the three
 boss-relic source in an Act 1 run (§4.4) and is not implemented. Verified by
 reading all three sites, not by grep.
 
-**So the moment Neow lands, this becomes a live parity bug** — an agent would
+**So when Neow is implemented, this becomes a live parity bug** — an agent would
 train against eleven relics that are pure upside. Neow must not ship before the
 drawbacks, or must exclude these from its boss-relic pool until they do.
 
-Runic Dome is the sharp one: its drawback is an *observation* change (hiding
+Runic Dome is the hardest case: its drawback is an *observation* change (hiding
 intent), so it cannot be fixed in the engine at all and is blocked on the v2
 observation work. It is the one relic here whose parity depends on §5.
 
@@ -381,8 +386,8 @@ state correct, but an agent can still spend a step asking.
 
 The action queue batches: hooks push, and the queue drains once at the end. For
 relics that is **wrong wherever one relic reads what another just changed**,
-because StS applies relics one at a time — a relic's effect has landed before
-the next one looks at anything.
+because StS applies relics one at a time — a relic's effect is applied before
+the next one reads any state.
 
 **Burning Blood + Meat on the Bone is the case that proves it.** Burning Blood
 heals 6; Meat on the Bone then asks whether HP is at or below half. At 35 of 80:
@@ -471,7 +476,7 @@ choosing after the draw could pick the card that fits the hand it was given.
 That is strictly more information than a human has, which `observation-space.md`
 §1 makes a parity defect rather than a convenience.
 
-**What it cost.** `start_combat` used to be imperative — fire pre-draw hooks,
+**What changed.** `start_combat` used to be imperative — fire pre-draw hooks,
 drain, deal the hand, fire the rest, drain — and an imperative call has nowhere
 to be interrupted. The opening draw and the two post-draw hooks are now
 `ActionKind::DrawOpeningHand` and `ActionKind::CombatStartPostDraw`, queued
@@ -479,13 +484,13 @@ behind the pre-draw hooks and drained once. A relic that pauses at
 `RequestChoice` therefore parks the draw in `suspended_queue` with everything
 after it, and answering the choice resumes the sequence in order.
 
-**The new state shape.** A `CombatState` can be returned from `start_combat`
+**A state nothing produced before.** A `CombatState` can be returned from `start_combat`
 already paused, with an empty hand and a live `pending_choice`. Nothing else
 produces this, and anything that assumes "a fresh fight has a hand" is now
 wrong — the env's very first observation may be a choice screen. Four tests in
 `test_relic_triggers.cc` pin it, including that the answer is reachable through
 the action space on step 0 and that the parked `CombatStart` hooks (Vajra's
-Strength) still land afterwards.
+Strength) still run afterwards.
 
 **No discount.** Unlike Discovery, whose card text grants the free copy, Toolbox
 hands the card over at full price. `ChoiceKind::DiscoverColorlessCard` shares
@@ -498,7 +503,7 @@ defaulted to `CardId::Strike`, so Toolbox's prompt reported Strike as its
 source — in the observation and in the TUI header both. Rob ruled for a
 sentinel (2026-09-20) over a parallel `source_relic` field or leaving it.
 
-The sentinel is free because `kNumCardTypes` is a literal `270` rather than a
+The sentinel costs nothing because `kNumCardTypes` is a literal `270` rather than a
 count of the enum: `None` is **appended** and has **no `CARD_DATABASE` row**, so
 it sits one past the last real id, the `CARD_DATABASE.size() == kNumCardTypes`
 assert still holds, and `encode_action` cannot reach it — the action space stays

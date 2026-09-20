@@ -279,8 +279,8 @@ bang** — the queue arrives under card resolution first, then spreads.
 | **4c. Pause-on-choice** ✅ | `PendingChoice` POD + suspended `ActionQueue` on `CombatState`; the Option Slot Channel obs/mask encoding (`docs/design/decision-points.md`); the five choice cards (Armaments, Warcry, Headbutt, Exhume, Dual Wield); TUI choice screen. | Done: 334 C++ + 94 Python green, ASan clean, differential mask verify 14,823 masks / 0 mismatches. Pause → clone → resume round-trip pinned, both synthetically and through the real card path. |
 | **4d. Meta-cards** | Double Tap, Havoc, Armaments, Headbutt, Exhume, Dual Wield, Warcry (Tier D/E). | New card tests. |
 
-Tier C cards ship at Stage 4 (registry) but the *foundation* work of Stages 1–3
-is what they stand on. Stages 1–2 are the critical path.
+Tier C cards ship at Stage 4 (registry), but they depend on the foundation work
+of Stages 1–3. Stages 1–2 are the critical path.
 
 ---
 
@@ -377,8 +377,8 @@ Recorded for the decision log:
   faster, but (a) mid-card choices require flattening into composite actions —
   a permanent action-space tax on the RL interface, worse for pile-choices;
   (b) depth-first nested chaining re-creates the mutation-during-resolution bug
-  conditions and calcifies non-StS timing into tests; (c) if the queue arrives
-  later anyway (Tier E pressure), the chaining semantics get paid for twice.
+  conditions and locks non-StS timing into tests; (c) if the queue arrives later
+  anyway (Tier E pressure), the chaining work is done and then thrown away.
   Rejected in favor of doing the queue once, staged.
 
 ## Open questions (carried, not blocking Stages 1–2)

@@ -161,7 +161,7 @@ unblocked enemy damage, while `Hook::HpLostPlayer` (Rupture) fires only from
 ### 15. Sever Soul and Entrench resolve before the card's damage
 
 Sever Soul's exhausts are queued ahead of its attack so Feel No Pain / Dark
-Embrace respond first; Entrench's doubling likewise lands before any Body
+Embrace respond first; Entrench's doubling likewise resolves before any Body
 Slam-style read of block. Entrench's doubling is queued as a `GainBlock`, so
 Juggernaut sees it as a real block gain (pinned by a test) — but it is *not*
 `card_block`, so Dexterity and Frail do not apply to the doubled amount.

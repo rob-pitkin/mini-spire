@@ -162,8 +162,8 @@ entire job is to agree with another function.
 
 An earlier draft of this section implied we might emit **raw** values and let the
 consumer normalise. That has a cost this section glossed over: unnormalised input
-is a training footgun, and every user would have to redo the same work correctly
-before the environment behaves well. That is not algorithm-agnostic, it is
+trains badly, and every user would have to redo the same work correctly before
+the environment behaves well. That is not algorithm-agnostic, it is
 unhelpful-by-default.
 
 | | |
@@ -182,8 +182,8 @@ holding seven. **A human sees the difference.** That is a parity defect in the
 same category as an engine bug, by the standard we already hold ourselves to.
 
 The benefit was bounding the input range — which we already get by dividing by a
-fixed constant. So the cap buys nothing we do not have and costs a parity
-guarantee.
+fixed constant. So the cap gives nothing we do not already have, and loses a
+parity guarantee.
 
 If an overflow guard is ever wanted, set it somewhere provably unreachable in Act
 1 (32, say). That is a different thing from a compression, and it should be
@@ -209,8 +209,8 @@ Our 259k end-to-end steps/sec includes building a 1,772-float observation every
 step. **These numbers are not comparable, and we should stop implying they
 are.** Concretely:
 
-- add a **no-observation step path** to the benchmark, which is both the honest
-  comparison point and what an MCTS rollout actually needs;
+- add a **no-observation step path** to the benchmark, which is both the
+  comparable measurement and what an MCTS rollout actually needs;
 - report **steps/sec single-threaded** and note that theirs is 16-threaded;
 - do not publish a head-to-head until both are measured the same way.
 
@@ -331,8 +331,8 @@ from the declared pools and is the one to use.
 item by item and counting them, not asking a model for a total. That is a
 different and slower kind of work than every other row in this audit, and it is
 **not yet done**. Until it is, pool sizes are marked *derived from declared
-arrays, not independently confirmed* — which is honest, and materially stronger
-than the wiki summary they replaced.
+arrays, not independently confirmed* — which is accurate, and materially
+stronger than the wiki summary they replaced.
 
 #### ⚠️ The card-rarity sign trap
 

@@ -41,8 +41,8 @@ over combat and deck-building** is reachable here in a way it was not for him.
 
 HP is a **resource, not an objective**. In Slay the Spire you spend it to get
 further: taking a hit to save a turn, skipping a rest to smith, running an elite
-for the relic. Paying the agent to hold HP pays it to hoard currency whose only
-purpose is being spent.
+for the relic. Rewarding the agent for holding HP rewards it for not spending a
+resource whose only purpose is to be spent.
 
 The failure is not hypothetical or narrow. An HP-maximising agent avoids elites,
 declines Bloodletting, never plays Offering, and rests instead of smithing at
@@ -138,8 +138,8 @@ HP term safe to add alongside it.
 ### 4.1 The coefficients are configuration, not constants
 
 `α` and `β` are per-env hyperparameters fixed for the env's lifetime, following
-`hp_reward_coeff` (ROB-52). That makes the reward a research knob rather than a
-decision baked into the engine:
+`hp_reward_coeff` (ROB-52). That makes the reward a research parameter rather
+than a decision fixed in the engine:
 
 | `α` | `β` | what you get |
 |---:|---:|---|
@@ -155,12 +155,12 @@ So the sweep across this table is a study of **sample efficiency**, not of what
 the agent is trying to do. That makes it a clean ablation: every row has the
 same optimum, and the only thing varying is how quickly the agent finds it.
 
-That is also the honest way to test §7's first open question. If flat floor
-counting is too coarse, the `α > 0, β = 0` row is where it shows up.
+That is also how to test §7's first open question. If flat floor counting is too
+coarse, the `α > 0, β = 0` row is where it shows up.
 
 ## 5. Implementation requirements
 
-Two things are load-bearing rather than stylistic:
+Two things are requirements rather than style:
 
 **`Φ` must be 0 at terminal states.** Otherwise the `γᵀΦ(s_T)` term survives the
 telescoping sum, the agent can influence it, and the invariance guarantee — the
@@ -242,7 +242,7 @@ horizon, where `0.99^700 ≈ 0.0009` is not.
 Put plainly: the shaping is not merely a convenience, it is what makes the
 problem representable at a discount factor a critic can actually learn. That
 reframes §7's first open question — *"is `α·floors` too coarse?"* — because the
-term is doing structural work beyond signal density.
+term does more than add signal density.
 
 ### γ is an environment parameter, not a training detail
 
@@ -286,7 +286,7 @@ above.
    fight, which suggests flat progress was not enough for him.
 
    **Ruled (2026-08-03): start flat.** Weighting floors by act or encounter type
-   is a strategic judgment smuggled into the reward — the same objection §2
+   is a strategic judgment built into the reward — the same objection §2
    raises against rewarding HP, and §6 against encoding deck quality. Flat
    counting says only "further is better", which is true by definition. If it
    proves too coarse to learn from, that is a finding worth having explicitly

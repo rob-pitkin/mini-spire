@@ -239,7 +239,7 @@ In scope for `CombatState` / `turn_loop`:
 What **"unchanged" still guarantees**, precisely:
 
 - **`clone()` stays a plain copy**, and every added field stays POD / fixed-array
-  so it remains one. This is the load-bearing one — MCTS depends on it.
+  so it remains one. This is the one that matters most — MCTS depends on it.
 - **The action-queue invariant holds**: the queue is empty at every agent
   decision point, including the new non-combat ones.
 - **Combat semantics do not change** for a deck of existing cards with no relics
@@ -252,7 +252,7 @@ action constant, or `kObsSize`. Those all move, by design.
 adds a master deck, a 105-node map and relic/potion vectors; a naive deep copy
 per MCTS node is a throughput problem, not a correctness one. Measure
 `clone()` on `RunState` before and after — v1.0.0 published 438k steps/sec and
-that number is now load-bearing for the project's second milestone.
+that number now matters for the project's second milestone.
 
 ### 3.2 The handoff contract
 
@@ -340,7 +340,7 @@ should know that before going looking for the code path:
 **Ritual Dagger — the one Ironclad card whose card state is genuinely run-scoped
 — is not implemented.** So `end_combat` discards the piles and the master deck is
 untouched. The uid exists so that when Ritual Dagger lands there is something to
-match on; until then the honest statement is that the mechanism has no callers.
+match on; until then the mechanism has no callers.
 
 ### 3.3 Relic counters are per-run, uniformly
 
@@ -454,7 +454,7 @@ So the roll happens on use. **Both observations are consistent** because
 Drinking the potion on turn 1 or turn 5 draws from the same stream position, so
 the same cards come out — which looks exactly like a fight-start roll.
 
-**Why the distinction is load-bearing:** anything else that draws from
+**Why the distinction matters:** anything else that draws from
 `cardRandomRng` *does* change the offer. Infernal Blade uses
 `getTrulyRandomCardInCombat(bc.cardRandomRng, …)`, as does another Discovery. So
 in the real game, **playing an Infernal Blade before drinking an Attack Potion
@@ -736,9 +736,9 @@ That settles the general principle too, and it is worth stating once:
 > trained against the intended-but-nonexistent version is trained against a game
 > nobody plays.
 
-Consistent with what we already do: §3.5 treats Neow's *no-op* `r.random(0,0)`
-as load-bearing, which is the same category of unintended-but-real behaviour, and
-both `sts_map_oracle` and `sts_lightspeed` chase bit-exact RNG including quirks.
+Consistent with what we already do: §3.5 preserves Neow's *no-op* `r.random(0,0)`,
+which is the same category of unintended-but-real behaviour, and both
+`sts_map_oracle` and `sts_lightspeed` chase bit-exact RNG including quirks.
 
 ⚠️ **Implementation note:** this needs the *exact* conditions, which
 ["under some circumstances"](https://forgottenarbiter.github.io/Correlated-Randomness/)
@@ -1367,8 +1367,8 @@ today. That assertion is what turns a layout doc into an enforced contract.
 
 ### 5.5 Count vectors and multi-hots: the learning cost
 
-A fair question, and the honest answer is *not in the way people usually fear,
-but there is one real cost.*
+A fair question. The answer is *not in the way people usually fear, but there is
+one real cost.*
 
 **What is fine:**
 
@@ -1435,7 +1435,7 @@ pair is found whose order changes an outcome.
 
 One float per entity: **`cost + 1` if currently offered, `0` if not.**
 
-The `+1` is load-bearing. Card rewards, Neow blessings and event rewards are
+The `+1` matters. Card rewards, Neow blessings and event rewards are
 **free**, so a plain cost would encode 0 — identical to "not offered" — and a
 three-card reward screen would be bit-identical to an empty one. That is a
 §1.1 aliasing defect. An off-by-one on a magnitude costs nothing; invisible
@@ -1528,13 +1528,13 @@ That retires v1.0.0's positional option-slot channel, and it is exactly the fix
 `decision-points.md` §5.2 identified as correct and rejected:
 
 > "The fix that *would* work is to **index option slots by `CardId`** rather than
-> by rank … It was rejected because it is built against v2, not with it. Map
-> paths, shop items, events and rest options have no `CardId`."
+> by rank … It was rejected because it fits v1 only, not the v2 decisions that
+> follow. Map paths, shop items, events and rest options have no `CardId`."
 
 **That objection is now void.** Map positions, shop slots, events and rest
 options each get their own entity-indexed block (§6), so nothing needs the
-generic positional channel any more. The reason for the compromise has expired
-along with the compromise.
+generic positional channel any more. The reason for the compromise is gone, along
+with the compromise.
 
 Consequences to carry out:
 
@@ -1623,7 +1623,7 @@ version regardless. Reserving buys nothing and inflates every published number.
 safe guess: the earlier note said counting all one-time events in was the safe
 choice because a missing id costs a layout change. With the gates known, 6 events
 are simply unreachable — including them would reserve dead indices the agent can
-never use, which is its own (smaller) parity smell.
+never use, which is its own (smaller) parity problem.
 
 Per-event (max bit position used, since conditional options are masked in place):
 
@@ -1664,8 +1664,8 @@ whose meaning changes.
 
 Same argument as everywhere else in §6: action *k* means one thing forever. A
 shared id would make "pay 50 gold" and "leave" the same index under different
-conditions, which is rank-indexing wearing an entity-indexed costume — and it
-would alias two genuinely different choices in the policy's output layer.
+conditions, which is rank-indexing under another name — and it would alias two
+genuinely different choices in the policy's output layer.
 
 Note this is also why events need **no bespoke observation machinery**: block 17
 holds the current event one-hot, the mask says which options are live, and the
@@ -1691,8 +1691,8 @@ reward = terminal(win/loss) + γ·Φ(s′) − Φ(s)
 ```
 
 Potential-based, so the optimal policy is provably unchanged for any α, β
-(Ng, Harada & Russell 1999). **Two requirements are load-bearing:** `Φ` must be 0
-at terminal states, and the shaping `γ` must equal the learner's.
+(Ng, Harada & Russell 1999). **Two requirements must hold:** `Φ` must be 0 at
+terminal states, and the shaping `γ` must equal the learner's.
 
 ### 7.1 The reward is configurable
 
@@ -1709,7 +1709,7 @@ coefficients.** The env takes them as constructor parameters, following
 
 `α = β = 0` is not a special code path — it makes `Φ ≡ 0`, so the shaping term
 is identically zero and the reward *is* pure win/loss. Sparse reward falls out of
-the same expression, which is why the knob is safe.
+the same expression, which is why the parameter is safe.
 
 ⚠️ **Two things still to specify before implementation:**
 
@@ -1760,7 +1760,7 @@ would change the run's distribution.
 | **Gambling Chip** (discard *any number* — a subset choice) | engine discards nothing |
 | **Frozen Eye** (shows draw-pile *order*; informational, so auto-resolve does not apply) | **excluded from the shop pool** — the only true exclusion |
 
-**Honest cost:** a human makes these choices and the agent does not. A bounded,
+**The cost:** a human makes these choices and the agent does not. A bounded,
 documented parity divergence, strictly smaller than removing the content.
 
 **These must be loud, not buried (Rob, 2026-08-13).** Every divergence in this
@@ -1894,7 +1894,7 @@ Not design questions — settled, but easy to lose between here and the code.
 | **`compute_obs` must update incrementally** | The observation is 2.32× v1.0.0's and ~1,162 floats of it (the map) are constant within a fight. v1.0.0 published 438k/259k steps/sec. |
 | **Publish per-block offsets as header constants, `static_assert`ed against their writers** | §5.4. `sts_lightspeed`'s own `getObservationMaximums` is misaligned against the observation it describes — the bug this prevents. |
 | **Add `legal_actions()`** | Additive; MCTS wants child enumeration, not a mask scan. |
-| **Add a no-observation step path** | The honest comparison against pure simulators, and what an MCTS rollout actually needs. |
+| **Add a no-observation step path** | The comparable measurement against pure simulators, and what an MCTS rollout actually needs. |
 | **Publish the normalisation constants** | Makes normalisation auditable rather than implicit. |
 
 ### 10.5 The environment is not designed around SB3
@@ -2031,13 +2031,13 @@ heuristic, and compare
 If **B ≈ C**, drafting does not discriminate in Act 1 at A0 and M5 needs
 redefining. If **B ≪ C**, drafting matters and M5 is a valid milestone.
 
-**Timing (Rob):** run it once v2.0.0 is built, not before — the honest version
+**Timing (Rob):** run it once v2.0.0 is built, not before — a meaningful version
 needs the real run layer (sequential fights, HP carry, actual reward pools), and
 an approximation against the v1 engine would answer a different question.
 
 The consequence to accept: **M5 stays provisional until that experiment runs.**
 If drafting turns out not to discriminate in Act 1 at A0, M5 is measuring combat
-competence wearing a run-completion badge, and the milestone — not the
+competence and reporting it as run completion, and the milestone — not the
 environment — is what needs changing.
 
 The scale of the problem: ~16 draft/shop/rest decisions per ~200-step episode,
@@ -2095,7 +2095,7 @@ implement the spec.
 | 16 | All 20 special relics included, on a "cost of knowing" argument | **10 of 20** (§5.1) | The exclusion was justified as too expensive to determine. Rob rejected the premise: dead indices are not free, and Act 1 is the scope. Tracing them took one pass — and *two* (Gremlin Visage, Cultist Headpiece) turned out to be ungrantable in `sts_lightspeed` at all, resolved only by the wiki (Face Trader). |
 | 17 | Black Blood in `RELICS` | **cut** (§4.4) | Neow never offers the upgraded base relic, and Neow is the only boss-relic source in an Act 1 run. Unreachable by any path. |
 | 18 | Relics/potions as run-layer hooks | **first-class `CombatState`** (§3.0.1) | A hook model leaves the standalone combat env unable to show held relics or use potions — a fragment that only works inside a run. |
-| 20 | `Card::uid` "touches every test that builds a `Card` by hand… the single largest change to an existing type" | **additive; zero call sites changed** (§3.2) | Declaring `uid` last with a default sentinel keeps all 310 aggregate initialisations valid. The 447-test suite passed unchanged. A prediction about blast radius, made without checking the field order that determines it. |
+| 20 | `Card::uid` "touches every test that builds a `Card` by hand… the single largest change to an existing type" | **additive; zero call sites changed** (§3.2) | Declaring `uid` last with a default sentinel keeps all 310 aggregate initialisations valid. The 447-test suite passed unchanged. A prediction about how much it would touch, made without checking the field order that determines it. |
 | 21 | "permanent card changes written back by uid", stated as live behaviour | **the path has no callers** (§3.2) | Every per-instance change the engine can currently produce is combat-scoped, happens outside combat, or is `max_hp`. Ritual Dagger is not implemented. Found by trying to write the write-back and having nothing to put in it. |
 | 22 | A run starts holding no relics | **Burning Blood from floor 0** (§4) | Not a spec claim — an *omission* in the implementation, which no test could catch because nothing thought to assert it. It also undercut correction #17: Black Blood is excluded precisely because `relicCanSpawn(BLACK_BLOOD)` tests `has(BURNING_BLOOD)` and finds it true. A run without the starter made that exclusion unjustified. |
 | 23 | Chest gold and relic tier described only in code, with the correlation asserted as "the game's" and no source | **§4.0.1**, wiki-confirmed: gold only accompanies the **lowest rarity available to that chest size** | Taken from `sts_lightspeed` without the wiki cross-check the corollary requires — the one place in this phase where the standing rule was skipped. The mechanic turned out correct; the *comment* was wrong (it said "more likely to hold a common", which is impossible for a large chest), and there was no spec section to check either against. |

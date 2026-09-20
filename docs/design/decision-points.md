@@ -7,7 +7,7 @@
 >
 > This document is **retained as the record of why the positional design was
 > chosen**, which is still worth reading: the reasoning was sound for what was
-> known in 2026-07, and three of its premises simply expired.
+> known in 2026-07, and three of its premises are no longer true.
 >
 > | section | status |
 > |---|---|
@@ -75,7 +75,7 @@ The five 4c cards: **Armaments** (hand), **Warcry** (hand), **Dual Wield**
   plain deep copy. Follow `ActionQueue`'s fixed-capacity precedent — no
   `std::vector` in the pause state.
 - **R2 Determinism.** Same seed ⇒ same fight, including through pauses. Any
-  canonical option ordering becomes load-bearing and must be documented.
+  canonical option ordering affects behaviour and must be documented.
 - **R3 Legality via mask.** One source of truth.
 - **R4 The agent can always tell what it is being asked.** NLE measured this
   failure directly: agents "cannot determine whether a menu is open" and may
@@ -182,7 +182,7 @@ The combat path (0–510) is **byte-identical to today**. PPO trains on exactly
 the indices it trains on now; the slot channel is fully masked off during
 normal combat, and the combat indices are fully masked off during a pause.
 
-**Slot count = `kNumCardTypes`, and that is a load-bearing choice.**
+**Slot count = `kNumCardTypes`, and that choice matters.**
 A pile cannot contain more *distinct card types* than there are card types, so
 **overflow is structurally impossible** — no runtime guard, no truncation rule,
 no parity risk. This matters because v1.0.0 ships a configurable deck: a user
@@ -190,7 +190,7 @@ may legitimately build a deck holding every distinct card, and Exhume choosing
 from the exhaust pile would then need a slot for each. A 20- or 32-slot block
 would have required a documented truncation rule, which *is* a parity violation
 (the human can pick any card; the agent could not). Action width is nearly free
-(§3), so buying provable safety costs almost nothing.
+(§3), so the guarantee costs almost nothing.
 
 Stated as a count this would already be stale twice over — hence the invariant
 rather than the number.
@@ -234,7 +234,7 @@ obs: 523 → 523 + 5 + 306 = 834   [102-card pool; read kObsSize for current]
 > rejects sts2-rl-agent for, so it was examined properly rather than waved
 > through.
 >
-> The narrow fixes do not survive contact:
+> None of the narrow fixes work:
 >
 > - **Normalizing** (the original spec) rescales without removing the ordinal.
 >   Cosmetic.
@@ -249,12 +249,12 @@ obs: 523 → 523 + 5 + 306 = 834   [102-card pool; read kObsSize for current]
 > identity, action semantics become permanently stable, and the ordinal problem
 > disappears instead of being mitigated.
 >
-> **It was rejected because it is built against v2, not with it.** Map paths,
+> **It was rejected because it fits v1 only, not the v2 decisions that follow.** Map paths,
 > shop items, events and rest options have no `CardId`. Rank-indexing is
 > precisely what lets one mechanism serve all of them with no obs shape change —
 > the property §5.2 calls the direct answer to "no rework at a later milestone".
 > Card-id indexing would make card choices index one way and v2 choices another,
-> and buy a v1 improvement by spending generality that has not been used yet.
+> trading generality that has not been used yet for a v1 improvement.
 >
 > The wart is bounded: one float per slot, in a channel that is fully masked off
 > during ordinary combat and live only during a pause.
@@ -300,7 +300,7 @@ positional design gives up (§6).
 > Note also that **§5.2 already identified entity indexing as the correct fix**
 > and rejected it because "map paths, shop items, events and rest options have no
 > `CardId`". Under v2 each of those has its own block, so the objection is void.
-> The reason for the compromise expired along with the compromise.
+> The reason for the compromise is gone, along with the compromise.
 
 ### 5.4 Engine mechanism
 
@@ -353,8 +353,7 @@ should land first.
 The standard objection to positional slots is **credit assignment**: slot *k*
 means something different across episodes, so nothing is shared with the
 "play card *k*" representation, and an MLP must learn to compare unaligned
-blocks. That is a real cost — and it is largely defused by two facts specific
-to this project:
+blocks. That is a real cost — and two facts specific to this project reduce it:
 
 1. **PPO never sees these decisions.** The intended solver is PPO for combat +
    an **LLM for non-combat decisions**. The LLM reads a *rendered menu*, which
@@ -369,8 +368,8 @@ to this project:
 
 > ### ⚠️ Amended 2026-08-13 — premise 1 is superseded
 >
-> **"PPO never sees these decisions" was load-bearing here, and it is no longer
-> true.** The 2026-07 plan was PPO for combat plus an **LLM for non-combat
+> **"PPO never sees these decisions" was central to the argument here, and it is
+> no longer true.** The 2026-07 plan was PPO for combat plus an **LLM for non-combat
 > decisions**, which made "hard for an MLP, easy to read as a rendered menu" a
 > good trade.
 >
@@ -385,7 +384,7 @@ to this project:
 > excused by naming the solver. `roadmap.md` now targets **one policy over combat
 > and deck-building**, which is the case this section assumed away.
 >
-> Premise 2 survives, and is the seed of the replacement: reading identity
+> Premise 2 survives, and points to the replacement: reading identity
 > directly rather than inferring it from position is precisely what entity
 > indexing does — it just makes the index *be* the identity instead of publishing
 > it alongside.

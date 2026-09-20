@@ -29,7 +29,7 @@ The 22 that had to be built, by pool:
 
 **Effects come before reachability** (Rob, option A). A card that reaches a
 deck before its effect exists is a dead draw. So the shop's two colorless slots
-and Toolbox were stocked only after this document's batches landed — both are
+and Toolbox were stocked only after the batches below were finished — both are
 now live (`relic-effects.md` §6.9 for Toolbox's pre-draw pause).
 
 ---
@@ -54,7 +54,7 @@ evidence alongside `sts_lightspeed`, and the wiki is still checked.
 
 | needs | cards | engine work |
 |---|---|---|
-| **existing machinery (probably)** | Thinking Ahead | `sts_lightspeed` implements it as `DrawCards(2)` then `WarcryAction()`, which is the shape Warcry already uses (the choice queues after the draw). The `card.h` comment saying it needs something new looks stale; a test decides. |
+| **existing machinery (probably)** | Thinking Ahead | `sts_lightspeed` implements it as `DrawCards(2)` then `WarcryAction()`, which is what Warcry already does (the choice queues after the draw). The `card.h` comment saying it needs something new looks stale; a test decides. |
 | **small, self-contained** | Apotheosis, Violence, Dark Shackles, Panic Button | Upgrade all four piles; move N random Attacks from draw to hand; an enemy's temporary Strength loss (same Artifact gate as ROB-95); a 2-turn "no Block from cards" state |
 | **generation** | Jack of All Trades, Transmutation, Magnetism, Discovery | one primitive: pool + `CardRandom` stream + destination + cost modifier. It also fixes Infernal Blade (§4 D4), and the Attack/Skill/Power potions reuse it. |
 | **per-instance cost** | Madness, Enlightenment, Forethought, Chrysalis, Metamorphosis | D2 |
@@ -200,7 +200,7 @@ longer gain Gold") can block it. A standalone `CombatEnv` ignores it.
 ## 5. Batches
 
 Ordered so the cheapest cards prove the pattern first, and each piece of
-machinery lands with the cards that need it.
+machinery is built with the cards that need it.
 
 | batch | cards | machinery |
 |---|---|---|
@@ -221,11 +221,11 @@ Toolbox, and update `relic-effects.md` §7.
 ### Batch 1
 
 - **Thinking Ahead needed no new machinery at all.** `card.h` claimed it did,
-  because its choice must follow its draw — but that is Warcry's shape and the
-  engine already orders it that way. `sts_lightspeed` implements the card as
+  because its choice must follow its draw — but Warcry works the same way and
+  the engine already orders it that way. `sts_lightspeed` implements the card as
   literally `DrawCards(2)` then Warcry's own action. The card row was the only
-  change. **A "not implemented yet" note is a claim with a shelf life**; this one
-  had expired.
+  change. **A "not implemented yet" note is a claim that can go out of date**;
+  this one had.
 - **`sts_lightspeed` has Dark Shackles' Artifact check inverted.** It applies the
   Shackled give-back when the target *has* Artifact
   (`BattleContext.cpp`: `if (monsters.arr[t].hasStatus<MS::ARTIFACT>())`). The
@@ -264,7 +264,7 @@ Toolbox, and update `relic-effects.md` §7.
 - **"Add a card" is not "add it for free."** Jack of All Trades and Magnetism add
   at full price; only Transmutation, Discovery and Infernal Blade discount what
   they make. Easy to get wrong from the card text alone.
-- **The cheapest-copy rule (D2 option A) has a sharp edge, and a test found it.**
+- **The cheapest-copy rule (D2 option A) has a failure case, and a test found it.**
   `instance_effective_cost` initially fell back to the id-based `effective_cost`,
   which scans the hand for a discounted copy — so an *undiscounted* Strike
   reported 0 because a *different* Strike was free, every copy looked free, and
@@ -331,14 +331,14 @@ Toolbox, and update `relic-effects.md` §7.
 
 - **Sadistic Nature forced a real interface change: `apply_debuff` and
   `apply_power` now report whether the effect LANDED.** StS deals no damage when
-  the target's Artifact eats the debuff, and only the mutator knows — it is
+  the target's Artifact absorbs the debuff, and only the mutator knows — it is
   where the charge is spent. Everything else ignores the return value.
 - **A negative POWER is a debuff in StS terms**, so Disarm's Strength loss
   triggers Sadistic Nature — but `Shackled` is excluded by name. That single
   exclusion is what stops Dark Shackles triggering it twice (its Strength loss
   counts, the give-back does not), and StS patched exactly that.
 - **Panache's stacks are the DAMAGE, not a countdown.** A second Panache adds
-  damage rather than starting a second counter, which is Combust's shape.
+  damage rather than starting a second counter, which is how Combust works.
   The countdown lives on `Character::panache_counter`, resets every turn, and is
   decremented in the **card-played executor** rather than the power registry —
   that registry pushes actions and never mutates state.

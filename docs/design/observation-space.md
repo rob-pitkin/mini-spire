@@ -1,7 +1,7 @@
 # Observation space — design review (ROB-40)
 
 **Status: ACCEPTED (§5 A2 + §6 B1 + B2 + B3).** Ruled by Rob, all parameters
-settled (§8). Not yet implemented — §9 is the spec, §10 the blast radius.
+settled (§8). Not yet implemented — §9 is the spec, §10 what it touches.
 
 Second draft. The first draft's options (hand slot blocks, annotation lists,
 choice-based disambiguation) survive below but are demoted: further research
@@ -168,8 +168,8 @@ What this buys, all at once:
 - **Selection dissolves**: two copies of the same full ID are behaviorally
   interchangeable, so "which copy" stops being a question. The action space is
   already complete. No slots, no pointer networks, no disambiguation choices.
-- **The ROB-85 Searing Blow+ landmine** becomes principled: `SearingBlowPlus`
-  *is* rung 1.
+- **The ROB-85 Searing Blow+ bug** becomes impossible: `SearingBlowPlus` *is*
+  rung 1.
 
 Reachability bounds the ladders: Searing Blow only upgrades via Armaments plays
 (realistically ≤ ~5/combat); Rampage grows +5/+8 per play (≤ ~10 plays in a
@@ -217,7 +217,7 @@ Armaments can upgrade a grown Rampage: +10 (two base plays) then upgraded, then
 +8/play → bonuses like 18, 26 that sit between either variant's pure multiples.
 Choices: (a) enumerate the reachable set exactly (a few dozen IDs), or
 (b) fixed-step buckets with round-to-nearest (aliasing ≤ half a step, only for
-mixed histories). Knob is Rob's; (b) at step 5 is the modest default.
+mixed histories). The choice is Rob's; (b) at step 5 is the modest default.
 
 Size math for A2 with caps SB@5, Rampage +30/+40:
 `kNumCardTypes` 154 → ~169 · obs 1200 → ~1305 · actions 926 → ~1016.
@@ -313,9 +313,9 @@ Damage `n(n+7)/2 + 12`. Climbs only via Armaments / Armaments+ plays.
 |---|---|---|---|---|---|---|
 | damage | 12 | 16 | 21 | 27 | 34 | 42 |
 
-Rung 1 **is** today's `SearingBlowPlus` — the ROB-85 landmine (a
-default-constructed `Card{SearingBlowPlus}` dealing 12) stops being a special
-case and becomes structurally impossible. Net +4 IDs.
+Rung 1 **is** today's `SearingBlowPlus` — the ROB-85 bug (a default-constructed
+`Card{SearingBlowPlus}` dealing 12) stops being a special case and becomes
+structurally impossible. Net +4 IDs.
 
 ### 9.2 Rampage — 7 rungs
 
@@ -406,7 +406,7 @@ Derivation of 1772: as above, but enemies `5 × (3 + (5+6) + 7 + 23) = 220`.
 observation and action encoding saturate — states past the cap alias with each
 other, in a region no realistic combat reaches.
 
-## 10. Blast radius
+## 10. What this touches
 
 `card.h` (CardId enum + ladder rows + `CARD_UPGRADES` entries), `query.cc`
 (rung-aware damage; retire the SearingBlowPlus baseline special-case),

@@ -54,7 +54,7 @@ consumes a room — where excluding it would change the run's distribution.
 | **Gambling Chip** (rare relic) | multi-select subset | engine applies a fixed policy (discard nothing) |
 | **Frozen Eye** (shop relic) | conditional observability — *informational*, so auto-resolve does not apply | **excluded from the shop pool.** The only true exclusion. |
 
-The honest cost: a human would make these choices and the agent does not, so it
+The cost: a human would make these choices and the agent does not, so it
 is a bounded parity divergence. It is documented rather than hidden, and it is
 strictly smaller than removing the content.
 
@@ -64,8 +64,8 @@ Acts 2–4 · boss relics · Frozen Eye · **multi-select as a decision shape**.
 
 That last one matters: **reserve the shape even though nothing in v2.0.0 uses
 it.** It is the one mechanism that would be genuinely painful to retrofit, and
-"built against v2 rather than with it" is the exact mistake `decision-points.md`
-records making once already.
+designing for v1 alone is the exact mistake `decision-points.md` records making
+once already.
 
 ---
 
@@ -79,7 +79,7 @@ that one size can fit all."*
 
 ---
 
-## Attack 1 — `payload_id` becomes load-bearing exactly when it becomes wrong
+## Attack 1 — `payload_id` starts mattering exactly when it becomes wrong
 
 **Status: real. Highest confidence of the lot.**
 
@@ -95,8 +95,7 @@ becomes the *primary* identity encoding for map nodes, shop items and event
 options, where no slot-index redundancy exists.
 
 So the justification and the cost never overlap in time. It was cheap while
-dormant and wakes up as the main encoding for three of the five new decision
-types.
+unused, and becomes the main encoding for three of the five new decision types.
 
 The doc names its own revisit trigger — "if v2's decision types turn out not to
 need the shared channel, or if training shows the choice channel is where a
@@ -104,9 +103,9 @@ policy is losing" — and neither clause covers this case: the wart's *scope*
 grows rather than its cost.
 
 Also worth re-deriving rather than inheriting: the fix that would have worked
-(index option slots by `CardId`) was rejected **for v2's sake** — it "buys a v1
-improvement by spending generality that has not been used yet." That reasoning
-was correct then. The generality is now being used, so the trade is no longer
+(index option slots by `CardId`) was rejected **for v2's sake** — it traded
+generality that had not been used yet for a v1 improvement. That reasoning was
+correct then. The generality is now being used, so the trade is no longer
 the same trade.
 
 **Direction to explore, not a decision:** only one `ChoiceKind` is ever live.
@@ -246,7 +245,7 @@ does not, and the offer should be declined.**
 Courier restocks a slot when bought. Under a fixed-14-slot encoding the slots
 stay 14 and only their *contents* change — and the observation is re-read every
 step regardless. What Courier breaks is the assumption "stock is static during a
-visit", which was never load-bearing.
+visit", which nothing in the design relied on.
 
 The real complication is **multiple purchases per visit**, which is core Slay
 the Spire and exists with or without Courier. Cutting Courier would buy nothing
@@ -704,7 +703,7 @@ observation — currently they are not.
   *simultaneously* and would share index `card_selection + X`. The 6-way phase
   one-hot is too coarse to disambiguate — **stable indexing by entity is not
   sufficient when the same entity is selectable for two different purposes.**
-  This is the sharpest hit on the stable-indexing decision.
+  This is the strongest objection to the stable-indexing decision.
 - **Potions target.** Fire Potion picks an enemy, so potion actions need targets:
   50 → **50 × 5 = 250**. The action space is ~1,724, not ~1,510.
 
@@ -851,9 +850,9 @@ is not considered a modelling error — it is the normal way to represent a larg
 categorical space.
 
 **2. So our actual problem is narrower than `decision-points.md` framed it.**
-The issue is not "a categorical is in the observation". It is that ours is
-**smuggled into a float32 vector where every other entry is a magnitude**, with
-nothing marking which is which. NLE avoids that by giving categoricals their own
+The issue is not "a categorical is in the observation". It is that ours sits
+**in a float32 vector where every other entry is a magnitude**, with nothing
+marking which is which. NLE avoids that by giving categoricals their own
 integer-typed component; the type *is* the signal.
 
 That reframing matters, because `decision-points.md` rejected embeddings on the
@@ -931,8 +930,7 @@ policies appear only where the phases are genuinely different game objects.
    - Caveat: that agent reports ~450M decisions of PPO and a still-**subhuman**
      result, attributed to no imitation pretraining and sub-AlphaGo compute.
 
-**Gaps the researcher flagged honestly** (recorded so they are not assumed
-answered): Hearthstone's within-turn phase handling could not be confirmed —
+**Gaps the researcher flagged** (recorded so they are not assumed answered): Hearthstone's within-turn phase handling could not be confirmed —
 full text inaccessible; Hanabi's exact encoding bit-length unverified; PyTAG's
 within-game phase handling unconfirmed.
 
