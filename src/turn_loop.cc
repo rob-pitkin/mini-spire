@@ -39,26 +39,8 @@ void tick_debuffs(std::unordered_map<Debuff, int>& debuffs) {
   }
 }
 
-// Draw the opening hand. Innate cards (Brutality+) are pulled from the draw
-// pile into the hand FIRST and count toward the opening draw, so the hand is
-// still STARTING_HAND_SIZE. Combat-start powers don't exist yet, so this needs
-// no queue — the CardDrawn hook can't have a listener on turn 1.
-void draw_opening_hand(CombatState& state) {
-  int drawn = 0;
-  for (auto it = state.draw_pile.begin();
-       it != state.draw_pile.end() && drawn < STARTING_HAND_SIZE;) {
-    if (CARD_DATABASE.at(it->card_id).innate) {
-      state.current_hand.push_back(*it);
-      it = state.draw_pile.erase(it);
-      ++drawn;
-    } else {
-      ++it;
-    }
-  }
-  for (; drawn < STARTING_HAND_SIZE; ++drawn) {
-    draw_one(state);
-  }
-}
+// draw_opening_hand now lives below the anonymous namespace: it is called from
+// an executor (ActionKind::DrawOpeningHand) as well as from here.
 
 // Fire on-death hooks for anything that died during a drain (ROB-90).
 //
@@ -966,6 +948,27 @@ void handle_end_turn(CombatState& state) {
 
 }  // namespace
 
+// Draw the opening hand. Innate cards (Brutality+) are pulled from the draw
+// pile into the hand FIRST and count toward the opening draw, so the hand is
+// still STARTING_HAND_SIZE. Combat-start powers don't exist yet, so this needs
+// no queue — the CardDrawn hook can't have a listener on turn 1.
+void draw_opening_hand(CombatState& state) {
+  int drawn = 0;
+  for (auto it = state.draw_pile.begin();
+       it != state.draw_pile.end() && drawn < STARTING_HAND_SIZE;) {
+    if (CARD_DATABASE.at(it->card_id).innate) {
+      state.current_hand.push_back(*it);
+      it = state.draw_pile.erase(it);
+      ++drawn;
+    } else {
+      ++it;
+    }
+  }
+  for (; drawn < STARTING_HAND_SIZE; ++drawn) {
+    draw_one(state);
+  }
+}
+
 int compute_attack_damage(
     int base, const std::unordered_map<Power, int>& attacker_powers,
     const std::unordered_map<Debuff, int>& attacker_debuffs,
@@ -1054,11 +1057,15 @@ CombatState start_combat(CombatSetup setup) {
   ActionQueue q;
   ResolutionContext ctx;
 
+  // ONE queue, drained once. The opening draw and the post-draw hooks are
+  // actions rather than imperative calls, which is what lets a pre-draw relic
+  // PAUSE the whole sequence: Toolbox asks the player to choose a card before
+  // the hand is dealt, and a fight can therefore open already waiting on a
+  // choice. The queue keeps the order — pre-draw responses, then the draw,
+  // then the rest — without needing a drain between each step.
   fire_relic_hooks(state, Hook::CombatStartPreDraw, q);
-  drain(state, q, ctx);
-  draw_opening_hand(state);
-  fire_relic_hooks(state, Hook::CombatStart, q);
-  fire_relic_hooks(state, Hook::TurnStartPostDraw, q);
+  q.push_back(Action{ActionKind::DrawOpeningHand});
+  q.push_back(Action{ActionKind::CombatStartPostDraw});
   drain(state, q, ctx);
 
   return state;

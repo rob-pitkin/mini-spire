@@ -29,7 +29,8 @@ The 22 that had to be built, by pool:
 
 **Effects come before reachability** (Rob, option A). A card that reaches a
 deck before its effect exists is a dead draw. So the shop's two colorless slots
-and Toolbox are stocked only after this document's batches land.
+and Toolbox were stocked only after this document's batches landed — both are
+now live (`relic-effects.md` §6.9 for Toolbox's pre-draw pause).
 
 ---
 

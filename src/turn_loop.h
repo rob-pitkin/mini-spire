@@ -43,6 +43,14 @@ int compute_attack_damage(
 // The Ironclad starter deck: 5 Strike + 4 Defend + 1 Bash (unshuffled).
 std::vector<Card> starter_deck();
 
+// Deal the fight's opening hand. Innate cards are pulled first and count toward
+// it, so the hand is still STARTING_HAND_SIZE.
+//
+// Exposed because it is an ACTION now (ActionKind::DrawOpeningHand): a pre-draw
+// relic that pauses for a choice — Toolbox — must park the draw behind it, so
+// the choice is made WITHOUT seeing the opening hand, as in StS.
+void draw_opening_hand(CombatState& state);
+
 // Everything a fight needs to exist. See docs/design/v2-spec.md §3.2.
 //
 // A parameter struct rather than a widening argument list, because the fight's

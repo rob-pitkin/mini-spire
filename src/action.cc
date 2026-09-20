@@ -763,8 +763,15 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
   {
     switch (hook) {
       case Hook::CombatStartPreDraw:
-        // Nothing yet. Toolbox and the other pre-draw relics generate cards,
-        // which needs the card-generation path (batch 3).
+        // Toolbox: "choose 1 of 3 random Colorless cards and add the chosen
+        // card into your hand". PRE-draw, and that is the point of the relic —
+        // the choice is made before you know your opening hand, so it pauses
+        // the whole combat-start sequence rather than resolving after it.
+        if (relic.id == RelicId::Toolbox) {
+          Action a = make_action(ActionKind::RequestChoice);
+          a.amount = static_cast<int>(ChoiceKind::DiscoverColorlessCard);
+          q.push_back(a);
+        }
         break;
 
       case Hook::CombatStart:
@@ -1515,6 +1522,15 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
                                                 : CostDuration::ThisTurn;
       }
       break;
+    case ActionKind::DrawOpeningHand:
+      draw_opening_hand(state);
+      break;
+    case ActionKind::CombatStartPostDraw:
+      // The two relic hooks that follow the opening hand. Queued so that a
+      // pre-draw pause parks them too — resolve_choice resumes exactly here.
+      fire_relic_hooks(state, Hook::CombatStart, q);
+      fire_relic_hooks(state, Hook::TurnStartPostDraw, q);
+      break;
     case ActionKind::PlaceOnBottomOfDraw: {
       // front() is the BOTTOM: draw_one pops the back. Cards placed in
       // selection order therefore come back in that order, which is what StS
@@ -1794,7 +1810,8 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       break;
     case ActionKind::RequestChoice: {
       const ChoiceKind requested = static_cast<ChoiceKind>(a.amount);
-      if (requested == ChoiceKind::DiscoverCard) {
+      if (requested == ChoiceKind::DiscoverCard ||
+          requested == ChoiceKind::DiscoverColorlessCard) {
         // Discovery's options are ROLLED, not taken from a pile, so it cannot
         // go through build_choice (which reads piles and takes a const state).
         //
@@ -1803,9 +1820,12 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         // variable number of draws — and a variable draw count shifts every
         // later roll in the stream. A fixed three draws keeps replay stable
         // (Rob, 2026-09-19); the offer itself is identical.
-        std::vector<CardId> candidates = generation_pool(GenerationPool::ClassAny);
+        // Discovery offers the CLASS pool; Toolbox the colorless one.
+        std::vector<CardId> candidates = generation_pool(
+            requested == ChoiceKind::DiscoverCard ? GenerationPool::ClassAny
+                                                  : GenerationPool::Colorless);
         PendingChoice pc;
-        pc.kind = ChoiceKind::DiscoverCard;
+        pc.kind = requested;
         pc.source_card = a.card;
         pc.is_optional = false;  // "Adding one is mandatory" (wiki)
         pc.copies = 1;
@@ -1930,6 +1950,12 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
           add_card_to_hand(state, made);
           break;
         }
+        case ChoiceKind::DiscoverColorlessCard:
+          // Toolbox: the card arrives at FULL price — the relic hands it over,
+          // it does not discount it. A full hand sends it to the discard, which
+          // is what add_card_to_hand already does.
+          add_card_to_hand(state, chosen);
+          break;
         case ChoiceKind::None:
           break;
       }
@@ -2035,9 +2061,10 @@ bool card_qualifies(ChoiceKind kind, CardId id) {
     case ChoiceKind::HandToBottomOfDraw:
       return true;  // any card in the source pile
     case ChoiceKind::DiscoverCard:
-      // Never reaches here: Discovery's options are ROLLED, so the
-      // RequestChoice executor builds them and build_choice is not called.
-      // Listed rather than defaulted so a new kind still has to be considered.
+    case ChoiceKind::DiscoverColorlessCard:
+      // Never reaches here: these options are ROLLED, so the RequestChoice
+      // executor builds them and build_choice is not called. Listed rather
+      // than defaulted so a new kind still has to be considered.
       return false;
     case ChoiceKind::None:
       return false;
@@ -2065,6 +2092,7 @@ const std::vector<Card>& source_pile(const CombatState& state,
     case ChoiceKind::ExhaustCardInHand:
     case ChoiceKind::HandToBottomOfDraw:
     case ChoiceKind::DiscoverCard:  // no pile at all — the options are rolled
+    case ChoiceKind::DiscoverColorlessCard:
     case ChoiceKind::None:
       break;
   }

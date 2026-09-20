@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <unordered_map>
 #include <vector>
 
@@ -67,6 +68,115 @@ CombatState elite_fight_with(std::vector<RelicId> ids, uint32_t seed = 1) {
 TEST(RelicTriggers, VajraGrantsStrengthAtCombatStart) {
   const CombatState with = fight_with({RelicId::Vajra});
   EXPECT_EQ(get_status(with.character.powers, Power::Strength), 1);
+}
+
+// ------------------------------------------------- Toolbox: the blind choice
+//
+// Toolbox is the first relic that PAUSES combat setup, and the pause is the
+// mechanic rather than an implementation detail. In StS the 1-of-3 appears
+// BEFORE the opening hand is dealt, so a human cannot pick the card that suits
+// the hand they were given. Resolving it after the draw would hand an agent
+// strictly more information than a human gets — a parity defect of exactly the
+// kind observation-space.md §1 rules out.
+
+TEST(RelicTriggers, ToolboxPausesTheFightBeforeTheOpeningHandIsDealt) {
+  const CombatState s = fight_with({RelicId::Toolbox});
+  ASSERT_TRUE(s.pending_choice.active());
+  EXPECT_EQ(s.pending_choice.kind, ChoiceKind::DiscoverColorlessCard);
+  EXPECT_EQ(s.pending_choice.num_options, 3);
+  EXPECT_TRUE(s.current_hand.empty())
+      << "the opening hand was dealt before the choice — Toolbox must be blind";
+}
+
+// The control, and the reason the assertion above is meaningful: every other
+// fight opens unpaused with a full hand.
+TEST(RelicTriggers, AFightWithNoPreDrawChoiceOpensWithItsHandDealt) {
+  const CombatState s = bare_fight();
+  EXPECT_FALSE(s.pending_choice.active());
+  EXPECT_EQ(static_cast<int>(s.current_hand.size()), STARTING_HAND_SIZE);
+}
+
+TEST(RelicTriggers, ToolboxOffersThreeDistinctColorlessCards) {
+  const CombatState s = fight_with({RelicId::Toolbox});
+  ASSERT_TRUE(s.pending_choice.active());
+  ASSERT_EQ(s.pending_choice.num_options, 3);
+
+  const std::vector<CardId> pool = generatable_colorless_pool();
+  for (int i = 0; i < 3; ++i) {
+    const CardId id = s.pending_choice.options[i].card_id;
+    EXPECT_NE(std::find(pool.begin(), pool.end(), id), pool.end())
+        << card_name(id) << " is not a generatable colorless card";
+    for (int j = i + 1; j < 3; ++j) {
+      EXPECT_NE(id, s.pending_choice.options[j].card_id)
+          << card_name(id) << " was offered twice";
+    }
+  }
+}
+
+TEST(RelicTriggers, ToolboxDealsTheOpeningHandOnceTheChoiceIsAnswered) {
+  CombatState s = fight_with({RelicId::Toolbox});
+  ASSERT_TRUE(s.pending_choice.active());
+  const CardId chosen = s.pending_choice.options[0].card_id;
+  ASSERT_TRUE(resolve_choice(s, 0));
+
+  EXPECT_FALSE(s.pending_choice.active());
+  EXPECT_EQ(static_cast<int>(s.current_hand.size()), STARTING_HAND_SIZE + 1)
+      << "the parked opening draw did not resume";
+
+  int copies = 0;
+  for (const Card& c : s.current_hand) {
+    if (c.card_id != chosen) continue;
+    ++copies;
+    // Toolbox HANDS the card over; it does not discount it. Discovery's free
+    // copy is the card's own text, not something the choice machinery does.
+    EXPECT_EQ(c.cost_override, kNoCostOverride)
+        << card_name(chosen) << " arrived discounted";
+  }
+  EXPECT_EQ(copies, 1) << card_name(chosen) << " never reached the hand";
+}
+
+// The opening draw and the two post-draw hooks sit BEHIND the pause in the
+// suspended queue, so answering has to resume all of it. Vajra fires on
+// CombatStart, which is post-draw: if the restructure dropped the parked
+// actions, its Strength never lands.
+TEST(RelicTriggers, ToolboxDoesNotSwallowThePostDrawRelicHooks) {
+  CombatState s = fight_with({RelicId::Toolbox, RelicId::Vajra});
+  ASSERT_TRUE(s.pending_choice.active());
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 0)
+      << "a post-draw hook fired before the pre-draw choice was answered";
+
+  ASSERT_TRUE(resolve_choice(s, 0));
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 1)
+      << "the parked CombatStart hooks were lost";
+}
+
+// A fight can now BEGIN in a choice, which nothing else produces. The answer
+// must therefore be reachable through the ACTION space on step 0, not only
+// through resolve_choice() — the action space is all an agent has.
+//
+// CardSelect is indexed by CARD ID, not by option slot: the first draft of this
+// test passed slot 0, which encodes Strike, and apply_action refused it because
+// Strike was not on offer. The refusal was correct.
+TEST(RelicTriggers, ToolboxsOpeningChoiceIsAnsweredThroughTheActionSpace) {
+  CombatState s = fight_with({RelicId::Toolbox});
+  ASSERT_TRUE(s.pending_choice.active());
+  const CardId offered = s.pending_choice.options[0].card_id;
+
+  ASSERT_TRUE(apply_action(
+      s, encode_action(ActionBlock::CardSelect, static_cast<int>(offered))));
+  EXPECT_FALSE(s.pending_choice.active());
+  EXPECT_EQ(static_cast<int>(s.current_hand.size()), STARTING_HAND_SIZE + 1);
+}
+
+// And a card that is NOT on offer stays illegal at fight start, so the opening
+// pause cannot be used as a back door into the choice machinery.
+TEST(RelicTriggers, ToolboxsOpeningChoiceRefusesACardItDidNotOffer) {
+  CombatState s = fight_with({RelicId::Toolbox});
+  ASSERT_TRUE(s.pending_choice.active());
+  EXPECT_FALSE(apply_action(
+      s, encode_action(ActionBlock::CardSelect,
+                       static_cast<int>(CardId::Strike))));
+  EXPECT_TRUE(s.pending_choice.active()) << "the refused action still resolved";
 }
 
 TEST(RelicTriggers, OddlySmoothStoneGrantsDexterity) {

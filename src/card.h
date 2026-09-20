@@ -408,6 +408,9 @@ enum class ChoiceKind {
   DrawPileSkillToHand,      // Secret Technique: a Skill from the draw pile
   DrawPileAttackToHand,     // Secret Weapon: an Attack from the draw pile
   HandToBottomOfDraw,       // Forethought: hand -> BOTTOM of the draw pile
+  DiscoverColorlessCard,    // Toolbox: pick 1 of 3 generated COLORLESS cards.
+                            // Discovery's shape with the other pool, and no
+                            // cost discount — the relic just hands it over.
   // v2.0.0 (map / shop / events) appends here — no encoding change.
 };
 

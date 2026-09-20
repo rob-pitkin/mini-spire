@@ -88,6 +88,13 @@ enum class ActionKind {
                              // 0 for the rest of the combat
   CapHandCost,    // Enlightenment: every card in hand costing more than 1 drops
                   // to 1, for this turn or (upgraded) the whole combat
+  DrawOpeningHand,      // the fight's first hand, Innate-aware. An ACTION so a
+                        // pre-draw relic that pauses for a choice (Toolbox)
+                        // parks the draw behind it instead of being overtaken
+                        // by it — the decision must be made without seeing the
+                        // opening hand.
+  CombatStartPostDraw,  // the two relic hooks that follow the opening draw,
+                        // queued so they ride behind a parked draw
   PlaceOnBottomOfDraw,  // Forethought: the carried card goes UNDER the draw
                         // pile, costing 0 until played. An action rather than
                         // an inline move so the multi-select path and the

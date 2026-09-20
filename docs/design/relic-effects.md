@@ -112,7 +112,8 @@ mutates state directly (`effects-architecture.md`).
 
 | # | trigger | n | relics |
 |---|---|---|---|
-| 1 | **CombatStart** | 46 | Akabeko, Anchor, AncientTeaSet, BagOfMarbles, BagOfPreparation, BloodVial, Brimstone, BronzeScales, BustedCrown, ClockworkSouvenir, CoffeeDripper, CursedKey, DuVuDoll, Ectoplasm, FossilizedHelix, FusionHammer, GamblingChip, Girya, GremlinVisage, HappyFlower, IncenseBurner, InkBottle, Lantern, LizardTail, MarkOfPain, MercuryHourglass, NeowsLament, Nunchaku, OddlySmoothStone, Omamori, Pantograph, PenNib, PhilosophersStone, PreservedInsect, RedSkull, RunicDome, SlaversCollar, SlingOfCourage, SneckoEye, Sozu, Sundial, ThreadAndNeedle, Toolbox, Vajra, VelvetChoker, WarpedTongs |
+| 0 | **CombatStartPreDraw** | 1 | Toolbox — resolves BEFORE the opening hand is dealt, and can PAUSE the fight there (§6.9) |
+| 1 | **CombatStart** | 45 | Akabeko, Anchor, AncientTeaSet, BagOfMarbles, BagOfPreparation, BloodVial, Brimstone, BronzeScales, BustedCrown, ClockworkSouvenir, CoffeeDripper, CursedKey, DuVuDoll, Ectoplasm, FossilizedHelix, FusionHammer, GamblingChip, Girya, GremlinVisage, HappyFlower, IncenseBurner, InkBottle, Lantern, LizardTail, MarkOfPain, MercuryHourglass, NeowsLament, Nunchaku, OddlySmoothStone, Omamori, Pantograph, PenNib, PhilosophersStone, PreservedInsect, RedSkull, RunicDome, SlaversCollar, SlingOfCourage, SneckoEye, Sozu, Sundial, ThreadAndNeedle, Vajra, VelvetChoker, WarpedTongs |
 | 2 | **TurnStart** | 8 | ArtOfWar, Brimstone, CaptainsWheel, HappyFlower, HornCleat, IncenseBurner, MercuryHourglass, OrangePellets |
 | 3 | **EnergyRecharge** (within turn start) | 5 | Akabeko, IceCream, InkBottle, LetterOpener, Nunchaku |
 | 4 | **TurnEnd** | 2 | Orichalcum, StoneCalendar |
@@ -243,7 +244,7 @@ per §1.
 
 ---
 
-## 7. Status: 69 of 140 wired
+## 7. Status: 70 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -256,7 +257,7 @@ have nothing to do with relics**, and those blockers are shared:
 |---|---|---|
 | ~~**Missing `Power`s**~~ | ~~Bronze Scales, Akabeko, Incense Burner, Fossilized Helix, Thread and Needle, Pen Nib~~ | ✅ **done.** All six Powers exist: Vigor, PenNibCharge, Intangible, Buffer, Thorns, PlatedArmor. Intangible is the one power that ticks — a named exception to the status model (Rob, 2026-09-12). |
 | **No curse cards** | Omamori, Darkstone Periapt, Blue Candle, and the unreachable halves of Du-Vu Doll and Cursed Key | §6.4 |
-| **No colorless cards** | **Toolbox**, and half of **Prismatic Shard** | also blocks the shop's 2 colorless slots. ⚠️ CORRECTED: an earlier revision listed Orrery, Dolly's Mirror and Cauldron here too. They do not need colorless — Cauldron is potions only ("brews 5 random potions"), and Orrery and Dolly's Mirror need a shop CHOICE SCREEN over normal card rewards. Checked card by card when the colorless vocabulary landed. |
+| ~~**No colorless cards**~~ | ~~Toolbox, half of Prismatic Shard~~ | ✅ **cleared.** All 35 colorless cards are implemented (`colorless-effects.md`) and the shop's 2 colorless slots now stock. **Toolbox** is wired: a 1-of-3 colorless choice that pauses combat setup BEFORE the opening hand (§6.9 — Rob ruled, 2026-09-20). **Prismatic Shard**'s other half still needs §6.8. ⚠️ CORRECTED earlier: Orrery, Dolly's Mirror and Cauldron never needed colorless — Cauldron is potions only, and the other two need a shop CHOICE SCREEN over normal card rewards. |
 | **Needs a shop choice screen** | Orrery, Dolly's Mirror | moved here from the colorless row |
 | **Needs potion effects** | Cauldron | moved here from the colorless row |
 | **No events** | Neow's Lament, Odd Mushroom, Warped Tongs, Spirit Poop, and the 5 Face Trader masks | 10 of the special-tier relics |
@@ -434,3 +435,38 @@ This is the same confusion that misclassified Brimstone and Red Skull (§6.3).
 The reference has a single `initRelics` call site where a per-turn effect and a
 once-per-fight effect are indistinguishable, and reproducing that shape would
 have reproduced the ambiguity.
+
+### 6.9 A fight can now BEGIN in a choice — Toolbox pauses combat setup
+
+Toolbox ("at the start of each combat, choose 1 of 3 random Colorless cards and
+add it to your hand") is the first relic whose effect *interrupts* combat setup
+rather than adding to it, and the interruption is the mechanic.
+
+**The ruling (Rob, 2026-09-20).** The choice resolves PRE-DRAW — before the
+opening hand exists. I initially proposed resolving it after the draw and
+claimed the two were observationally identical. **That was wrong.** In StS the
+prompt appears before the hand is dealt, so a human chooses blind; an agent
+choosing after the draw could pick the card that fits the hand it was given.
+That is strictly more information than a human has, which `observation-space.md`
+§1 makes a parity defect rather than a convenience.
+
+**What it cost.** `start_combat` used to be imperative — fire pre-draw hooks,
+drain, deal the hand, fire the rest, drain — and an imperative call has nowhere
+to be interrupted. The opening draw and the two post-draw hooks are now
+`ActionKind::DrawOpeningHand` and `ActionKind::CombatStartPostDraw`, queued
+behind the pre-draw hooks and drained once. A relic that pauses at
+`RequestChoice` therefore parks the draw in `suspended_queue` with everything
+after it, and answering the choice resumes the sequence in order.
+
+**The new state shape.** A `CombatState` can be returned from `start_combat`
+already paused, with an empty hand and a live `pending_choice`. Nothing else
+produces this, and anything that assumes "a fresh fight has a hand" is now
+wrong — the env's very first observation may be a choice screen. Four tests in
+`test_relic_triggers.cc` pin it, including that the answer is reachable through
+the action space on step 0 and that the parked `CombatStart` hooks (Vajra's
+Strength) still land afterwards.
+
+**No discount.** Unlike Discovery, whose card text grants the free copy, Toolbox
+hands the card over at full price. `ChoiceKind::DiscoverColorlessCard` shares
+Discovery's rolled-options path — three distinct cards drawn without
+replacement — and differs only in pool and in not setting a cost override.

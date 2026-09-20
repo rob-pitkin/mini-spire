@@ -108,7 +108,8 @@ int choice_source_pile(ChoiceKind kind) {
     case ChoiceKind::ExhaustToHand:
       return 3;  // exhaust
     case ChoiceKind::DiscoverCard:
-      return 4;  // external — Discovery's three are generated, not from a pile
+    case ChoiceKind::DiscoverColorlessCard:
+      return 4;  // external — these three are generated, not from a pile
     case ChoiceKind::None:
       break;
   }
