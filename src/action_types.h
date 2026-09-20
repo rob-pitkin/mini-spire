@@ -139,7 +139,17 @@ struct Action {
   int actor = kNoSlot;   // damage source: kPlayerSlot or an enemy slot
   int target = kNoSlot;  // recipient: kPlayerSlot or an enemy slot
   int amount = 0;
-  CardId card = CardId::Strike;    // for card-carrying kinds
+  // For card-carrying kinds. None means "this action carries no card", which
+  // is the truth for most kinds: an enemy's DealDamage, a Mayhem PlayCard that
+  // takes the top of the draw pile, a relic's RequestChoice. It defaulted to
+  // Strike, and that silently became a REAL answer wherever an unset field was
+  // read — Toolbox's choice reported Strike as the card that opened it.
+  //
+  // Every executor that reads this field was audited when the default changed:
+  // each either sets it at every push site (ExhaustCard, DiscardCard,
+  // CardPlayedHook, AddCardToPile, ArmBomb, PlaceOnBottomOfDraw, and the
+  // Double Tap replay) or never reads it on the cardless path.
+  CardId card = CardId::None;
   // Strength multiplier for this hit (Heavy Blade's 3x/5x, Stage 4b). Set from
   // the card at translation; 1 for enemy attacks and fixed damage, which have
   // no card. Explicit rather than re-derived from `card`, whose default would

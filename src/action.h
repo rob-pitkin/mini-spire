@@ -109,7 +109,11 @@ void fire_enemy_power_hooks(CombatState& state, int slot, Hook hook,
 // payload; `attacker_slot` the PlayerAttacked attacker (Flame Barrier's
 // retaliation target). Both are ignored by hooks that don't use them.
 void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
-                             CardId card = CardId::Strike,
+                             // None = no card is involved. Only the CardPlayed
+                             // and CardDrawn arms read it, and both are fired
+                             // with a real card; every caller that omits it
+                             // fires a hook that ignores it.
+                             CardId card = CardId::None,
                              int attacker_slot = kNoSlot);
 
 // Fire the player's RELIC behaviors for `hook`, pushing response actions. The

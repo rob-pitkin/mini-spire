@@ -489,3 +489,23 @@ Two consequences worth knowing: `card_name` had to become total (it is
 Python cannot write `CardId.None` — readers use `getattr(CardId, "None")`, as
 they already do for `ChoiceKind.None`. Shop and event screens inherit all of
 this when they arrive.
+
+**The same default was wrong in four places**, and fixing one would have left
+the others to reintroduce it: `Action::card`, `CardData::generated_card`,
+`fire_player_power_hooks`'s `card` parameter and `ChoiceView::source_card` all
+defaulted to Strike. All four now default to `None`, which changes a silent
+wrong answer into a throw — so every read site was read before the flip, not
+inferred from a green suite:
+
+| read | why the sentinel is safe |
+|---|---|
+| `Hook::CardPlayed` → `.at(card).type` | fired only from `CardPlayedHook`, which always sets the id |
+| `Hook::CardDrawn` → `.at(card).type` | fired with the drawn card |
+| `Hook::PlayerAttacked` | never reads `card` — keys on `attacker_slot`. This is the cardless path: an ENEMY attack |
+| `PlayCard` (Havoc, Mayhem) | uses the drawn card's own id; `a.card` is unread on that branch |
+| `AddCardToPile` | guarded by `generated_count > 0` |
+| `ExhaustCard`, `DiscardCard`, `PlaceOnBottomOfDraw`, `ArmBomb`, Double Tap's replay | every push site sets the card, via `carry()` or directly |
+
+The remaining hazard is a NEW read added to a cardless path, which now throws
+instead of silently using Strike's row. `TurnLoop.AnEnemyAttackCarriesNoCard`
+pins it.

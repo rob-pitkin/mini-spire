@@ -38,7 +38,9 @@ struct StatePiles {
 struct ChoiceView {
   bool active = false;
   ChoiceKind kind = ChoiceKind::None;
-  CardId source_card = CardId::Strike;
+  // None when no card opened the menu: a relic did (Toolbox), or the view is
+  // inactive. Mirrors PendingChoice::source_card, which this copies.
+  CardId source_card = CardId::None;
   bool is_optional = false;
   int copies = 1;
   std::vector<CardId> options;

@@ -1271,6 +1271,8 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         // enemy damage counts too (Rupture, by contrast, does not fire here).
         if (damage_player(state, dmg)) state.character.hp_loss_events += 1;
         // Flame Barrier retaliates on being attacked, even if fully blocked.
+        // a.card is None here — an enemy attack has no card — and the
+        // PlayerAttacked arm keys on attacker_slot and never reads it.
         fire_player_power_hooks(state, Hook::PlayerAttacked, q, a.card,
                                 a.actor);
         break;

@@ -618,7 +618,9 @@ struct CardData {
   // `generated_count` how many, and `generated_pile` where it lands — StS is
   // specific about this (Wild Strike SHUFFLES a Wound into the draw pile,
   // Power Through adds Wounds to HAND, Immolate adds a Burn to the DISCARD).
-  CardId generated_card = CardId::Strike;
+  // None for the cards that generate nothing, which is nearly all of them.
+  // Read only when generated_count > 0, so the sentinel is never looked up.
+  CardId generated_card = CardId::None;
   int generated_count = 0;
   GeneratedPile generated_pile = GeneratedPile::Discard;
   // Anger: adds a copy of ITSELF (rather than a fixed card) to the discard.

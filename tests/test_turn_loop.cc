@@ -1296,6 +1296,39 @@ TEST(TurnLoop, SporeCloudFiresWhenFlameBarrierKills) {
       << "Spore Cloud must fire when retaliation lands the killing blow";
 }
 
+// An enemy attack carries NO CARD. Action::card defaulted to Strike, so every
+// cardless action claimed to be a Strike, and any read of the field got a real
+// row back instead of failing — which is how Toolbox's choice came to report
+// Strike as the card that opened it.
+//
+// The PlayerAttacked arm keys on attacker_slot and never looks the card up,
+// which is what makes the sentinel safe on this path. If someone adds a
+// CARD_DATABASE.at(card) read to that arm, .at() throws on the sentinel and
+// this fails loudly — where the old default would have quietly answered with
+// Strike's row. The Flame Barrier tests above cover the same path; this one
+// exists to say why the default must stay as it is.
+TEST(TurnLoop, AnEnemyAttackCarriesNoCard) {
+  EXPECT_EQ(Action{}.card, CardId::None)
+      << "an action with no card set must carry the sentinel, not Strike";
+
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy fungi = make_fungi_beast(rng);
+  fungi.last_move = MoveName::Bite;  // it must ATTACK to fire the hook
+  s.enemies.push_back(std::move(fungi));
+  s.character.energy = 3;
+  s.character.hp = 80;
+  s.current_hand.push_back(Card{CardId::FlameBarrier});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::FlameBarrier, 0)));
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+
+  EXPECT_LT(s.enemies[0].hp, s.enemies[0].max_hp)
+      << "retaliation never landed, so the cardless attack never reached the "
+         "PlayerAttacked hook";
+}
+
 TEST(TurnLoop, BecameLastEnemyFiresWhenRetaliationKills) {
   // CheckDeath fires two hooks; the one above covers EnemyDeath. This covers
   // BecameLastEnemy, which drives Shield Gremlin's Protect -> ProtectAlone
