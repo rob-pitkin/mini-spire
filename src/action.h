@@ -82,6 +82,13 @@ enum class Hook {
   BlockBroken,          // Hand Drill — no site in sts_lightspeed (§2.2)
   ShuffleDrawPile,      // Sundial, The Abacus
   PotionDrunk,          // Toy Ornithopter, Sacred Bark
+  PlayerHpLostAny,      // Centennial Puzzle, Runic Cube, Self-Forming Clay:
+                        // "whenever you lose HP", from ANY source. Deliberately
+                        // NOT HpLostPlayer, which is narrower — Rupture fires
+                        // only on loss from a card or power, never on enemy
+                        // damage (ordering-notes §9), and Burn's tick reaches
+                        // neither. Two hooks with one meaning each beats one
+                        // hook with a hidden filter.
   CombatEnd,            // Burning Blood, Meat on the Bone — fired on the WON
                         // fight's state, before RunState writes HP back, so the
                         // heal lands in one place rather than two

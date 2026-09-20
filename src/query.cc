@@ -120,6 +120,32 @@ int energy_after_turn_start(const CombatState& state) {
   return allowance;
 }
 
+int reduce_player_hp_loss(const CombatState& state, int amount,
+                          bool from_attack) {
+  if (amount <= 0) return amount;
+  // Torii first, then Tungsten Rod. The wiki states the order outright on the
+  // Tungsten Rod page ("Torii activates before Tungsten Rod"), and it changes
+  // the result: a 5-damage hit becomes 1 and then 0, where the other order
+  // would leave 4.
+  //
+  // Torii takes ATTACK damage only, 2 through 5, reduced to 1 — StS's
+  // onAttacked excludes DamageType HP_LOSS and THORNS and requires an attacker.
+  // Damage of exactly 1 is already at the floor and is left alone. It applies
+  // per HIT, which falls out of being called from the per-hit damage path: the
+  // wiki's example is a 4x3 attack landing as 1x3.
+  if (from_attack && state.has_relic(RelicId::Torii) && amount > 1 &&
+      amount <= 5) {
+    amount = 1;
+  }
+  // Tungsten Rod applies to ALL HP loss, not only attacks — StS hooks it as
+  // onLoseHpLast, after every other reduction.
+  if (state.has_relic(RelicId::TungstenRod)) {
+    amount -= 1;
+    if (amount < 0) amount = 0;
+  }
+  return amount;
+}
+
 bool player_is_immune_to(const CombatState& state, Debuff d) {
   // Ginger and Turnip. The ORDER matters and is the detail the wiki is explicit
   // about: both trigger BEFORE Artifact, so a player holding Ginger who would

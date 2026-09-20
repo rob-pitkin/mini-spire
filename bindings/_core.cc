@@ -460,7 +460,9 @@ PYBIND11_MODULE(_core, m) {
       .value("Panache", Power::Panache)
       .value("SadisticNature", Power::SadisticNature)
       .value("Mayhem", Power::Mayhem)
-      .value("StrengthDown", Power::StrengthDown);
+      .value("StrengthDown", Power::StrengthDown)
+      // Self-Forming Clay banks block here for the next turn.
+      .value("NextTurnBlock", Power::NextTurnBlock);
 
   // --- The v2 action layout (v2-spec.md §6) -------------------------------
   //

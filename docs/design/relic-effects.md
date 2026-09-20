@@ -245,13 +245,13 @@ per §1.
 
 ---
 
-## 7. Status: 80 of 140 wired
+## 7. Status: 85 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
 Running the count is what caught the Juzu Bracelet / Tiny Chest error in §3.2.
 
-The 60 remaining are not one backlog. **Most are blocked on engine pieces that
+The 55 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
@@ -265,7 +265,8 @@ have nothing to do with relics**, and those blockers are shared:
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell | all pause for player input |
-| **Nothing blocking — just unwritten** | **~36**: Maw Bank, Meal Ticket, Ceramic Fish, Old Coin, Tungsten Rod, Torii, Magic Flower, Unceasing Top, Champion Belt, Charon's Ashes, Self-Forming Clay, Centennial Puzzle, Eternal Feather, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest, Runic Cube, Dead Branch, Snecko Eye, Mummified Hand, Medical Kit, Strange Spoon, Red Skull, Ancient Tea Set, Pocketwatch, Chemical X, Tiny House, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 remaining against the blocker rows leaves ~42 with nothing blocking them, of which 6 shipped in §6.11. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them |
+| **Nothing blocking — just unwritten** | **~30**: Maw Bank, Meal Ticket, Ceramic Fish, Old Coin, Magic Flower, Unceasing Top, Champion Belt, Charon's Ashes, Eternal Feather, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest, Dead Branch, Snecko Eye, Mummified Hand, Medical Kit, Strange Spoon, Ancient Tea Set, Pocketwatch, Chemical X, Tiny House, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11 and 5 in §6.12. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them |
+| **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
 was to build the missing Powers and the curse and colorless card gaps before
@@ -617,3 +618,52 @@ guard: there is no previous turn to have played an Attack in.
 PlayerDeath). `Hook::PlayerDeath` does not exist in the enum at all, and adding
 it means intercepting `check_character_terminal` so a listener can cancel the
 death — a change to how a fight ends, not a turn-boundary addition.
+
+### 6.12 The incoming-damage batch, and why there are now two HP-loss hooks
+
+Five relics: Tungsten Rod, Torii, Centennial Puzzle, Runic Cube and
+Self-Forming Clay. 80 → 85.
+
+**One choke point for reductions.** `query.cc`'s `reduce_player_hp_loss` is
+called by every path that removes player HP — attack damage after block, fixed
+damage after block, and the block-bypassing `LoseHp` — so a new damage source
+cannot skip a reduction. Two relics live there and the ORDER between them is
+specified, not incidental: the wiki's Tungsten Rod page states "Torii activates
+before Tungsten Rod", and it changes the result, since a 5-damage hit becomes 1
+and then 0 where the other order would leave 4.
+
+Torii is narrower than it first looks. StS's `onAttacked` requires an attacker
+and excludes `DamageType` HP_LOSS and THORNS, so Burn's tick and a thorns
+retaliation are untouched — which is why `damage_player` now takes a
+`from_attack` flag. It also reads the UNBLOCKED number (StS runs those relics
+after `decrementBlock`), so 9 damage into 5 block is reduced, and it applies per
+HIT: the wiki's example is a 4x3 attack landing as 1x3.
+
+**Two HP-loss hooks, deliberately.** `Hook::HpLostPlayer` is Rupture's, and
+Rupture fires only on loss from a card or power — never on enemy damage
+(ordering-notes §9), and not on Burn's tick either. The three drawing relics key
+on "whenever you lose HP", from any source. Rather than widen the existing hook
+and add a hidden filter, `Hook::PlayerHpLostAny` is fired from all three sites
+and consumed only by relics. Two hooks with one meaning each; no existing
+behaviour moved.
+
+**`Power::NextTurnBlock`** is new, for Self-Forming Clay: block granted at the
+next turn start, then the power removes itself, exactly as StS's
+`NextTurnBlockPower` does. It stacks within a turn. Adding a power widens the
+player observation block by one float (`kNumPlayerPowers` 33 → 34), which also
+means a `bindings/_core.cc` `.value()` line — omitted at first, and caught
+mechanically by `test_every_player_power_is_bound` (33 ≠ 34), which is the bug
+class that test exists for.
+
+**A test-writing trap worth recording.** The first Self-Forming Clay test ended
+the turn and expected 3 block, and read 6. The enemy's attack during the enemy
+phase is itself an HP loss, so the relic banks again — correct behaviour, and
+now pinned by its own test. Any test that ends a turn is also testing the enemy
+phase.
+
+**Red Skull was split out** (task, and a new blocker row above). It keys on
+crossing 50% Max HP in both directions — `onBloodied` and `onNotBloodied` — so
+it fires on HEALING as well as damage and cannot ride this batch's hook. Note
+also the wiki detail that its removal is applied as an invisible debuff, so
+Artifact can block it and leave the player at +3 with another +3 available; that
+is unreachable for us while `Power::Artifact` is enemy-only.

@@ -59,6 +59,10 @@ int intangible_capped(const CombatState& state, int amount) {
 void lose_player_hp(CombatState& state, int amount) {
   if (amount <= 0) return;
   amount = intangible_capped(state, amount);
+  // Tungsten Rod reduces ALL HP loss, including this path, which bypasses
+  // block entirely. Torii cannot apply here: it takes attack damage only.
+  amount = reduce_player_hp_loss(state, amount, /*from_attack=*/false);
+  if (amount <= 0) return;
   if (buffer_absorbs_hp_loss(state)) return;
   state.character.hp -= amount;
   if (state.character.hp < 0) state.character.hp = 0;
@@ -73,7 +77,7 @@ void lose_player_hp(CombatState& state, int amount) {
 // until the relic exists.
 //
 // Returns true if HP was actually lost.
-bool damage_player(CombatState& state, int amount) {
+bool damage_player(CombatState& state, int amount, bool from_attack) {
   if (amount <= 0) return false;
   // Intangible first: it caps the incoming number, and block then absorbs the
   // capped 1. Capping AFTER block would let a 20-damage hit chew through 20
@@ -81,8 +85,11 @@ bool damage_player(CombatState& state, int amount) {
   amount = intangible_capped(state, amount);
   const int blocked = std::min(amount, state.character.current_block);
   state.character.current_block -= blocked;
-  const int to_hp = amount - blocked;
-  if (to_hp <= 0) return false;  // fully blocked: Buffer is not spent
+  // Torii and Tungsten Rod act on what is UNBLOCKED, which is why this comes
+  // after the block subtraction — StS runs its onAttacked relics after
+  // decrementBlock for the same reason.
+  const int to_hp = reduce_player_hp_loss(state, amount - blocked, from_attack);
+  if (to_hp <= 0) return false;  // fully blocked or reduced away
 
   // Plated Armor loses a stack on receiving UNBLOCKED damage — which is what
   // getting past block means, so it is decided here rather than at the HP
@@ -425,6 +432,7 @@ void fire_enemy_hooks(CombatState& state, int slot, Hook hook, ActionQueue& q) {
     case Hook::HpLostPlayer:
     case Hook::CardDrawn:
     case Hook::PlayerAttacked:
+    case Hook::PlayerHpLostAny:
     // Relic hooks have no enemy-Trigger analog. Listed explicitly rather than
     // caught by a default so that adding a hook keeps failing to compile here
     // until someone decides whether enemies care about it.
@@ -854,6 +862,11 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
         // uses, rather than duplicated, so the two can never drift.
         fire_turn_start_relic(state, relic, q);
         switch (relic.id) {
+          case RelicId::CentennialPuzzle:
+            // Arm the once-per-combat latch. StS resets usedThisCombat in
+            // atPreBattle, and the counter is run-scoped otherwise (§3.3).
+            relic.counter = 0;
+            break;
           case RelicId::Vajra:
             push_player_power(q, Power::Strength, 1);
             break;
@@ -1087,6 +1100,27 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
         }
         break;
 
+      case Hook::PlayerHpLostAny:
+        // Centennial Puzzle: "the first time you lose HP each combat, draw 3."
+        // The counter is the per-combat latch, reset by the CombatStart arm —
+        // StS uses a usedThisCombat flag reset in atPreBattle.
+        if (relic.id == RelicId::CentennialPuzzle && relic.counter == 0) {
+          relic.counter = 1;
+          push_draw(q, 3);
+        }
+        // Runic Cube: "whenever you lose HP, draw 1." Every time, including
+        // during the enemies' turn — the wiki notes those cards are simply
+        // available next turn, which falls out of drawing them now.
+        if (relic.id == RelicId::RunicCube) push_draw(q, 1);
+        // Self-Forming Clay: "whenever you lose HP in combat, gain 3 Block NEXT
+        // turn." A power rather than block now — StS applies NextTurnBlockPower,
+        // which grants at the next turn start and then removes itself. It
+        // stacks within a turn, which the wiki calls out explicitly.
+        if (relic.id == RelicId::SelfFormingClay) {
+          push_player_power(q, Power::NextTurnBlock, 3);
+        }
+        break;
+
       case Hook::BlockBroken:
         // Hand Drill: "whenever you break an enemy's Block, apply 2
         // Vulnerable." To THAT enemy — the slot the damage path handed us.
@@ -1134,6 +1168,7 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
   const int plated_armor = get_status(powers, Power::PlatedArmor);
   const int magnetism = get_status(powers, Power::Magnetism);
   const int mayhem = get_status(powers, Power::Mayhem);
+  const int next_turn_block = get_status(powers, Power::NextTurnBlock);
 
   switch (hook) {
     case Hook::TurnStartPlayer:
@@ -1165,6 +1200,13 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
         Action a = make_action(ActionKind::PlayCard);
         a.amount = kPlayTopOfDrawKeeping;
         q.push_back(a);
+      }
+      // Self-Forming Clay's block, banked by last turn's HP losses. Granted
+      // then cleared, exactly as StS's NextTurnBlockPower does in
+      // atStartOfTurn. Not card block, so Dexterity and Frail leave it alone.
+      if (next_turn_block > 0) {
+        push_player_block(q, next_turn_block);
+        push_remove_player_power(q, Power::NextTurnBlock);
       }
       // Flame Barrier is "this turn" from the play until the START of the next
       // player turn — it must survive the enemy phase to retaliate (ROB wiki
@@ -1272,6 +1314,7 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
     // Relic hooks: no player POWER responds to these. Relics answer them in
     // fire_relic_hooks. Enumerated for the same reason as the enemy registry —
     // a new hook should not compile until every registry has considered it.
+    case Hook::PlayerHpLostAny:
     case Hook::CombatStartPreDraw:
     case Hook::CombatStart:
     case Hook::TurnStartPostDraw:
@@ -1415,7 +1458,12 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
             state.enemies[a.actor].debuffs, state.character.debuffs);
         // Blood for Blood counts HP-loss events from ANY source, so unblocked
         // enemy damage counts too (Rupture, by contrast, does not fire here).
-        if (damage_player(state, dmg)) state.character.hp_loss_events += 1;
+        if (damage_player(state, dmg, /*from_attack=*/true)) {
+          state.character.hp_loss_events += 1;
+          // Centennial Puzzle, Runic Cube and Self-Forming Clay key on losing
+          // HP from ANY source, so unlike Rupture they do fire here.
+          fire_relic_hooks(state, Hook::PlayerHpLostAny, q);
+        }
         // Flame Barrier retaliates on being attacked, even if fully blocked.
         // a.card is None here — an enemy attack has no card — and the
         // PlayerAttacked arm keys on attacker_slot and never reads it.
@@ -1440,8 +1488,9 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       if (a.target == kPlayerSlot) {
         // Fixed damage TO the player (Burn's end-of-turn tick). Blockable,
         // and it is damage rather than HP loss, so Rupture does not fire.
-        if (damage_player(state, a.amount)) {
+        if (damage_player(state, a.amount, /*from_attack=*/false)) {
           state.character.hp_loss_events += 1;  // Blood for Blood counts it
+          fire_relic_hooks(state, Hook::PlayerHpLostAny, q);
         }
         break;
       }
@@ -1476,6 +1525,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         state.character.hp_loss_events += 1;
         // Rupture: HP lost from a card or power (never from enemy damage).
         fire_player_power_hooks(state, Hook::HpLostPlayer, q);
+        fire_relic_hooks(state, Hook::PlayerHpLostAny, q);
       }
       break;
     case ActionKind::GainBlock: {

@@ -127,6 +127,11 @@ enum class Power {
                  // with an equal Strength Down, rather than as a Debuff — the
                  // loss is a fixed amount at end of turn, NOT a 1/turn tick,
                  // so it cannot be expressed with the Debuff vocabulary.
+  NextTurnBlock, // at the START of the next turn: gain `stacks` Block, then
+                 // remove self. Self-Forming Clay banks 3 here per HP loss and
+                 // they STACK within a turn (wiki), which is why the amount is
+                 // the stack value. Not card block: Dexterity and Frail do not
+                 // apply. StS models it the same way, as NextTurnBlockPower.
   None,          // sentinel: "no power" (default for unused fields)
 };
 
@@ -140,7 +145,7 @@ enum class Power {
 // powers) because two of five is not worth a second table.
 inline constexpr int kNumDebuffs = 6;
 inline constexpr int kNumEnemyPowers = 7;
-inline constexpr int kNumPlayerPowers = 33;
+inline constexpr int kNumPlayerPowers = 34;
 
 // FUTURE (multi-enemy): Target { Character, Enemy } collapses any "the enemy"
 // to a single entity, which is unambiguous in v1 with one enemy. Multi-enemy

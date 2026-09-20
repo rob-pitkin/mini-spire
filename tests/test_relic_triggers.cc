@@ -106,6 +106,215 @@ bool end_turn(CombatState& s) {
   return apply_action(s, encode_action(ActionBlock::EndTurn));
 }
 
+// An ENEMY attack on the player, through the real DealDamage path. This is the
+// only kind of damage Torii reduces — hit_player above is FIXED damage, which
+// StS's onAttacked excludes, so the two helpers are not interchangeable.
+void enemy_attacks_player(CombatState& s, int slot, int amount) {
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::DealDamage};
+  a.actor = slot;
+  a.target = kPlayerSlot;
+  a.amount = amount;
+  q.push_back(a);
+  drain(s, q, ctx);
+}
+
+// Direct HP loss, which bypasses block entirely (Offering, Bloodletting).
+void lose_hp(CombatState& s, int amount) {
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::LoseHp};
+  a.amount = amount;
+  q.push_back(a);
+  drain(s, q, ctx);
+}
+
+// ------------------------------------------------- incoming-damage relics
+//
+// Tungsten Rod and Torii reduce HP loss; Centennial Puzzle, Runic Cube and
+// Self-Forming Clay answer it. All five are verified against the decompiled
+// classes and cross-checked on the wiki.
+
+// Tungsten Rod: "whenever you would lose HP, lose 1 less" — every path, not
+// just attacks. StS hooks it as onLoseHpLast, after every other reduction.
+TEST(RelicTriggers, TungstenRodReducesEveryKindOfHpLoss) {
+  CombatState s = fight_with({RelicId::TungstenRod});
+  s.character.hp = 200;
+  s.character.max_hp = 200;
+  s.character.current_block = 0;
+
+  const int before_attack = s.character.hp;
+  enemy_attacks_player(s, 0, 6);
+  EXPECT_EQ(s.character.hp, before_attack - 5) << "attack damage";
+
+  const int before_fixed = s.character.hp;
+  hit_player(s, 4);
+  EXPECT_EQ(s.character.hp, before_fixed - 3) << "fixed damage";
+
+  const int before_loss = s.character.hp;
+  lose_hp(s, 3);
+  EXPECT_EQ(s.character.hp, before_loss - 2) << "direct HP loss";
+}
+
+TEST(RelicTriggers, TungstenRodCannotReduceBelowZero) {
+  CombatState s = fight_with({RelicId::TungstenRod});
+  s.character.current_block = 0;
+  const int hp = s.character.hp;
+
+  hit_player(s, 1);
+
+  EXPECT_EQ(s.character.hp, hp) << "1 damage should reduce to 0, not -1";
+}
+
+// Torii: attack damage of 2 through 5 becomes 1.
+TEST(RelicTriggers, ToriiReducesSmallAttacksToOne) {
+  CombatState s = fight_with({RelicId::Torii});
+  s.character.current_block = 0;
+  const int hp = s.character.hp;
+
+  enemy_attacks_player(s, 0, 5);
+
+  EXPECT_EQ(s.character.hp, hp - 1);
+}
+
+TEST(RelicTriggers, ToriiLeavesLargerAttacksAlone) {
+  CombatState s = fight_with({RelicId::Torii});
+  s.character.current_block = 0;
+  const int hp = s.character.hp;
+
+  enemy_attacks_player(s, 0, 6);
+
+  EXPECT_EQ(s.character.hp, hp - 6);
+}
+
+// It reads the UNBLOCKED number, which is why the reduction happens after
+// block is subtracted: 9 into 5 block leaves 4, which is inside Torii's band.
+TEST(RelicTriggers, ToriiReadsTheUnblockedNumber) {
+  CombatState s = fight_with({RelicId::Torii});
+  s.character.current_block = 5;
+  const int hp = s.character.hp;
+
+  enemy_attacks_player(s, 0, 9);
+
+  EXPECT_EQ(s.character.hp, hp - 1);
+  EXPECT_EQ(s.character.current_block, 0);
+}
+
+// Fixed damage is not attack damage. StS's onAttacked excludes DamageType
+// HP_LOSS and THORNS, so Burn's tick and a retaliation are untouched.
+TEST(RelicTriggers, ToriiIgnoresFixedDamage) {
+  CombatState s = fight_with({RelicId::Torii});
+  s.character.current_block = 0;
+  const int hp = s.character.hp;
+
+  hit_player(s, 4);
+
+  EXPECT_EQ(s.character.hp, hp - 4);
+}
+
+// The wiki states the order outright on the Tungsten Rod page: Torii first.
+// A 5-damage hit becomes 1, then 0. The other order would leave 4.
+TEST(RelicTriggers, ToriiResolvesBeforeTungstenRod) {
+  CombatState s = fight_with({RelicId::Torii, RelicId::TungstenRod});
+  s.character.current_block = 0;
+  const int hp = s.character.hp;
+
+  enemy_attacks_player(s, 0, 5);
+
+  EXPECT_EQ(s.character.hp, hp) << "expected 5 -> 1 (Torii) -> 0 (Rod)";
+}
+
+// Centennial Puzzle: the FIRST HP loss each combat draws 3.
+TEST(RelicTriggers, CentennialPuzzleDrawsOncePerCombat) {
+  CombatState s = fight_with({RelicId::CentennialPuzzle});
+  s.character.current_block = 0;
+  s.current_hand.clear();
+
+  hit_player(s, 3);
+  EXPECT_EQ(s.current_hand.size(), 3u);
+
+  s.current_hand.clear();
+  hit_player(s, 3);
+  EXPECT_TRUE(s.current_hand.empty()) << "fired a second time in one combat";
+}
+
+// Runic Cube: EVERY HP loss draws 1.
+TEST(RelicTriggers, RunicCubeDrawsOnEveryHpLoss) {
+  CombatState s = fight_with({RelicId::RunicCube});
+  s.character.current_block = 0;
+  s.current_hand.clear();
+
+  hit_player(s, 2);
+  EXPECT_EQ(s.current_hand.size(), 1u);
+  hit_player(s, 2);
+  EXPECT_EQ(s.current_hand.size(), 2u);
+}
+
+// A fully blocked hit is not an HP loss, so nothing fires.
+TEST(RelicTriggers, AFullyBlockedHitIsNotAnHpLoss) {
+  CombatState s = fight_with({RelicId::RunicCube});
+  s.character.current_block = 20;
+  s.current_hand.clear();
+
+  enemy_attacks_player(s, 0, 5);
+
+  EXPECT_TRUE(s.current_hand.empty());
+}
+
+// Self-Forming Clay: the block arrives NEXT turn, not now.
+TEST(RelicTriggers, SelfFormingClayBanksBlockForNextTurn) {
+  CombatState s = fight_with({RelicId::SelfFormingClay});
+  s.character.hp = 200;
+  s.character.max_hp = 200;
+  s.character.current_block = 0;
+
+  hit_player(s, 3);
+  EXPECT_EQ(s.character.current_block, 0) << "the block arrived this turn";
+  EXPECT_EQ(get_status(s.character.powers, Power::NextTurnBlock), 3);
+
+  // Absorb the enemy phase completely. An unblocked enemy hit is itself an HP
+  // loss and banks another 3 — correct, and pinned by the test below, but not
+  // what this one is measuring. Block survives to the player's next turn start,
+  // so setting it here covers the whole enemy phase.
+  s.character.current_block = 99;
+  ASSERT_TRUE(end_turn(s));
+
+  EXPECT_EQ(s.character.current_block, 3);
+  EXPECT_EQ(get_status(s.character.powers, Power::NextTurnBlock), 0)
+      << "the power did not remove itself after granting";
+}
+
+// The enemy's turn banks more, because being attacked is losing HP. The first
+// draft of the test above missed this and read 6 where it expected 3.
+TEST(RelicTriggers, SelfFormingClayBanksDuringTheEnemyTurnToo) {
+  CombatState s = fight_with({RelicId::SelfFormingClay});
+  s.character.hp = 200;
+  s.character.max_hp = 200;
+  s.character.current_block = 0;
+
+  hit_player(s, 3);
+  ASSERT_EQ(get_status(s.character.powers, Power::NextTurnBlock), 3);
+
+  ASSERT_TRUE(end_turn(s));  // the enemy connects: another HP loss
+
+  EXPECT_GT(s.character.current_block, 3)
+      << "the enemy's hit banked nothing";
+}
+
+// It stacks within a turn — the wiki calls this out explicitly.
+TEST(RelicTriggers, SelfFormingClayStacksWithinOneTurn) {
+  CombatState s = fight_with({RelicId::SelfFormingClay});
+  s.character.hp = 200;
+  s.character.max_hp = 200;
+  s.character.current_block = 0;
+
+  hit_player(s, 3);
+  hit_player(s, 3);
+
+  EXPECT_EQ(get_status(s.character.powers, Power::NextTurnBlock), 6);
+}
+
 // ------------------------------------------------- turn-boundary relics
 //
 // Every relic here fires from fire_turn_start_relic, which runs at BOTH the

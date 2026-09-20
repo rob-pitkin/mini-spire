@@ -47,6 +47,18 @@ int block_after_turn_start(const CombatState& state);
 // EnergyManager::recharge() branches on holding it.
 int energy_after_turn_start(const CombatState& state);
 
+// How much HP the player actually loses from `amount`, after the relics that
+// reduce incoming loss. `from_attack` is true only for enemy ATTACK damage:
+// Torii's hook in StS excludes HP-loss and thorns-type damage and requires an
+// attacker, so Burn's tick and a retaliation are untouched.
+//
+// EVERY path that removes player HP calls this — attack damage after block,
+// fixed damage after block, and direct HP loss — so a new damage source cannot
+// quietly skip a reduction. Call it with the post-block number: Torii reads
+// what is actually unblocked.
+int reduce_player_hp_loss(const CombatState& state, int amount,
+                          bool from_attack);
+
 // Ginger (Weak) and Turnip (Frail). Consulted BEFORE Artifact, so an immune
 // player does not spend an Artifact charge on a debuff that cannot land.
 bool player_is_immune_to(const CombatState& state, Debuff d);
