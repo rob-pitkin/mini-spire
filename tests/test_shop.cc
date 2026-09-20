@@ -70,17 +70,90 @@ TEST(Gold, ALostFightPaysNothing) {
 
 // ------------------------------------------------------------- shop stock
 
-TEST(Shop, StocksFiveClassCards) {
-  RunState run = at_a_shop();
-  EXPECT_EQ(run.shop_cards.size(), static_cast<size_t>(kShopCardSlots));
+// ------------------------------------------------- colorless slots (§4.3)
+
+namespace {
+
+bool in_pool(const std::vector<CardId>& pool, CardId id) {
+  for (CardId candidate : pool) {
+    if (candidate == id) return true;
+  }
+  return false;
 }
 
-// Two attacks, two skills, one power — the slots are typed.
+}  // namespace
+
+TEST(Shop, StocksAColorlessUncommonAndRareAfterTheClassCards) {
+  RunState run = at_a_shop();
+
+  ASSERT_EQ(run.shop_cards.size(), static_cast<size_t>(kShopCardSlots + 2));
+  const ShopItem& uncommon = run.shop_cards[kShopCardSlots];
+  const ShopItem& rare = run.shop_cards[kShopCardSlots + 1];
+  EXPECT_EQ(uncommon.rarity, CardRarity::Uncommon);
+  EXPECT_EQ(rare.rarity, CardRarity::Rare);
+  EXPECT_TRUE(in_pool(COLORLESS_UNCOMMON_POOL, uncommon.card.card_id))
+      << card_name(uncommon.card.card_id);
+  EXPECT_TRUE(in_pool(COLORLESS_RARE_POOL, rare.card.card_id))
+      << card_name(rare.card.card_id);
+}
+
+// StS discounts one of the FIRST FIVE card slots, so a colorless card is never
+// the half-price one.
+TEST(Shop, ColorlessSlotsAreNeverOnSale) {
+  for (uint64_t s = 0; s < 40; ++s) {
+    RunState run = at_a_shop(s);
+    for (size_t i = kShopCardSlots; i < run.shop_cards.size(); ++i) {
+      EXPECT_FALSE(run.shop_cards[i].on_sale) << "seed " << s;
+    }
+  }
+}
+
+// 75 and 150 from the rarity table, times the 1.2 colorless markup, times the
+// 0.9-1.1 jitter.
+TEST(Shop, ColorlessPricesCarryTheMarkup) {
+  for (uint64_t s = 0; s < 40; ++s) {
+    RunState run = at_a_shop(s);
+    const int uncommon = run.shop_cards[kShopCardSlots].price;
+    const int rare = run.shop_cards[kShopCardSlots + 1].price;
+    EXPECT_GE(uncommon, 81) << "seed " << s;
+    EXPECT_LE(uncommon, 99) << "seed " << s;
+    EXPECT_GE(rare, 162) << "seed " << s;
+    EXPECT_LE(rare, 198) << "seed " << s;
+  }
+}
+
+// The whole reason the colorless block was built: these are now buyable.
+TEST(Shop, BuyingAColorlessCardAddsItToTheDeck) {
+  RunState run = at_a_shop();
+  const size_t before = run.master_deck.size();
+  const CardId id = run.shop_cards[kShopCardSlots].card.card_id;
+  const int price = run.shop_cards[kShopCardSlots].price;
+  const int gold = run.gold;
+
+  run.buy_card(kShopCardSlots);
+
+  EXPECT_EQ(run.gold, gold - price);
+  ASSERT_EQ(run.master_deck.size(), before + 1);
+  EXPECT_EQ(run.master_deck.back().card_id, id);
+  EXPECT_TRUE(run.shop_cards[kShopCardSlots].sold);
+  EXPECT_NE(run.master_deck.back().uid, kCombatScopedCardUid)
+      << "a bought card gets a run identity";
+}
+
+TEST(Shop, StocksFiveClassCardsAndTwoColorless) {
+  RunState run = at_a_shop();
+  EXPECT_EQ(run.shop_cards.size(), static_cast<size_t>(kShopCardSlots + 2));
+}
+
+// Two attacks, two skills, one power — the CLASS slots are typed. The two
+// colorless slots that follow are typed by their pools instead, so they are
+// deliberately outside this count.
 TEST(Shop, SlotTypesAreTwoAttacksTwoSkillsOnePower) {
   for (uint64_t s = 0; s < 40; ++s) {
     RunState run = at_a_shop(s);
     int attacks = 0, skills = 0, powers = 0;
-    for (const ShopItem& item : run.shop_cards) {
+    for (int i = 0; i < kShopCardSlots; ++i) {
+      const ShopItem& item = run.shop_cards[i];
       switch (CARD_DATABASE.at(item.card.card_id).type) {
         case CardType::Attack: ++attacks; break;
         case CardType::Skill: ++skills; break;
@@ -127,8 +200,11 @@ TEST(Shop, StockComesFromTheIroncladPools) {
 
   for (uint64_t s = 0; s < 40; ++s) {
     RunState run = at_a_shop(s);
-    for (const ShopItem& item : run.shop_cards) {
-      EXPECT_EQ(pool.count(item.card.card_id), 1u) << "seed " << s;
+    // The CLASS slots only: the last two come from the colorless pools, which
+    // StocksAColorlessUncommonAndRareAfterTheClassCards checks instead.
+    for (int i = 0; i < kShopCardSlots; ++i) {
+      EXPECT_EQ(pool.count(run.shop_cards[i].card.card_id), 1u)
+          << "seed " << s;
     }
   }
 }
@@ -163,7 +239,11 @@ TEST(Shop, ExactlyOneCardIsOnSale) {
 TEST(Shop, TheSaleCardIsGenuinelyHalfPrice) {
   for (uint64_t s = 0; s < 60; ++s) {
     RunState run = at_a_shop(s);
-    for (const ShopItem& item : run.shop_cards) {
+    // The CLASS slots only. A colorless card carries the 1.2 markup, so it
+    // sits ABOVE this band by design — ColorlessPricesCarryTheMarkup checks
+    // that one — and it can never be the sale card anyway.
+    for (int i = 0; i < kShopCardSlots; ++i) {
+      const ShopItem& item = run.shop_cards[i];
       const int base = kCardRarityPrices[static_cast<int>(item.rarity)];
       const int floor_price = static_cast<int>(static_cast<float>(base) * 0.9f);
       const int ceil_price = static_cast<int>(static_cast<float>(base) * 1.1f);

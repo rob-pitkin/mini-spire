@@ -567,7 +567,29 @@ void RunState::generate_shop() {
     shop_potions.push_back(offer);
   }
 
-  // Still unstocked: the 2 colorless card slots, which need colorless cards.
+  // The two colorless slots (§4.3): one uncommon, one rare, in that order.
+  //
+  // Stocked AFTER the sale roll deliberately — StS discounts one of the first
+  // five card slots, so a colorless card is never the half-price one.
+  //
+  // The healing exclusion does NOT apply here: it is a rule about random
+  // generation DURING combat (Bandage Up can be bought, just never conjured),
+  // so these draw from the full pools.
+  const std::pair<const std::vector<CardId>*, CardRarity> colorless_slots[] = {
+      {&COLORLESS_UNCOMMON_POOL, CardRarity::Uncommon},
+      {&COLORLESS_RARE_POOL, CardRarity::Rare},
+  };
+  for (const auto& [pool, rarity] : colorless_slots) {
+    ShopItem item;
+    item.card = Card{(*pool)[std::uniform_int_distribution<size_t>(
+        0, pool->size() - 1)(rng)]};
+    item.rarity = rarity;
+    const float jitter = std::uniform_real_distribution<float>(0.9f, 1.1f)(rng);
+    item.price = discounted_price(static_cast<int>(
+        static_cast<float>(kCardRarityPrices[static_cast<int>(rarity)]) *
+        jitter * kColorlessShopMarkup));
+    shop_cards.push_back(item);
+  }
 }
 
 float RunState::shop_price_multiplier() const {

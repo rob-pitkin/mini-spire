@@ -65,7 +65,7 @@ it exists. Sections not listed here have no code behind them yet.
 | 4.2 | card-reward rarity roll + pity counter | ✅ `run_state.cc`; pools in `card.h` |
 | 4.2 | combat gold (10–20 / 25–35 / 100±5) | ✅ `run_state.cc` |
 | 4.2 | potion drops, elite relics, treasure chests | ✅ `run_state.cc` |
-| 4.3 | shops: 5 class cards + 3 relics + 3 potions, pricing, sale slot, removal | ✅ **partial** — only the 2 colorless slots remain, and they need colorless cards |
+| 4.3 | shops: 5 class cards + 2 colorless + 3 relics + 3 potions, pricing, sale slot, removal | ✅ **complete** — the colorless slots landed with the colorless card effects |
 | 5.1 | `RelicId` (140) and `PotionId` (33) vocabularies | ✅ `relic.{h,cc}`, `potion.{h,cc}` — data only, **no effects yet** |
 | 3.0.1 | relics/potions as first-class `CombatState` | ✅ held and projected; **effects are the next step** |
 | 4.4 | Neow | ❌ |
@@ -1940,8 +1940,10 @@ a Linear board disagrees with it, the spec wins.
    do not exist yet.
 6. ✅ Rest sites (first resource-vs-investment tradeoff; the case the reward
    design was built around). ⚠️ Lift/Toke/Dig need relics.
-7. Shops ✅ partial (class cards, pricing, sale slot, removal — the colorless,
-   relic and potion slots need content that does not exist). Events ❌.
+7. Shops ✅ — all 14 slots stock, including the 2 colorless ones, which waited
+   on the colorless card effects (`colorless-effects.md`). Relic and potion
+   effects are the remainder of this step: relics 69/140, potions 0/33.
+   Events ❌.
 8. Bosses → **M5: an agent that completes a run**.
 
 ## 12. Non-termination hazard

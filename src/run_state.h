@@ -143,6 +143,11 @@ inline constexpr int kBustedCrownFewerCards = 2;
 // power slot promotes a COMMON roll to UNCOMMON.
 inline constexpr int kShopCardSlots = 5;
 
+// The two colorless slots that follow them: one UNCOMMON, one RARE, always in
+// that order. They are priced from the same rarity table as class cards, times
+// a markup — 75 and 150 become 90 and 180 before the random jitter.
+inline constexpr float kColorlessShopMarkup = 1.2f;
+
 // One item on offer.
 struct ShopItem {
   Card card;
@@ -384,7 +389,9 @@ struct RunState {
 
   // What the current shop is selling. Empty outside Phase::Shop.
   //
-  // Still missing the 2 colorless card slots, which need colorless cards.
+  // Slots 0-4 are the class cards; 5 and 6 are the colorless uncommon and rare
+  // (§4.3). One vector rather than two because a purchase is "buy shop card i"
+  // either way, and the action space indexes the shelf, not the category.
   std::vector<ShopItem> shop_cards;
   std::vector<ShopRelic> shop_relics;
   std::vector<ShopPotion> shop_potions;

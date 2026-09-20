@@ -148,9 +148,9 @@ machinery each needs.
 - [ ] **Events** — most varied; many are bespoke one-offs. Not started.
 - [ ] **Shops** — most complex: multiple purchases, prices, gold as a resource.
       Miles reported shops as his most computationally expensive decision.
-      **Nearly done:** class cards, the sale slot, removal, and the relic and
-      potion slots are built. The 2 colorless card slots wait on colorless card
-      effects. Potions can be bought, but none can be used yet.
+      **Built**, all 14 slots: class cards, the 2 colorless slots, relics,
+      potions, the sale slot and removal. Potions can be bought but not yet
+      drunk — potion effects are their own piece of §11 step 7.
 
 ### Phase 7 — a complete act
 
