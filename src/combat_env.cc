@@ -370,6 +370,9 @@ void CombatEnv::compute_obs() {
     o[kChoiceBase + 0] = 1.0f;
     o[kChoiceBase + 1] = static_cast<float>(static_cast<int>(pc.kind));
     o[kChoiceBase + 2] = static_cast<float>(choice_source_pile(pc.kind));
+    // Enum ordinal, like the two floats above it — including CardId::None,
+    // which encodes as kNumCardTypes and means "no card opened this menu"
+    // (a relic did). No special case: one rule for the whole header.
     o[kChoiceBase + 3] = static_cast<float>(static_cast<int>(pc.source_card));
     o[kChoiceBase + 4] = pc.is_optional ? 1.0f : 0.0f;
     const int slots = kChoiceBase + kChoiceHeaderSize;

@@ -349,6 +349,19 @@ enum class CardId {
   Shame,
   Writhe,
   CurseOfTheBell,
+
+  // NOT A CARD. The sentinel for "no card", carried by
+  // PendingChoice::source_card when the pause was caused by something that is
+  // not a card: Toolbox stops combat setup before the first hand, and the run
+  // layer's shop and event screens will do the same. It previously defaulted to
+  // Strike, which told the agent a card it never played had opened the menu.
+  //
+  // APPENDED, never inserted, and deliberately left OUT of CARD_DATABASE.
+  // CardId values are dense 0..kNumCardTypes-1, and that density IS the action
+  // space (kCombatBlock, kCardSelectBlock) and the obs card order. None sits
+  // one past the last real id, so it can never encode a legal action, and the
+  // CARD_DATABASE.size() == kNumCardTypes assert still holds.
+  None,
 };
 
 // Number of distinct card types. Drives the obs pile-count stride and the
@@ -413,6 +426,16 @@ enum class ChoiceKind {
                             // cost discount — the relic just hands it over.
   // v2.0.0 (map / shop / events) appends here — no encoding change.
 };
+
+// How many ChoiceKinds exist, INCLUDING None — unlike kNumDebuffs, whose None
+// is excluded because it is not bound. ChoiceKind::None is bound, so this is
+// exactly len(_core.ChoiceKind.__members__) and a Python test compares the two.
+//
+// It exists because five kinds (DiscoverCard, the two draw-pile picks,
+// HandToBottomOfDraw, DiscoverColorlessCard) shipped UNBOUND: nothing counted
+// the enum, and the test that iterates the bound members could not see what
+// was missing from it. Bump this when adding a kind, and the test says where.
+inline constexpr int kNumChoiceKinds = 12;
 
 // Which cards a card exhausts wholesale from the hand. Sever Soul's variant
 // (non-attacks, no scaling) predates this and stays on its own flag.
@@ -1084,7 +1107,11 @@ inline constexpr int kMaxMultiSelectPicks = 10;
 
 struct PendingChoice {
   ChoiceKind kind = ChoiceKind::None;
-  CardId source_card = CardId::Strike;  // the card that caused the pause
+  // The card that caused the pause, or None when no card did — a relic
+  // (Toolbox) or, later, a shop or event screen. Defaulting this to Strike
+  // meant a relic's menu reported Strike as its source, in the obs and on
+  // screen both.
+  CardId source_card = CardId::None;
   bool is_optional = false;             // may the agent decline?
   int copies = 1;                       // Dual Wield+ adds 2
   // Multi-select (colorless-effects.md D1): the choice stays open for up to
@@ -2179,7 +2206,14 @@ inline bool card_targets_enemy(const CardData& data) {
 
 // Display name for a card (ROB-79) — reads CardData::name, the single source of
 // truth. The TUI uses this so it never maintains its own name map.
-inline const char* card_name(CardId id) { return CARD_DATABASE.at(id).name; }
+//
+// TOTAL over CardId, which .at() alone is not: CardId::None is a legal value
+// with no CARD_DATABASE row, and the TUI calls this on a choice's source_card,
+// which is None whenever a relic rather than a card opened the menu.
+inline const char* card_name(CardId id) {
+  if (id == CardId::None) return "(none)";
+  return CARD_DATABASE.at(id).name;
+}
 
 // --- Random in-combat generation (colorless-effects.md batch 2) ------------
 //

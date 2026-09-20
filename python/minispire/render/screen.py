@@ -504,7 +504,17 @@ CHOICE_PROMPTS = {
     "ExhaustToHand": "Put a card from your exhaust pile into your hand",
     "CopyAttackOrPowerInHand": "Choose an Attack or Power to copy",
     "ExhaustCardInHand": "Exhaust a card from your hand",
+    "DiscoverCard": "Choose a card to add to your hand",
+    "DiscoverColorlessCard": "Choose a Colorless card to add to your hand",
+    "DrawPileSkillToHand": "Choose a Skill from your draw pile",
+    "DrawPileAttackToHand": "Choose an Attack from your draw pile",
+    "HandToBottomOfDraw": "Put a card from your hand on the bottom of your draw pile",
 }
+
+#: The "no source card" sentinel: the choice was opened by a relic (Toolbox)
+#: rather than by a card. Fetched with getattr because Python cannot spell
+#: ``CardId.None`` — the same reason ``ChoiceKind.None`` is read this way.
+NO_SOURCE_CARD = getattr(_core.CardId, "None")
 
 
 def build_choice(env, *, focus: int | None = None) -> tuple[Panel, int]:
@@ -523,7 +533,11 @@ def build_choice(env, *, focus: int | None = None) -> tuple[Panel, int]:
     )
 
     header = Text()
-    header.append(f"{_core.card_name(view.source_card)}: ", style="bold yellow")
+    # Only a CARD-opened choice gets the "<card>:" prefix. Toolbox's menu is
+    # opened by a relic and has no source card, and naming one there would
+    # attribute the prompt to a card the player never played.
+    if view.source_card != NO_SOURCE_CARD:
+        header.append(f"{_core.card_name(view.source_card)}: ", style="bold yellow")
     header.append(prompt, style="bold white")
     if view.copies > 1:
         header.append(f"  (x{view.copies} copies)", style="yellow")

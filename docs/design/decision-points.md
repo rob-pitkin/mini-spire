@@ -206,7 +206,10 @@ header (kChoiceHeaderSize = 5 floats)
   [0] choice_pending          0 / 1          ← R4, mandatory
   [1] choice_kind             which decision  (ChoiceKind enum)
   [2] source_pile             hand/draw/discard/exhaust/external
-  [3] source_card             the card that caused the pause (CardId)
+  [3] source_card             the card that caused the pause (CardId), or
+                              CardId::None (= kNumCardTypes) when no card did:
+                              a relic opened the menu (Toolbox), and later a
+                              shop or event screen will
   [4] choice_is_optional      0 / 1          ← is option_skip legal
 
 slots (kNumOptionSlots × kChoiceSlotStride = 3 floats)
@@ -314,7 +317,7 @@ enum class ChoiceKind {
 
 struct PendingChoice {                       // POD — clone() stays a plain copy
   ChoiceKind kind = ChoiceKind::None;
-  CardId source_card = CardId::Strike;
+  CardId source_card = CardId::None;         // None = no card opened this menu
   bool is_optional = false;
   int num_options = 0;
   std::array<CardId, kNumOptionSlots> options{};   // fixed, no heap (R1/R6)

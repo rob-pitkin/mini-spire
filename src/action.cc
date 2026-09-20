@@ -770,6 +770,10 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
         if (relic.id == RelicId::Toolbox) {
           Action a = make_action(ActionKind::RequestChoice);
           a.amount = static_cast<int>(ChoiceKind::DiscoverColorlessCard);
+          // No source CARD — the relic opened this menu. Set explicitly
+          // because Action::card defaults to Strike, and the RequestChoice
+          // executor copies it straight into PendingChoice::source_card.
+          a.card = CardId::None;
           q.push_back(a);
         }
         break;

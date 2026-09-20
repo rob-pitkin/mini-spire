@@ -87,3 +87,73 @@ def test_hand_panel_prints_the_effective_cost():
     name = _core.card_name(granted[0])
     line = next(ln for ln in text.splitlines() if name in ln)
     assert "{0}" in line, f"expected a free cost in {line!r}"
+
+
+# --------------------------------------------------------------------------
+# The choice header. A relic can open a menu (Toolbox, before the first hand
+# is dealt), and such a choice has no source CARD.
+#
+# These build the view directly instead of driving a real fight: the engine
+# can produce a relic-sourced choice, but CombatEnv takes no relics yet, so
+# Python cannot reach one. Only the two methods build_choice calls are stubbed.
+# --------------------------------------------------------------------------
+
+
+class _StubView:
+    def __init__(self, source_card, kind, options):
+        self.active = True
+        self.kind = kind
+        self.source_card = source_card
+        self.is_optional = False
+        self.copies = 1
+        self.options = options
+        self.option_damage = [0] * len(options)
+
+
+class _StubChoiceEnv:
+    def __init__(self, view):
+        self._view = view
+
+    def choice_view(self):
+        return self._view
+
+    def effective_cost(self, card_id):
+        return _core.card_data(card_id).cost
+
+
+def _render(panel) -> str:
+    import io
+
+    from rich.console import Console
+
+    console = Console(file=io.StringIO(), width=200)
+    console.print(panel)
+    return console.file.getvalue()
+
+
+def test_a_relic_opened_choice_names_no_card():
+    # source_card defaulted to Strike, so Toolbox's menu announced "Strike:" —
+    # a card the player never played, stated as the cause of the prompt.
+    view = _StubView(
+        screen.NO_SOURCE_CARD,
+        _core.ChoiceKind.DiscoverColorlessCard,
+        [_core.CardId.Finesse, _core.CardId.Panacea],
+    )
+    panel, count = screen.build_choice(_StubChoiceEnv(view))
+    assert count == 2
+
+    text = _render(panel)
+    assert "Choose a Colorless card" in text, "the kind fell back to the generic prompt"
+    assert "Strike" not in text
+    assert "(none)" not in text, "the sentinel leaked into the header"
+
+
+def test_a_card_opened_choice_still_names_its_card():
+    # The control: the prefix is dropped only when there is no source card.
+    view = _StubView(
+        _core.CardId.Armaments,
+        _core.ChoiceKind.UpgradeCardInHand,
+        [_core.CardId.Strike, _core.CardId.Defend],
+    )
+    text = _render(screen.build_choice(_StubChoiceEnv(view))[0])
+    assert "Armaments:" in text

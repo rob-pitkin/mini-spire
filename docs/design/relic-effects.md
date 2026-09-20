@@ -470,3 +470,22 @@ Strength) still land afterwards.
 hands the card over at full price. `ChoiceKind::DiscoverColorlessCard` shares
 Discovery's rolled-options path — three distinct cards drawn without
 replacement — and differs only in pool and in not setting a cost override.
+
+**`CardId::None`, because a relic's menu has no source card.**
+`PendingChoice::source_card` means "the card that caused the pause" and
+defaulted to `CardId::Strike`, so Toolbox's prompt reported Strike as its
+source — in the observation and in the TUI header both. Rob ruled for a
+sentinel (2026-09-20) over a parallel `source_relic` field or leaving it.
+
+The sentinel is free because `kNumCardTypes` is a literal `270` rather than a
+count of the enum: `None` is **appended** and has **no `CARD_DATABASE` row**, so
+it sits one past the last real id, the `CARD_DATABASE.size() == kNumCardTypes`
+assert still holds, and `encode_action` cannot reach it — the action space stays
+at 2,135. In the obs it encodes as its ordinal (270), uniform with the other
+enum ordinals in the choice header rather than a special-cased `-1`.
+
+Two consequences worth knowing: `card_name` had to become total (it is
+`CARD_DATABASE.at()`, which throws, and the TUI calls it on `source_card`), and
+Python cannot write `CardId.None` — readers use `getattr(CardId, "None")`, as
+they already do for `ChoiceKind.None`. Shop and event screens inherit all of
+this when they arrive.

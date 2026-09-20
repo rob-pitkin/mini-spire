@@ -179,6 +179,42 @@ TEST(RelicTriggers, ToolboxsOpeningChoiceRefusesACardItDidNotOffer) {
   EXPECT_TRUE(s.pending_choice.active()) << "the refused action still resolved";
 }
 
+// A relic's menu has NO source card. source_card used to default to Strike, so
+// Toolbox's prompt reported Strike as the card that opened it — stated as fact
+// in the observation and in the TUI header both.
+TEST(RelicTriggers, ToolboxsChoiceReportsNoSourceCard) {
+  const CombatState s = fight_with({RelicId::Toolbox});
+  ASSERT_TRUE(s.pending_choice.active());
+  EXPECT_EQ(s.pending_choice.source_card, CardId::None);
+  // And the name lookup is total. CARD_DATABASE has no row for the sentinel,
+  // and the TUI calls card_name() on source_card unconditionally.
+  EXPECT_STREQ(card_name(CardId::None), "(none)");
+}
+
+// The sentinel stays OUT of the card vocabulary: appended past the last real
+// id, with no CARD_DATABASE row, so it can never encode a legal action and the
+// action space stays 2,135. Inserting a card id ahead of it breaks this.
+TEST(RelicTriggers, TheNoCardSentinelIsOutsideTheCardVocabulary) {
+  EXPECT_EQ(static_cast<int>(CardId::None), kNumCardTypes);
+  EXPECT_EQ(CARD_DATABASE.find(CardId::None), CARD_DATABASE.end());
+  EXPECT_EQ(static_cast<int>(CARD_DATABASE.size()), kNumCardTypes);
+}
+
+// The control: a choice a CARD opened still names that card.
+TEST(RelicTriggers, ACardOpenedChoiceStillNamesItsCard) {
+  CombatState s = bare_fight();
+  // Two distinct upgradable cards, so Armaments is a real prompt rather than a
+  // one-option auto-resolve.
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Armaments});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Armaments)));
+  ASSERT_TRUE(s.pending_choice.active());
+  EXPECT_EQ(s.pending_choice.source_card, CardId::Armaments);
+}
+
 TEST(RelicTriggers, OddlySmoothStoneGrantsDexterity) {
   const CombatState with = fight_with({RelicId::OddlySmoothStone});
   EXPECT_EQ(get_status(with.character.powers, Power::Dexterity), 1);

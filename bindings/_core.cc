@@ -352,7 +352,11 @@ PYBIND11_MODULE(_core, m) {
       .value("Regret", CardId::Regret)
       .value("Shame", CardId::Shame)
       .value("Writhe", CardId::Writhe)
-      .value("CurseOfTheBell", CardId::CurseOfTheBell);
+      .value("CurseOfTheBell", CardId::CurseOfTheBell)
+      // The "no card" sentinel. Python cannot spell CardId.None, so readers
+      // reach it with getattr(CardId, "None") — same shape as ChoiceKind.None
+      // above, which has shipped this way since Stage 4c.
+      .value("None", CardId::None);
 
   // EnemyKind (ROB-79) — so the TUI can name per-slot enemies via enemy_kinds().
   py::enum_<EnemyKind>(m, "EnemyKind")
@@ -394,7 +398,15 @@ PYBIND11_MODULE(_core, m) {
       .value("DiscardToTopOfDraw", ChoiceKind::DiscardToTopOfDraw)
       .value("ExhaustToHand", ChoiceKind::ExhaustToHand)
       .value("CopyAttackOrPowerInHand", ChoiceKind::CopyAttackOrPowerInHand)
-      .value("ExhaustCardInHand", ChoiceKind::ExhaustCardInHand);
+      .value("ExhaustCardInHand", ChoiceKind::ExhaustCardInHand)
+      // Added by the colorless batches and by Toolbox. All five were missing
+      // until 2026-09-20, so the TUI's prompt table could not name them and
+      // every one fell through to the generic "Choose a card (...)" label.
+      .value("DiscoverCard", ChoiceKind::DiscoverCard)
+      .value("DrawPileSkillToHand", ChoiceKind::DrawPileSkillToHand)
+      .value("DrawPileAttackToHand", ChoiceKind::DrawPileAttackToHand)
+      .value("HandToBottomOfDraw", ChoiceKind::HandToBottomOfDraw)
+      .value("DiscoverColorlessCard", ChoiceKind::DiscoverColorlessCard);
   py::class_<ChoiceView>(m, "ChoiceView")
       .def_readonly("active", &ChoiceView::active)
       .def_readonly("kind", &ChoiceView::kind)
@@ -623,6 +635,7 @@ PYBIND11_MODULE(_core, m) {
       // counter for every fight.
       .def_readonly_static("TURN_OBS_INDEX", &CombatEnv::kTurnObsIndex)
       .def_readonly_static("NUM_DEBUFFS", &kNumDebuffs)
+      .def_readonly_static("NUM_CHOICE_KINDS", &kNumChoiceKinds)
       .def_readonly_static("NUM_ENEMY_POWERS", &kNumEnemyPowers)
       .def_readonly_static("NUM_PLAYER_POWERS", &kNumPlayerPowers)
       .def_readonly_static("NUM_CARD_TYPES", &kNumCardTypes)
