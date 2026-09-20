@@ -49,7 +49,7 @@ std::vector<Card> starter_deck();
 // Exposed because it is an ACTION now (ActionKind::DrawOpeningHand): a pre-draw
 // relic that pauses for a choice — Toolbox — must park the draw behind it, so
 // the choice is made WITHOUT seeing the opening hand, as in StS.
-void draw_opening_hand(CombatState& state);
+void draw_opening_hand(CombatState& state, ActionQueue& q);
 
 // Everything a fight needs to exist. See docs/design/v2-spec.md §3.2.
 //

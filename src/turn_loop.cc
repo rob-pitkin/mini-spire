@@ -952,7 +952,7 @@ void handle_end_turn(CombatState& state) {
 // pile into the hand FIRST and count toward the opening draw, so the hand is
 // still STARTING_HAND_SIZE. Combat-start powers don't exist yet, so this needs
 // no queue — the CardDrawn hook can't have a listener on turn 1.
-void draw_opening_hand(CombatState& state) {
+void draw_opening_hand(CombatState& state, ActionQueue& q) {
   int drawn = 0;
   for (auto it = state.draw_pile.begin();
        it != state.draw_pile.end() && drawn < STARTING_HAND_SIZE;) {
@@ -965,7 +965,7 @@ void draw_opening_hand(CombatState& state) {
     }
   }
   for (; drawn < STARTING_HAND_SIZE; ++drawn) {
-    draw_one(state);
+    draw_one(state, q);
   }
 }
 
@@ -1043,26 +1043,26 @@ CombatState start_combat(CombatSetup setup) {
   state.character_turn = true;
   state.outcome = Outcome::InProgress;
 
-  // Start-of-combat relics, in the three ordered sub-phases the real game uses
-  // (docs/design/relic-effects.md §3.1). The available pieces:
+  // Start-of-combat relics, in the ordered sub-phases the real game uses
+  // (docs/design/relic-effects.md §3.1):
   //
-  //   fire_relic_hooks(state, Hook::CombatStartPreDraw, q)  -- pre-draw relics
-  //   draw_opening_hand(state)                              -- the opening hand
-  //   fire_relic_hooks(state, Hook::CombatStart, q)         -- post-draw relics
-  //   fire_relic_hooks(state, Hook::TurnStartPostDraw, q)   -- last sub-phase
-  //   drain(state, q, ctx)                                  -- resolve pushed actions
+  //   Hook::CombatStartPreDraw  -- before the hand exists (Toolbox)
+  //   DrawOpeningHand           -- the opening hand, Innate-aware
+  //   Hook::CombatStart         -- post-draw relics
+  //   Hook::TurnStartPostDraw   -- the last sub-phase
   //
-  // Note draw_opening_hand is imperative (it is Innate-aware and not an Action),
-  // so anything pushed before it resolves only when the queue is next drained.
+  // ONE queue, drained once. Everything after the pre-draw hooks is an ACTION
+  // rather than an imperative call, which is what lets a pre-draw relic PAUSE
+  // the whole sequence: Toolbox asks the player to choose a card before the
+  // hand is dealt, so a fight can open already waiting on a choice. The queue
+  // keeps the order without needing a drain between each step.
+  //
+  // The deck shuffle above is NOT part of this and fires no ShuffleDrawPile:
+  // StS shuffles the opening draw pile inside CardGroup.initializeDeck, which
+  // never reaches the relics, so Sundial and The Abacus do not trigger here.
   ActionQueue q;
   ResolutionContext ctx;
 
-  // ONE queue, drained once. The opening draw and the post-draw hooks are
-  // actions rather than imperative calls, which is what lets a pre-draw relic
-  // PAUSE the whole sequence: Toolbox asks the player to choose a card before
-  // the hand is dealt, and a fight can therefore open already waiting on a
-  // choice. The queue keeps the order — pre-draw responses, then the draw,
-  // then the rest — without needing a drain between each step.
   fire_relic_hooks(state, Hook::CombatStartPreDraw, q);
   q.push_back(Action{ActionKind::DrawOpeningHand});
   q.push_back(Action{ActionKind::CombatStartPostDraw});
@@ -1103,7 +1103,13 @@ CombatState start_v1_combat(uint32_t seed) {
   state.character_turn = true;
   state.outcome = Outcome::InProgress;
 
-  draw_opening_hand(state);
+  // A queue of its own, drained here. The fixture holds no relics, so nothing
+  // can respond, but the opening draw can reshuffle and a reshuffle now pushes
+  // actions. Using the real path keeps this in step with start_combat.
+  ActionQueue fixture_q;
+  ResolutionContext fixture_ctx;
+  draw_opening_hand(state, fixture_q);
+  drain(state, fixture_q, fixture_ctx);
 
   return state;
 }

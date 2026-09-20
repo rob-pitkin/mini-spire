@@ -147,12 +147,26 @@ void add_card_to_hand(CombatState& state, const Card& card) {
   }
 }
 
-std::optional<CardId> draw_one(CombatState& state) {
+void reshuffle_discard_into_draw(CombatState& state, ActionQueue& q) {
+  if (state.discard_pile.empty()) return;
+  state.draw_pile.insert(state.draw_pile.end(), state.discard_pile.begin(),
+                         state.discard_pile.end());
+  state.discard_pile.clear();
+  std::shuffle(state.draw_pile.begin(), state.draw_pile.end(), state.rng);
+  // Fires the shuffle hook: Sundial counts shuffles, The Abacus gains block on
+  // each one. All three reshuffle sites call this — the draw-dry reshuffle,
+  // Deep Breath, and Havoc/Mayhem's — so none of them can skip the hook.
+  //
+  // The combat-start shuffle does not call this. StS shuffles the opening draw
+  // pile in CardGroup.initializeDeck, which does not run the relic loop, so
+  // Sundial and The Abacus do not fire on turn 1.
+  fire_relic_hooks(state, Hook::ShuffleDrawPile, q);
+}
+
+std::optional<CardId> draw_one(CombatState& state, ActionQueue& q) {
   if (state.draw_pile.empty()) {
     if (state.discard_pile.empty()) return std::nullopt;
-    state.draw_pile = std::move(state.discard_pile);
-    state.discard_pile.clear();
-    std::shuffle(state.draw_pile.begin(), state.draw_pile.end(), state.rng);
+    reshuffle_discard_into_draw(state, q);
   }
   if (static_cast<int>(state.current_hand.size()) >= HAND_SIZE_LIMIT) {
     return std::nullopt;
@@ -644,7 +658,7 @@ namespace {
 // One relic's response to one hook. Extracted so the batched and sequential
 // entry points cannot diverge — they differ only in when they drain.
 void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
-                    ActionQueue& q);
+                    ActionQueue& q, int slot = kNoSlot);
 void fire_card_played_relic(HeldRelic& relic, CardType type, ActionQueue& q);
 }  // namespace
 
@@ -666,13 +680,13 @@ void fire_relic_hooks_sequentially(CombatState& state, Hook hook) {
   }
 }
 
-void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q) {
+void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q, int slot) {
   // ACQUISITION order — the order of state.relics, which is the order the
   // player picked them up and the order their relic bar shows. Unlike the
   // powers registry below (Power-enum order), this loop must not be sorted or
   // grouped by hook: doing so would silently change resolution order.
   for (HeldRelic& relic : state.relics) {
-    fire_one_relic(state, relic, hook, q);
+    fire_one_relic(state, relic, hook, q, slot);
   }
 }
 
@@ -759,7 +773,7 @@ void fire_card_played_relic(HeldRelic& relic, CardType type, ActionQueue& q) {
 }
 
 void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
-                    ActionQueue& q) {
+                    ActionQueue& q, int slot) {
   {
     switch (hook) {
       case Hook::CombatStartPreDraw:
@@ -977,6 +991,60 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
         // respectively; both land in later batches.
         break;
 
+      case Hook::EnemyDeath:
+        // Gremlin Horn: "whenever an enemy dies, gain 1 Energy and draw 1
+        // card." Unconditional here — CheckDeath already withholds the fight's
+        // last death, which is the relic's own !areMonstersBasicallyDead()
+        // guard. The wiki notes the energy and card carry into the next turn
+        // when the death happens during the enemies' turn; queueing them gives
+        // that behaviour directly.
+        if (relic.id == RelicId::GremlinHorn) {
+          Action energy = make_action(ActionKind::GainEnergy);
+          energy.amount = 1;
+          q.push_back(energy);
+          Action draw = make_action(ActionKind::DrawCards);
+          draw.amount = 1;
+          q.push_back(draw);
+        }
+        break;
+
+      case Hook::ShuffleDrawPile:
+        // Sundial: 2 Energy on every 3rd shuffle. The counter is RUN-scoped —
+        // StS sets it in onEquip and never clears it per combat, so a fight can
+        // end mid-count and the next one continues it.
+        if (relic.id == RelicId::Sundial) {
+          ++relic.counter;
+          if (relic.counter >= 3) {
+            relic.counter = 0;
+            Action a = make_action(ActionKind::GainEnergy);
+            a.amount = 2;
+            q.push_back(a);
+          }
+        }
+        // The Abacus: 6 Block on every shuffle. Relic block is never card
+        // block, so Dexterity and Frail leave it alone.
+        if (relic.id == RelicId::TheAbacus) {
+          Action a = make_action(ActionKind::GainBlock);
+          a.target = kPlayerSlot;
+          a.amount = 6;
+          q.push_back(a);
+        }
+        break;
+
+      case Hook::BlockBroken:
+        // Hand Drill: "whenever you break an enemy's Block, apply 2
+        // Vulnerable." To THAT enemy — the slot the damage path handed us.
+        // Never to the player: fire_block_broken is enemy-only, mirroring
+        // StS's `this instanceof AbstractMonster` guard in brokeBlock().
+        if (relic.id == RelicId::HandDrill && slot >= 0) {
+          Action a = make_action(ActionKind::ApplyDebuff);
+          a.target = slot;
+          a.debuff = Debuff::Vulnerable;
+          a.amount = 2;
+          q.push_back(a);
+        }
+        break;
+
       default:
         // Every other hook is wired in a later batch. Listed explicitly rather
         // than silently ignored so an unhandled hook is a visible gap.
@@ -1187,13 +1255,33 @@ bool take_from_pile(std::vector<Card>& pile, const Card& card) {
 // "unblocked damage" from such sources). Fires the ANY-damage hook family —
 // the HP threshold interrupt, Lagavulin's wake — but NOT Hook::EnemyDamaged,
 // whose listeners (Curl Up, Angry) are attack-only in StS.
+// An enemy's block BREAKS when damage meets or exceeds it — equality counts
+// (decompiled decrementBlock: `damageAmount == currentBlock` takes the same
+// branch as `>`), and there must have been block to break.
+//
+// Two things this deliberately does not do. It is never called for the player:
+// StS guards the relic loop with `this instanceof AbstractMonster`, so a player
+// whose own block breaks triggers nothing — a direct port of onBlockBroken's
+// signature would have applied Hand Drill's Vulnerable to the player. And it is
+// not called from the HP-loss path, which decrementBlock skips outright.
+void fire_block_broken(CombatState& state, int slot, int block_before,
+                       int damage, ActionQueue& q) {
+  if (block_before > 0 && damage >= block_before) {
+    fire_relic_hooks(state, Hook::BlockBroken, q, slot);
+  }
+}
+
 void apply_fixed_damage(CombatState& state, int slot, int amount,
                         ActionQueue& q, ResolutionContext& ctx) {
   if (!valid_enemy_slot(state, slot) || amount <= 0) return;
   Enemy& e = state.enemies[slot];
   if (e.hp <= 0) return;
   const int hp_before = e.hp;
+  // Thorns-type damage is still DAMAGE, not HP loss, so it breaks block and
+  // Hand Drill answers it: decrementBlock skips only DamageType.HP_LOSS.
+  const int block_before = e.current_block;
   apply_damage_to_hp_block(e.hp, e.current_block, amount);
+  fire_block_broken(state, slot, block_before, amount, q);
   if (e.hp < hp_before) {
     const bool was_asleep = e.is_asleep;
     fire_enemy_hooks(state, slot, Hook::OnAnyDamage, q);
@@ -1220,8 +1308,10 @@ void player_attack_enemy(CombatState& state, int slot, int base,
   // done here rather than inside apply_damage_to_hp_block: the relic needs to
   // see the unblocked remainder to decide, and a fully-absorbed attack must
   // stay absorbed.
-  const int blocked = std::min(dmg, state.enemies[slot].current_block);
+  const int block_before = state.enemies[slot].current_block;
+  const int blocked = std::min(dmg, block_before);
   state.enemies[slot].current_block -= blocked;
+  fire_block_broken(state, slot, block_before, dmg, q);
   const int to_hp = boot_adjusted_damage(state, dmg - blocked);
   state.enemies[slot].hp -= to_hp;
   if (state.enemies[slot].hp < 0) state.enemies[slot].hp = 0;
@@ -1370,7 +1460,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // Battle Trance forbids further draws this turn (query, not a hook).
       if (!can_draw(state)) break;
       for (int i = 0; i < a.amount; ++i) {
-        const std::optional<CardId> drawn = draw_one(state);
+        const std::optional<CardId> drawn = draw_one(state, q);
         // Evolve / Fire Breathing key on the drawn card's type.
         if (drawn.has_value()) {
           fire_player_power_hooks(state, Hook::CardDrawn, q, *drawn);
@@ -1529,7 +1619,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       }
       break;
     case ActionKind::DrawOpeningHand:
-      draw_opening_hand(state);
+      draw_opening_hand(state, q);
       break;
     case ActionKind::CombatStartPostDraw:
       // The two relic hooks that follow the opening hand. Queued so that a
@@ -1649,12 +1739,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         // Havoc and Mayhem. Reshuffle first if the draw pile is empty ("it will
         // shuffle your discard pile into your draw pile and target the new top
         // card").
-        if (state.draw_pile.empty() && !state.discard_pile.empty()) {
-          state.draw_pile = std::move(state.discard_pile);
-          state.discard_pile.clear();
-          std::shuffle(state.draw_pile.begin(), state.draw_pile.end(),
-                       state.rng);
-        }
+        if (state.draw_pile.empty()) reshuffle_discard_into_draw(state, q);
         if (state.draw_pile.empty()) break;
         const Card top = state.draw_pile.back();
         state.draw_pile.pop_back();
@@ -1970,13 +2055,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
     case ActionKind::ShuffleDiscardIntoDraw:
       // Deep Breath. Shuffles with the combat RNG, so the resulting draw order
       // is reproducible from the seed like every other shuffle.
-      if (!state.discard_pile.empty()) {
-        state.draw_pile.insert(state.draw_pile.end(),
-                               state.discard_pile.begin(),
-                               state.discard_pile.end());
-        state.discard_pile.clear();
-        std::shuffle(state.draw_pile.begin(), state.draw_pile.end(), state.rng);
-      }
+      reshuffle_discard_into_draw(state, q);
       break;
     case ActionKind::DiscardHand: {
       // End of the player's turn: unplayed Ethereal cards exhaust (ROB-65
@@ -2027,6 +2106,16 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // per resolution, not per death, so it can't double-fire.
       for (int i = 0; i < ctx.died_count; ++i) {
         fire_enemy_hooks(state, ctx.died_slots[i], Hook::EnemyDeath, q);
+      }
+      // Relics answer the same deaths — but NOT the killing blow that ends the
+      // fight. Gremlin Horn's energy and card would have nowhere to go, and the
+      // decompiled relic guards on !areMonstersBasicallyDead(), i.e. "some
+      // monster is still neither dying nor escaping". Checked once here rather
+      // than per relic, since the condition is about the fight, not the relic.
+      if (ctx.died_count > 0 && count_living(state) > 0) {
+        for (int i = 0; i < ctx.died_count; ++i) {
+          fire_relic_hooks(state, Hook::EnemyDeath, q);
+        }
       }
       if (ctx.died_count > 0 && count_living(state) == 1) {
         for (std::size_t i = 0; i < state.enemies.size(); ++i) {

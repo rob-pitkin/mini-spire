@@ -244,13 +244,13 @@ per §1.
 
 ---
 
-## 7. Status: 70 of 140 wired
+## 7. Status: 74 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
 Running the count is what caught the Juzu Bracelet / Tiny Chest error in §3.2.
 
-The 77 remaining are not one backlog. **Most are blocked on engine pieces that
+The 66 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
@@ -259,9 +259,9 @@ have nothing to do with relics**, and those blockers are shared:
 | **No curse cards** | Omamori, Darkstone Periapt, Blue Candle, and the unreachable halves of Du-Vu Doll and Cursed Key | §6.4 |
 | ~~**No colorless cards**~~ | ~~Toolbox, half of Prismatic Shard~~ | ✅ **cleared.** All 35 colorless cards are implemented (`colorless-effects.md`) and the shop's 2 colorless slots now stock. **Toolbox** is wired: a 1-of-3 colorless choice that pauses combat setup BEFORE the opening hand (§6.9 — Rob ruled, 2026-09-20). **Prismatic Shard**'s other half still needs §6.8. ⚠️ CORRECTED earlier: Orrery, Dolly's Mirror and Cauldron never needed colorless — Cauldron is potions only, and the other two need a shop CHOICE SCREEN over normal card rewards. |
 | **Needs a shop choice screen** | Orrery, Dolly's Mirror | moved here from the colorless row |
-| **Needs potion effects** | Cauldron | moved here from the colorless row |
+| **Needs potion effects** | Cauldron, Toy Ornithopter, Sacred Bark | Cauldron moved here from the colorless row; the other two need `Hook::PotionDrunk`, which cannot fire until a potion can be drunk |
 | **No events** | Neow's Lament, Odd Mushroom, Warped Tongs, Spirit Poop, and the 5 Face Trader masks | 10 of the special-tier relics |
-| **Hooks not yet wired** | Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle), Toy Ornithopter + Sacred Bark (PotionDrunk) | the hooks exist in the enum; nothing fires them |
+| ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell | all pause for player input |
 | **Nothing blocking — just unwritten** | ~25, including Maw Bank, Meal Ticket, Ceramic Fish, Old Coin, Horn Cleat, Captain's Wheel, Mercury Hourglass, Tungsten Rod, Torii, Magic Flower, Ice Cream, Unceasing Top, Champion Belt, Charon's Ashes, Self-Forming Clay, Centennial Puzzle, Eternal Feather, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest | the honest remainder |
@@ -530,3 +530,40 @@ inferred from a green suite:
 The remaining hazard is a NEW read added to a cardless path, which now throws
 instead of silently using Strike's row. `TurnLoop.AnEnemyAttackCarriesNoCard`
 pins it.
+
+### 6.10 Three hooks existed but nothing fired them
+
+`EnemyDeath`, `ShuffleDrawPile` and `BlockBroken` sat in the `Hook` enum with no
+call site, so Gremlin Horn, Sundial, The Abacus and Hand Drill were unreachable
+however correctly they were written. Each needed a parity question answered
+first, and in each case the answer was narrower than the card text.
+
+**Only some shuffles fire the hook.** StS fires `onShuffle` from
+`EmptyDeckShuffleAction`'s constructor and from `ShuffleAction` only when it is
+constructed with `triggerRelics`. The COMBAT-START shuffle goes through neither:
+`CardGroup.initializeDeck` calls `shuffle()` directly, so **Sundial and The
+Abacus do not trigger on turn 1**. Our three qualifying sites — the draw-dry
+reshuffle, Deep Breath, and Havoc/Mayhem's reshuffle — now share
+`reshuffle_discard_into_draw`, which fires the hook; `start_combat`'s shuffle
+deliberately does not call it. `RelicTriggers.TheOpeningShuffleDoesNotCountAsAShuffle`
+tests this. Without it, every fight with The Abacus would start with 6 block.
+
+This is why `draw_one` now takes an `ActionQueue&`: drawing can reshuffle, and a
+reshuffle is an event relics answer, so the function performing it has to be
+able to emit.
+
+**Gremlin Horn does not pay for the last kill.** The decompiled relic guards on
+`!areMonstersBasicallyDead()` — true when every monster is dying or escaping —
+so the killing blow that ends the fight grants no energy and no card. The wiki
+text omits this. `CheckDeath` applies the guard once for the whole resolution
+rather than per relic, since the condition is about the fight, not the relic.
+
+**Hand Drill is enemy-only, and equality breaks block.** `onBlockBroken` takes
+an `AbstractCreature`, but `brokeBlock()` only loops the relics when
+`this instanceof AbstractMonster` — so a player whose own block breaks triggers
+nothing, and a direct port of the signature would have applied the Vulnerable to
+the player. `decrementBlock` also shows two details worth having: damage EQUAL
+to block breaks it (same branch as `>`), and `DamageType.HP_LOSS` never breaks
+block at all. Thorns-type damage is not HP loss, so our fixed-damage path fires
+the hook alongside the attack path — wiring only the attack path would have left
+Combust and Fire Breathing unable to trigger the relic.

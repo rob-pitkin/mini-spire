@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <random>
 #include <unordered_map>
 #include <vector>
 
@@ -54,6 +55,35 @@ void hit_player(CombatState& s, int amount) {
   drain(s, q, ctx);
 }
 
+// The same, aimed at an enemy slot. Fixed damage is still DAMAGE, so it goes
+// through the block subtraction that Hand Drill watches.
+void hit_enemy(CombatState& s, int slot, int amount) {
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::DealFixedDamage};
+  a.target = slot;
+  a.amount = amount;
+  q.push_back(a);
+  drain(s, q, ctx);
+}
+
+// Force exactly one draw-pile reshuffle: empty the draw pile, leave one card in
+// the discard, then draw. This is the event Sundial counts and The Abacus
+// blocks on — the same path StS routes through EmptyDeckShuffleAction.
+void force_one_reshuffle(CombatState& s) {
+  s.current_hand.clear();
+  s.draw_pile.clear();
+  s.discard_pile.clear();
+  s.discard_pile.push_back(Card{CardId::Strike});
+
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::DrawCards};
+  a.amount = 1;
+  q.push_back(a);
+  drain(s, q, ctx);
+}
+
 CombatState elite_fight_with(std::vector<RelicId> ids, uint32_t seed = 1) {
   CombatSetup setup;
   setup.seed = seed;
@@ -68,6 +98,165 @@ CombatState elite_fight_with(std::vector<RelicId> ids, uint32_t seed = 1) {
 TEST(RelicTriggers, VajraGrantsStrengthAtCombatStart) {
   const CombatState with = fight_with({RelicId::Vajra});
   EXPECT_EQ(get_status(with.character.powers, Power::Strength), 1);
+}
+
+// --------------------------------------------- the three previously-dead hooks
+//
+// EnemyDeath, ShuffleDrawPile and BlockBroken existed in the Hook enum with
+// nothing firing them, so four relics were unreachable. Each relic's numbers
+// come from the decompiled class and were cross-checked against the wiki.
+
+// Gremlin Horn: "Whenever an enemy dies, gain 1 Energy and draw 1 card."
+// Asserted as a DELTA against the same fight without the relic, because a bare
+// fight already has energy and a hand.
+TEST(RelicTriggers, GremlinHornPaysOutWhenAnEnemyDies) {
+  const auto kill_one_of_two = [](std::vector<RelicId> ids) {
+    CombatState s = fight_with(std::move(ids));
+    std::mt19937 rng(0);
+    s.enemies.clear();
+    Enemy dying = make_jaw_worm(rng);
+    dying.hp = 1;
+    dying.current_block = 0;
+    Enemy survivor = make_jaw_worm(rng);
+    s.enemies.push_back(std::move(dying));
+    s.enemies.push_back(std::move(survivor));
+
+    s.current_hand.clear();
+    s.current_hand.push_back(Card{CardId::Strike});
+    s.draw_pile.clear();
+    s.draw_pile.push_back(Card{CardId::Defend});
+    s.character.energy = 3;
+    EXPECT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+    return s;
+  };
+
+  const CombatState with = kill_one_of_two({RelicId::GremlinHorn});
+  const CombatState without = kill_one_of_two({});
+  ASSERT_LE(with.enemies[0].hp, 0) << "the kill did not happen";
+
+  EXPECT_EQ(with.character.energy, without.character.energy + 1);
+  EXPECT_EQ(with.current_hand.size(), without.current_hand.size() + 1);
+}
+
+// ...but NOT on the kill that ends the fight. The decompiled relic guards on
+// !areMonstersBasicallyDead(), and the energy and card would have nowhere to
+// go. This is the condition the wiki text does not mention.
+TEST(RelicTriggers, GremlinHornIsSilentOnTheKillThatEndsTheFight) {
+  const auto kill_the_last = [](std::vector<RelicId> ids) {
+    CombatState s = fight_with(std::move(ids));
+    std::mt19937 rng(0);
+    s.enemies.clear();
+    Enemy dying = make_jaw_worm(rng);
+    dying.hp = 1;
+    dying.current_block = 0;
+    s.enemies.push_back(std::move(dying));
+
+    s.current_hand.clear();
+    s.current_hand.push_back(Card{CardId::Strike});
+    s.draw_pile.clear();
+    s.draw_pile.push_back(Card{CardId::Defend});
+    s.character.energy = 3;
+    EXPECT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+    return s;
+  };
+
+  const CombatState with = kill_the_last({RelicId::GremlinHorn});
+  const CombatState without = kill_the_last({});
+  ASSERT_EQ(with.outcome, Outcome::Won);
+
+  EXPECT_EQ(with.character.energy, without.character.energy)
+      << "Gremlin Horn paid out on the last kill";
+  EXPECT_EQ(with.current_hand.size(), without.current_hand.size());
+}
+
+// Sundial: "Every 3 times you shuffle your draw pile, gain 2 Energy." The
+// counter is run-scoped in StS (set in onEquip, never cleared per combat).
+TEST(RelicTriggers, SundialPaysOnEveryThirdShuffle) {
+  CombatState s = fight_with({RelicId::Sundial});
+  const int start = s.character.energy;
+
+  force_one_reshuffle(s);
+  EXPECT_EQ(s.character.energy, start) << "paid on the first shuffle";
+  force_one_reshuffle(s);
+  EXPECT_EQ(s.character.energy, start) << "paid on the second shuffle";
+  force_one_reshuffle(s);
+  EXPECT_EQ(s.character.energy, start + 2) << "the third shuffle paid nothing";
+
+  // And the count restarts rather than paying on every shuffle thereafter.
+  force_one_reshuffle(s);
+  EXPECT_EQ(s.character.energy, start + 2);
+}
+
+// The Abacus: "Gain 6 Block whenever you shuffle your draw pile." Relic block
+// is not card block, so Dexterity leaves it alone.
+TEST(RelicTriggers, TheAbacusBlocksOnEveryShuffle) {
+  CombatState s = fight_with({RelicId::TheAbacus});
+  s.character.current_block = 0;
+
+  force_one_reshuffle(s);
+  EXPECT_EQ(s.character.current_block, 6);
+  force_one_reshuffle(s);
+  EXPECT_EQ(s.character.current_block, 12) << "every shuffle counts, not every third";
+}
+
+// The combat-start shuffle is NOT a shuffle for relic purposes: StS shuffles
+// the opening draw pile inside CardGroup.initializeDeck, which never reaches
+// the relics. If that ever changes, every Abacus fight starts with 6 block.
+TEST(RelicTriggers, TheOpeningShuffleDoesNotCountAsAShuffle) {
+  const CombatState abacus = fight_with({RelicId::TheAbacus});
+  EXPECT_EQ(abacus.character.current_block, 0)
+      << "the opening shuffle triggered The Abacus";
+
+  const CombatState sundial = fight_with({RelicId::Sundial});
+  const CombatState bare = bare_fight();
+  EXPECT_EQ(sundial.character.energy, bare.character.energy);
+  for (const HeldRelic& r : sundial.relics) {
+    if (r.id == RelicId::Sundial) EXPECT_EQ(r.counter, 0);
+  }
+}
+
+// Hand Drill: "Whenever you break an enemy's Block, apply 2 Vulnerable."
+TEST(RelicTriggers, HandDrillMakesAnEnemyVulnerableWhenItsBlockBreaks) {
+  CombatState s = fight_with({RelicId::HandDrill});
+  s.enemies[0].current_block = 3;
+
+  hit_enemy(s, 0, 5);
+
+  EXPECT_EQ(get_status(s.enemies[0].debuffs, Debuff::Vulnerable), 2);
+  EXPECT_EQ(s.enemies[0].current_block, 0);
+}
+
+// Equality counts as broken — decompiled decrementBlock takes the same branch
+// for `damageAmount == currentBlock` as for `>`.
+TEST(RelicTriggers, HandDrillFiresWhenDamageExactlyEqualsBlock) {
+  CombatState s = fight_with({RelicId::HandDrill});
+  s.enemies[0].current_block = 4;
+
+  hit_enemy(s, 0, 4);
+
+  EXPECT_EQ(get_status(s.enemies[0].debuffs, Debuff::Vulnerable), 2);
+}
+
+TEST(RelicTriggers, HandDrillIsSilentWhenTheBlockHolds) {
+  CombatState s = fight_with({RelicId::HandDrill});
+  s.enemies[0].current_block = 6;
+
+  hit_enemy(s, 0, 2);
+
+  EXPECT_EQ(get_status(s.enemies[0].debuffs, Debuff::Vulnerable), 0);
+  EXPECT_EQ(s.enemies[0].current_block, 4);
+}
+
+// The player's own block breaking is not an event: StS guards the relic loop
+// with `this instanceof AbstractMonster`. A direct port of onBlockBroken would
+// have applied the Vulnerable to the player.
+TEST(RelicTriggers, HandDrillIgnoresThePlayersBlockBreaking) {
+  CombatState s = fight_with({RelicId::HandDrill});
+  s.character.current_block = 3;
+
+  hit_player(s, 9);
+
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::Vulnerable), 0);
 }
 
 // ------------------------------------------------- Toolbox: the blind choice

@@ -129,7 +129,12 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
 //
 // Effects are PUSHED, never applied here, exactly as the powers registry does.
 // See docs/design/relic-effects.md for which relic hangs off which hook.
-void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q);
+// `slot` names the enemy the hook is ABOUT, for the hooks that are about one:
+// Hook::BlockBroken hands Hand Drill the enemy whose block just broke, so the
+// Vulnerable lands on that enemy rather than a re-picked target. kNoSlot for
+// every other hook, which is all of them today.
+void fire_relic_hooks(CombatState& state, Hook hook, ActionQueue& q,
+                      int slot = kNoSlot);
 
 // Hook::CardPlayed, which needs a payload the other hooks do not.
 //
@@ -212,7 +217,11 @@ void add_card_to_hand(CombatState& state, const Card& card);
 // Move all of discard_pile into draw_pile (if needed), shuffle, draw one card
 // to the hand. Returns the drawn card, or nullopt if nothing was drawn
 // (draw+discard empty, or hand at limit) — the CardDrawn hook needs the id.
-std::optional<CardId> draw_one(CombatState& state);
+// Draw one card. Takes the queue because drawing can RESHUFFLE, and a reshuffle
+// is an event relics answer (Sundial counts it, The Abacus blocks on it) — the
+// same reason StS routes it through EmptyDeckShuffleAction rather than calling
+// shuffle() inline.
+std::optional<CardId> draw_one(CombatState& state, ActionQueue& q);
 
 // Apply one debuff/power application to its target ('enemy_target' = decoded
 // enemy slot; ignored for Target::Character). Artifact negates a whole debuff
