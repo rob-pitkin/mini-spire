@@ -123,6 +123,31 @@ This matters most for **review and audit work**, where the whole deliverable is
 a claim about what isn't there. It applies to subagents too: an agent that
 greps will produce confident, wrong all-clears at scale.
 
+**No test may depend on which card a random draw produced.**
+
+A seeded run reproduces exactly on one platform and not across platforms:
+`std::uniform_int_distribution` and `std::shuffle` are not specified to agree
+between libstdc++ and libc++. A test fixtured on "seed 1 generates a cost-1
+Attack" records a fact about macOS, not about the engine — and CI runs Linux.
+
+This has broken three times. Two Chrysalis tests asserted `cost_override`
+directly and failed on Linux, because 7 of the 28 pool Skills already cost 0 and
+the engine skips the override for those. A TUI test then failed on its own
+guard, `card_data(card).cost > 0`, which Linux could not satisfy once Infernal
+Blade rolled Clash. The test beside it, fixtured identically, *passed* on Linux
+while proving nothing: a card that is already free renders `{0}` whether the
+panel reads the effective cost or the printed one.
+
+So: **assert an invariant true of every draw, or stub the input.** The grant is
+free whatever is rolled — assert that. A render test needs a fixed difference
+between printed and effective cost — build it from a stub, never from a roll.
+Searching seeds until one fits is neither; it only fails less often, and it
+starts failing again when the pool changes.
+
+The vacuous pass is the more dangerous of the two. A failing test reports
+itself. A test that holds for the wrong reason reports nothing, and the only way
+to tell them apart is to break the code on purpose and confirm the test notices.
+
 ### The interaction model
 
 Claude is used in three modes:
