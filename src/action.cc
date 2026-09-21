@@ -1854,8 +1854,14 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
           made.cost_duration = CostDuration::ThisTurn;
         } else if (a.gen_free_this_combat) {
           // Chrysalis / Metamorphosis. StS only zeroes a card whose cost is
-          // above 0, which matters for nothing today but keeps the override
-          // off cards that were already free.
+          // above 0, keeping the override off cards that were already free.
+          //
+          // This is reachable, despite an earlier comment here claiming it
+          // "matters for nothing today": the class Skill pool contains 0-cost
+          // Skills, and whether one is picked depends on the platform's
+          // std::uniform_int_distribution. Two tests asserted cost_override
+          // directly and so passed on macOS while failing on Linux CI. Assert
+          // effective cost, not the field.
           if (CARD_DATABASE.at(made.card_id).cost > 0) {
             made.cost_override = 0;
             made.cost_duration = CostDuration::ThisCombat;

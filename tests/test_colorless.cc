@@ -1186,8 +1186,15 @@ TEST(Colorless, ChrysalisShufflesThreeFreeSkillsIntoTheDrawPile) {
     EXPECT_EQ(CARD_DATABASE.at(c.card_id).type, CardType::Skill);
     EXPECT_TRUE(in_pool(generatable_class_skill_pool(), c.card_id))
         << card_name(c.card_id);
-    EXPECT_EQ(c.cost_override, 0);
-    EXPECT_EQ(c.cost_duration, CostDuration::ThisCombat);
+    // BEHAVIOUR, not representation. A Skill whose printed cost is already 0
+    // gets no override at all, because zeroing it would be a no-op — so
+    // cost_override stays -1 for that card and is 0 for the others.
+    //
+    // Which three Skills the RNG picks is NOT the same on every platform:
+    // std::uniform_int_distribution is not specified to give identical results
+    // across libstdc++ and libc++. Asserting the field passed on macOS and
+    // failed on Linux CI for exactly that reason (ROB-100).
+    EXPECT_EQ(instance_effective_cost(s, c), 0) << card_name(c.card_id);
   }
 }
 
@@ -1237,12 +1244,43 @@ TEST(Colorless, ShuffledInCardsAreStillFreeNextTurn) {
   for (const std::vector<Card>* pile :
        {&s.current_hand, &s.draw_pile, &s.discard_pile}) {
     for (const Card& c : *pile) {
-      if (c.cost_override == 0 && c.cost_duration == CostDuration::ThisCombat) {
-        ++free_cards;
-      }
+      // Effective cost rather than the override field, for the reason given in
+      // ChrysalisShufflesThreeFreeSkillsIntoTheDrawPile: an already-free Skill
+      // carries no override. No starter card costs 0, so the only cards this
+      // can count are the three Chrysalis generated.
+      if (instance_effective_cost(s, c) == 0) ++free_cards;
     }
   }
   EXPECT_EQ(free_cards, 3) << "all three survive into the next turn";
+}
+
+// The already-free case, exercised deliberately instead of left to whichever
+// three Skills one platform's RNG happens to pick. 7 of the 28 Skills in the
+// generation pool cost 0 — Warcry, Flex, Intimidate, Rage, Battle Trance,
+// Bloodletting, Offering — so a sweep hits the branch reliably while any single
+// seed may miss it. That difference is exactly what passed on macOS and failed
+// on Linux CI: std::uniform_int_distribution is not specified to agree across
+// libstdc++ and libc++, so the same seed generates different cards (ROB-100).
+TEST(Colorless, ChrysalisLeavesAlreadyFreeSkillsCostingNothing) {
+  int already_free_generated = 0;
+
+  for (uint32_t seed = 0; seed < 25; ++seed) {
+    CombatState s = fight_holding(CardId::Chrysalis, seed);
+    s.draw_pile.clear();
+    ASSERT_TRUE(apply_action(s, card_action(CardId::Chrysalis)))
+        << "seed " << seed;
+    ASSERT_EQ(s.draw_pile.size(), 3u) << "seed " << seed;
+
+    for (const Card& c : s.draw_pile) {
+      EXPECT_EQ(instance_effective_cost(s, c), 0)
+          << card_name(c.card_id) << " at seed " << seed;
+      if (CARD_DATABASE.at(c.card_id).cost == 0) ++already_free_generated;
+    }
+  }
+
+  EXPECT_GT(already_free_generated, 0)
+      << "25 seeds generated no already-free Skill, so the branch that skips "
+         "the override went untested on this platform";
 }
 
 // ================================= batch 4: choices over the draw pile
