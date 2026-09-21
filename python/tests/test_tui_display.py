@@ -6,8 +6,6 @@ shape: a number rendered from the wrong source.
 """
 from __future__ import annotations
 
-import numpy as np
-
 from minispire import _core
 from minispire.env import MinispireEnv
 from minispire.render import screen
@@ -43,50 +41,106 @@ def test_turn_index_agrees_with_the_engine_state():
             break
 
 
+def _play_infernal_blade(seed: int):
+    """Open a fight of nothing but Infernal Blades, play one, return the grant.
+
+    Returns (env, granted), granted being the card ids the blade put in hand.
+    Targets are built with encode_action rather than by dividing an index by
+    MAX_ENEMIES, which CLAUDE.md reserves to the encoder.
+    """
+    blade = _core.CardId.InfernalBlade
+    env = MinispireEnv(deck=[blade] * 5)
+    env.reset(seed=seed)
+
+    mask = env.action_masks()
+    legal = [
+        a for a in (
+            _core.encode_action(_core.ActionBlock.Combat, int(blade), t)
+            for t in range(_core.CombatEnv.MAX_ENEMIES)
+        )
+        if mask[a]
+    ]
+    assert legal, f"Infernal Blade should be playable on turn 1 (seed {seed})"
+    env.step(int(legal[0]))
+
+    granted = [c for c in env.state_piles().hand if c != blade]
+    assert granted, f"Infernal Blade should have added an Attack (seed {seed})"
+    return env, granted
+
+
 def test_effective_cost_reflects_a_free_this_turn_grant():
     # Infernal Blade adds a random Attack that costs 0 for the turn. The hand
     # showed CardData.cost and so advertised a price the engine would not
     # charge — the player reads 1, pays 0.
-    env = MinispireEnv(deck=[_core.CardId.InfernalBlade] * 5)
-    env.reset(seed=1)
-    blade = _core.CardId.InfernalBlade
-    legal = [
-        a for a in np.flatnonzero(env.action_masks())
-        if a // _core.CombatEnv.MAX_ENEMIES == int(blade)
-    ]
-    assert legal, "Infernal Blade should be playable on turn 1"
-    env.step(int(legal[0]))
+    #
+    # Asserted as an invariant over whatever is rolled, never against a chosen
+    # card. WHICH Attack appears is platform-dependent — libstdc++ and libc++
+    # do not agree on std::uniform_int_distribution, so seed 1 yields a cost-1
+    # Attack on macOS and Clash, printed cost 0, on Linux. The grant is free on
+    # both, because GenerateCards sets the override unconditionally on the
+    # free-this-turn branch, unlike the free-this-combat branch which skips a
+    # card that already costs 0 (src/action.cc).
+    for seed in range(5):
+        env, granted = _play_infernal_blade(seed)
+        for card in granted:
+            assert env.effective_cost(card) == 0, (
+                f"{_core.card_name(card)} was granted at cost "
+                f"{env.effective_cost(card)}, not free (seed {seed})"
+            )
 
-    granted = [c for c in env.state_piles().hand if c != blade]
-    assert granted, "Infernal Blade should have added an Attack"
-    card = granted[0]
-    assert env.effective_cost(card) == 0
-    assert _core.card_data(card).cost > 0, "pick a card whose base cost differs"
+
+class _StubPiles:
+    def __init__(self, hand):
+        self.hand = hand
+
+
+class _StubMask(dict):
+    """A sparse action mask. Anything not listed is masked off."""
+
+    def __missing__(self, key):
+        return False
+
+
+class _StubHandEnv:
+    """The three calls build_hand makes, answered with fixed values.
+
+    A real fight cannot test this render. Catching a base-vs-effective mix-up
+    needs a card whose PRINTED cost differs from what it costs right now, and
+    the only in-combat source of one is Infernal Blade — whose roll is
+    platform-dependent and can land on Clash, printed cost 0, which renders
+    {0} whether or not build_hand was ever fixed. Stating both numbers here
+    makes the gap exact and the same on every platform. This is the reasoning
+    the choice stubs below already use.
+    """
+
+    def __init__(self, hand, costs):
+        self._piles = _StubPiles(hand)
+        self._costs = costs
+
+    def action_masks(self):
+        return _StubMask({
+            _core.encode_action(_core.ActionBlock.Combat, int(card_id), t): True
+            for card_id in self._piles.hand
+            for t in range(_core.CombatEnv.MAX_ENEMIES)
+        })
+
+    def state_piles(self):
+        return self._piles
+
+    def effective_cost(self, card_id):
+        return self._costs[card_id]
 
 
 def test_hand_panel_prints_the_effective_cost():
     # The panel is what the player reads, so the fix has to reach the render,
     # not just the accessor.
-    env = MinispireEnv(deck=[_core.CardId.InfernalBlade] * 5)
-    env.reset(seed=1)
-    blade = _core.CardId.InfernalBlade
-    legal = [
-        a for a in np.flatnonzero(env.action_masks())
-        if a // _core.CombatEnv.MAX_ENEMIES == int(blade)
-    ]
-    env.step(int(legal[0]))
-    granted = [c for c in env.state_piles().hand if c != blade]
-    assert granted
+    bash = _core.CardId.Bash
+    assert _core.card_data(bash).cost == 2, "fixture needs a nonzero base cost"
 
-    panel, _action_map = screen.build_hand(env)
-    from rich.console import Console
-
-    console = Console(file=__import__("io").StringIO(), width=120)
-    console.print(panel)
-    text = console.file.getvalue()
-    name = _core.card_name(granted[0])
-    line = next(ln for ln in text.splitlines() if name in ln)
-    assert "{0}" in line, f"expected a free cost in {line!r}"
+    text = _render(screen.build_hand(_StubHandEnv([bash], {bash: 0}))[0])
+    line = next(ln for ln in text.splitlines() if _core.card_name(bash) in ln)
+    assert "{0}" in line, f"expected the effective cost in {line!r}"
+    assert "{2}" not in line, "the panel printed CardData.cost, not effective_cost"
 
 
 # --------------------------------------------------------------------------
