@@ -897,5 +897,68 @@ TEST(RunLayerRelics, TinyHouseUpgradesExactlyOneCard) {
   EXPECT_EQ(changed, 1);
 }
 
+// ------------------------------------------------------- Eternal Feather
+
+TEST(RunLayerRelics, EternalFeatherHealsThreePerFiveCardsAtARestSite) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::EternalFeather);
+  ASSERT_EQ(run.master_deck.size(), 10u) << "the Ironclad starter deck";
+  run.hp = 40;
+  run.enter_room(RoomType::Rest);
+  // 10 / 5 * 3 = 6.
+  EXPECT_EQ(run.hp, 46);
+}
+
+// Integer division, not a rate. The decompiled source is
+// `masterDeck.size() / 5 * 3`, so the cards past the last full five pay
+// nothing — 14 cards heal 6, the same as 10.
+TEST(RunLayerRelics, EternalFeatherTruncatesThePartialFive) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::EternalFeather);
+  for (int i = 0; i < 4; ++i) run.add_card(Card{CardId::Strike});
+  ASSERT_EQ(run.master_deck.size(), 14u);
+  run.hp = 40;
+  run.enter_room(RoomType::Rest);
+  EXPECT_EQ(run.hp, 46) << "14 / 5 = 2, so 6 — not 8";
+}
+
+TEST(RunLayerRelics, EternalFeatherDoesNothingOutsideARestSite) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::EternalFeather);
+  run.hp = 40;
+  run.enter_room(RoomType::Shop);
+  EXPECT_EQ(run.hp, 40);
+}
+
+TEST(RunLayerRelics, EternalFeatherCannotHealAboveMaxHp) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::EternalFeather);
+  run.hp = run.max_hp - 2;
+  run.enter_room(RoomType::Rest);
+  EXPECT_EQ(run.hp, run.max_hp);
+}
+
+// The property this batch's design doc got wrong once. Magic Flower boosts
+// healing DURING COMBAT only, so a rest site's heal is untouched by it. If this
+// ever heals 9 rather than 6, the modifier has leaked out of the combat layer.
+TEST(RunLayerRelics, MagicFlowerDoesNotBoostEternalFeather) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::EternalFeather);
+  run.obtain_relic(RelicId::MagicFlower);
+  run.hp = 40;
+  run.enter_room(RoomType::Rest);
+  EXPECT_EQ(run.hp, 46);
+}
+
+// Same point from the other side: the run layer's other heals are untouched.
+TEST(RunLayerRelics, MagicFlowerDoesNotBoostMealTicket) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::MealTicket);
+  run.obtain_relic(RelicId::MagicFlower);
+  run.hp = 40;
+  run.enter_room(RoomType::Shop);
+  EXPECT_EQ(run.hp, 40 + kMealTicketHeal);
+}
+
 }  // namespace
 }  // namespace minispire

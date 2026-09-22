@@ -2368,5 +2368,112 @@ TEST(RelicEnergy, TheEnergyPersistsAcrossTurns) {
       << "turn 2 refilled to the base amount, not the relic-boosted one";
 }
 
+// ---------------------------------------------------- Magic Flower (§6.15)
+//
+// "Healing is 50% more effective during combat." The combat-only condition is
+// the whole relic — MagicFlower.onPlayerHeal returns the amount untouched
+// outside RoomPhase.COMBAT — which is why it is a query modifier on
+// heal_player rather than a hook, and why the run layer's heals never consult
+// it. Those are pinned separately in test_relic_state.cc.
+
+// Heal through the real executor, the same shape as hit_player, so the modifier
+// inside heal_player sees it exactly as Reaper's heal does.
+void heal_player_by(CombatState& s, int amount) {
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::Heal};
+  a.amount = amount;
+  q.push_back(a);
+  drain(s, q, ctx);
+}
+
+// Feed's primitive. The maximum rises and its healing half goes through the
+// same path — decompiled increaseMaxHp is `maxHealth += n; this.heal(n, true)`.
+void gain_max_hp_by(CombatState& s, int amount) {
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::GainMaxHp};
+  a.amount = amount;
+  q.push_back(a);
+  drain(s, q, ctx);
+}
+
+// HP is set directly rather than dealt as damage: fixed damage passes through
+// block, and a fully-blocked hit would leave the player at full HP, where the
+// clamp would hide whether the heal was boosted at all.
+void wound_to_half(CombatState& s) { s.character.hp = s.character.max_hp / 2; }
+
+TEST(MagicFlower, HealingIsUnchangedWithoutIt) {
+  CombatState s = bare_fight();
+  wound_to_half(s);
+  const int before = s.character.hp;
+  heal_player_by(s, 3);
+  EXPECT_EQ(s.character.hp, before + 3);
+}
+
+// x1.5 rounded HALF UP. StS gets that from libGDX MathUtils.round, which is
+// floor(x + 0.5), and the wiki states the consequence outright. Every other
+// rounding in this engine truncates, so 3 -> 5 and 5 -> 8 are exactly the cases
+// a plain cast would get wrong (4 and 7).
+TEST(MagicFlower, RoundsHalfUpNotDown) {
+  struct Case {
+    int healed;
+    int expected;
+  };
+  const Case cases[] = {{1, 2}, {2, 3}, {3, 5}, {4, 6}, {5, 8}, {7, 11}};
+  for (const Case& c : cases) {
+    CombatState s = fight_with({RelicId::MagicFlower});
+    wound_to_half(s);
+    const int before = s.character.hp;
+    heal_player_by(s, c.healed);
+    EXPECT_EQ(s.character.hp, before + c.expected)
+        << "healing " << c.healed << " should land " << c.expected;
+  }
+}
+
+TEST(MagicFlower, StillCannotHealAboveMaxHp) {
+  CombatState s = fight_with({RelicId::MagicFlower});
+  s.character.hp = s.character.max_hp - 2;
+  heal_player_by(s, 4);  // 6 with the relic; only 2 of it fits
+  EXPECT_EQ(s.character.hp, s.character.max_hp);
+}
+
+// heal_player's dead-player guard is AbstractCreature::heal's isDying early
+// return: a corpse does not heal, boosted or not.
+TEST(MagicFlower, ADeadPlayerDoesNotHeal) {
+  CombatState s = fight_with({RelicId::MagicFlower});
+  s.character.hp = 0;
+  heal_player_by(s, 4);
+  EXPECT_EQ(s.character.hp, 0);
+}
+
+// Feed. The Max HP gain is NOT boosted; its healing half is. wiki.gg draws
+// exactly this distinction, and it holds only because gain_max_hp routes its
+// heal through heal_player instead of touching hp directly.
+TEST(MagicFlower, BoostsFeedsHealButNotItsMaxHpGain) {
+  CombatState s = fight_with({RelicId::MagicFlower});
+  wound_to_half(s);
+  const int hp_before = s.character.hp;
+  const int max_before = s.character.max_hp;
+
+  gain_max_hp_by(s, 5);
+
+  EXPECT_EQ(s.character.max_hp, max_before + 5)
+      << "the cap rises at face value";
+  EXPECT_EQ(s.character.hp, hp_before + 8) << "the heal is 5 * 1.5, rounded up";
+}
+
+TEST(MagicFlower, FeedWithoutTheRelicHealsItsFaceValue) {
+  CombatState s = bare_fight();
+  wound_to_half(s);
+  const int hp_before = s.character.hp;
+  const int max_before = s.character.max_hp;
+
+  gain_max_hp_by(s, 5);
+
+  EXPECT_EQ(s.character.max_hp, max_before + 5);
+  EXPECT_EQ(s.character.hp, hp_before + 5);
+}
+
 }  // namespace
 }  // namespace minispire

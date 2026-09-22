@@ -245,7 +245,7 @@ per §1.
 
 ---
 
-## 7. Status: 94 of 140 wired
+## 7. Status: 96 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -278,7 +278,7 @@ have nothing to do with relics**, and those blockers are shared:
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed) |
-| **Nothing blocking — just unwritten** | **~23**: Prismatic Shard (Colorless half, §6.8), Magic Flower, Unceasing Top, Champion Belt, Charon's Ashes, Eternal Feather, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest, Dead Branch, Snecko Eye, Ancient Tea Set, Pocketwatch, Chemical X, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them. **Magic Flower wants a `heal()` funnel first** — see §6.14 |
+| **Nothing blocking — just unwritten** | **~21**: Prismatic Shard (Colorless half, §6.8), Unceasing Top, Champion Belt, Charon's Ashes, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest, Dead Branch, Snecko Eye, Ancient Tea Set, Pocketwatch, Chemical X, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them. **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
 | **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
@@ -842,7 +842,81 @@ not a designed correlation.
 reported 89 where §7 said 88, and no `RelicId::` in the tree appears only on a
 comment line. The command is now written into §7 so the next count is comparable.
 
-**Follow-up: Magic Flower wants a `heal()` funnel.** Healing has the same shape
-gold spending had — `rest_heal` does its own arithmetic and Meal Ticket now does
-its own clamped `std::min` — and Magic Flower modifies every heal. Left out of
-this batch deliberately rather than expanded into it; tracked as its own task.
+⚠️ **A follow-up recorded here was wrong, and is retracted.** This section first
+said Magic Flower wants a run-layer `heal()` funnel, reasoning that healing had
+the same scattered shape gold spending did — `rest_heal` doing its own
+arithmetic, Meal Ticket its own clamped `std::min`.
+
+It needs no funnel. `MagicFlower.onPlayerHeal` multiplies by 1.5 **only while
+`getCurrRoom().phase == RoomPhase.COMBAT`**, and wiki.gg says it in one line:
+*"Healing is 50% more effective during combat."* `rest_heal`, Meal Ticket and
+Eternal Feather all heal outside combat, so the relic never reads them.
+
+The combat path is already single: every heal reaches `heal_player`
+(`action.cc`) through the Heal executor, which is why Reaper and Burning Blood
+share it. One hook point, no refactor.
+
+The pattern worth noticing is that the false conclusion came from **reasoning by
+analogy with the previous fix** rather than from the source. `spend_gold` had
+just been built, four scattered sites had just been funnelled, and healing looked
+like the same shape. Checking `MagicFlower.java` would have taken one fetch. This
+was written into a task and would have sent a later session refactoring three
+call sites for a relic that reads none of them.
+
+### 6.15 Eternal Feather and Magic Flower: one room-entry relic, one query modifier
+
+Two relics, deliberately from different layers, and the pairing is the point:
+Eternal Feather attaches to the `fire_room_entry_relics` loop §6.14 built, and
+Magic Flower is the first relic to modify a *computed* heal rather than trigger
+on anything.
+
+**Ssserpent Head was dropped from this batch.** It was planned as the third,
+on the belief that it and Eternal Feather were both cheap follow-ons to the
+room-entry loop. It is Special tier and obtainable **only from the Face Trader
+event**, so it is unreachable until §11 step 7, and it ships with the events
+work rather than as an untriggerable arm. Worth recording the trigger detail
+before it is lost: `onEnterRoom` checks `room instanceof EventRoom`, which is
+**narrower** than the wiki's "whenever you enter a ? room" — a `?` that resolved
+into a shop is a ShopRoom and pays nothing. Our `enter_room` already receives
+the resolved type, so `room == RoomType::Unknown` is the faithful check.
+
+**Eternal Feather** heals `floor(deck / 5) * 3` on entering a Rest site.
+Integer division, written as `masterDeck.size() / 5 * 3` in the source, so a
+14-card deck heals 6 exactly as a 10-card one does — the remainder pays nothing.
+The wiki adds the timing, that it lands before any rest option is chosen, and
+the §6.14 loop already runs ahead of `enter_room`'s switch, so that came free.
+
+**Magic Flower is combat-only**, and that condition is the entire relic. It
+lives in `query.cc` beside `reduce_player_hp_loss` as `boost_player_heal`, is
+called from `heal_player`, and applies **before** the add and before the max-HP
+clamp — the order `AbstractCreature::heal` uses (relics, then powers, then add,
+then clamp). Taking a `CombatState` is not incidental: the run layer's heals
+cannot reach it, and must not.
+
+⚠️ **Rounds HALF UP, and is computed in integers.** StS uses libGDX
+`MathUtils.round` = `floor(x + 0.5)`, so a 3 heal becomes 5, not the 4 a cast
+would give. The multiplier is held as a ratio and applied as
+`(n * 3 + 1) / 2` — exactly round-half-up for x1.5 — rather than as a float.
+A first draft used `1.5f`. ROB-100 is open precisely because
+`std::uniform_int_distribution` already disagrees across standard libraries;
+adding a float rounding path to a number that must be identical on every
+platform would be volunteering for the same class of bug this project has now
+hit twice.
+
+**`gain_max_hp` was rerouted, and this is a parity fix independent of Magic
+Flower.** It did `max_hp += n; hp += n;`, touching HP directly. Decompiled
+`increaseMaxHp` is `maxHealth += amount; this.heal(amount, true);` — the healing
+half goes through the relic modifiers. So Feed on a player holding Magic Flower
+heals 1.5x while the Max HP gain stays at face value, which is the distinction
+wiki.gg draws and which a direct `hp += n` silently loses. Pinned by
+`MagicFlower.BoostsFeedsHealButNotItsMaxHpGain`.
+
+⚠️ **A process finding, recorded because it invalidated evidence.** Local
+`uv run pytest` does **not** see C++ changes: scikit-build-core caches the built
+extension, and this venv lacks `editable.rebuild=true`. The installed `_core.so`
+was a day older than every `src/` file changed during this batch, so the
+"196 Python tests pass" reported repeatedly after C++ edits was exercising the
+previous binary. Nothing shipped broken — CI installs clean and was green — but
+the local runs proved nothing about the changes they were quoted for. It is the
+vacuous-pass shape again, this time in the process rather than in a test.
+CLAUDE.md already documents the caveat; it was not applied. Tracked as a task.

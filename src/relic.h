@@ -153,6 +153,31 @@ inline constexpr int kOldCoinGold = 300;
 inline constexpr int kTinyHouseMaxHp = 5;
 inline constexpr int kTinyHouseGold = 50;
 
+// Eternal Feather heals 3 for every 5 cards in the master deck on entering a
+// Rest site — floor(deck / 5) * 3, integer division exactly as the decompiled
+// source writes it (`masterDeck.size() / 5 * 3`). The wiki adds the timing: the
+// heal lands on ENTERING, before any rest option is chosen.
+inline constexpr int kEternalFeatherCardsPer = 5;
+inline constexpr int kEternalFeatherHeal = 3;
+
+// --- combat-layer relic amounts ---
+
+// Magic Flower multiplies healing by 1.5 — but only DURING COMBAT
+// (MagicFlower.onPlayerHeal checks RoomPhase.COMBAT; wiki.gg: "Healing is 50%
+// more effective during combat"). It is a query modifier (§3.3), not a trigger.
+//
+// Rounded HALF UP: StS uses libGDX MathUtils.round, which is floor(x + 0.5).
+// Every other rounding in this engine truncates, so this one is spelled out —
+// a 3 heal becomes 5, not 4.
+//
+// Held as a RATIO and applied in integer arithmetic, not as a float:
+// (n * 3 + 1) / 2 is exactly round-half-up for x1.5. ROB-100 is open because
+// std::uniform_int_distribution already disagrees across standard libraries,
+// and a value that must be identical on every platform has no business going
+// through a float rounding path to get there.
+inline constexpr int kMagicFlowerHealNumerator = 3;
+inline constexpr int kMagicFlowerHealDenominator = 2;
+
 // The card-play counter relics come in TWO kinds, and the difference is the
 // whole of their design:
 //

@@ -124,6 +124,10 @@ int spend_all_energy(CombatState& state) {
 
 void heal_player(CombatState& state, int amount) {
   if (amount <= 0 || state.character.hp <= 0) return;
+  // Relic modifiers run BEFORE the add and before the clamp, which is the order
+  // AbstractCreature::heal uses: relics, then powers, then add, then clamp.
+  // The dead-player guard above is its `isDying` early return.
+  amount = boost_player_heal(state, amount);
   state.character.hp += amount;
   if (state.character.hp > state.character.max_hp) {
     state.character.hp = state.character.max_hp;
@@ -134,8 +138,14 @@ void gain_max_hp(CombatState& state, int amount) {
   if (amount <= 0) return;
   // StS raises current HP alongside max HP, so Feed on a hurt player is a
   // real heal as well as a cap increase.
+  //
+  // The healing half goes through heal_player rather than touching hp directly.
+  // Decompiled increaseMaxHp is `maxHealth += amount; this.heal(amount, true);`
+  // — the heal passes the relic modifiers. So Feed on a player holding Magic
+  // Flower heals 1.5x while the Max HP gain stays at face value, which is the
+  // distinction wiki.gg draws and which a direct `hp += amount` would lose.
   state.character.max_hp += amount;
-  state.character.hp += amount;
+  heal_player(state, amount);
 }
 
 void move_to_exhaust(CombatState& state, Card card) {

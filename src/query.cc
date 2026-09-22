@@ -146,6 +146,25 @@ int reduce_player_hp_loss(const CombatState& state, int amount,
   return amount;
 }
 
+int boost_player_heal(const CombatState& state, int amount) {
+  if (amount <= 0) return amount;
+  // Magic Flower: "Healing is 50% more effective during combat." The
+  // combat-only condition IS the relic — MagicFlower.onPlayerHeal returns the
+  // amount untouched unless RoomPhase.COMBAT — so taking a CombatState is not
+  // an accident of where this lives. A rest site's heal, Meal Ticket's and
+  // Eternal Feather's never reach here, and must not.
+  //
+  // Round HALF UP, which StS gets from MathUtils.round = floor(x + 0.5) and the
+  // wiki states outright. Done in integers: (n * 3 + 1) / 2 is exactly that for
+  // x1.5, and keeps a cross-platform-critical number off the float path.
+  if (state.has_relic(RelicId::MagicFlower)) {
+    amount = (amount * kMagicFlowerHealNumerator +
+              kMagicFlowerHealDenominator / 2) /
+             kMagicFlowerHealDenominator;
+  }
+  return amount;
+}
+
 bool player_is_immune_to(const CombatState& state, Debuff d) {
   // Ginger and Turnip. The ORDER matters and is the detail the wiki is explicit
   // about: both trigger BEFORE Artifact, so a player holding Ginger who would

@@ -866,8 +866,8 @@ RoomType RunState::resolve_unknown_room() {
 
 void RunState::fire_room_entry_relics(RoomType room) {
   // Acquisition order, iterating `relics` as it stands — the same rule and the
-  // same reason as fire_relic_hooks. Neither of these two interacts with the
-  // other today, but sorting or grouping the loop would be a silent ordering
+  // same reason as fire_relic_hooks. None of these three reads what another
+  // wrote today, but sorting or grouping the loop would be a silent ordering
   // change the moment one does.
   for (HeldRelic& r : relics) {
     switch (r.id) {
@@ -881,6 +881,23 @@ void RunState::fire_room_entry_relics(RoomType room) {
         // maximum.
         if (room == RoomType::Shop) {
           hp = std::min(max_hp, hp + kMealTicketHeal);
+        }
+        break;
+
+      case RelicId::EternalFeather:
+        // Rest sites only. floor(deck / 5) * 3, integer division exactly as
+        // `masterDeck.size() / 5 * 3` does it — a 23-card deck heals 12, and
+        // the remainder is dropped rather than rounded anywhere.
+        //
+        // On ENTERING, before any rest option is chosen (wiki.gg), which is
+        // what this loop running ahead of enter_room's switch already gives.
+        //
+        // A plain clamped heal, not a funnelled one: Magic Flower boosts
+        // healing only DURING COMBAT, and a rest site is not combat (§6.14).
+        if (room == RoomType::Rest) {
+          const int healed = static_cast<int>(master_deck.size()) /
+                             kEternalFeatherCardsPer * kEternalFeatherHeal;
+          hp = std::min(max_hp, hp + healed);
         }
         break;
 

@@ -59,6 +59,17 @@ int energy_after_turn_start(const CombatState& state);
 int reduce_player_hp_loss(const CombatState& state, int amount,
                           bool from_attack);
 
+// How much the player actually heals from `amount`, after the relics that
+// modify healing. Magic Flower is the only one, and it is COMBAT ONLY — which
+// is why this takes a CombatState and why the run layer's heals (rest sites,
+// Meal Ticket, Eternal Feather) neither call it nor need to.
+//
+// Every in-combat heal goes through heal_player, and heal_player calls this, so
+// a new healing source cannot quietly skip the modifier. Applied BEFORE the add
+// and before the max-HP clamp, matching AbstractCreature::heal — relics, then
+// powers, then add, then clamp.
+int boost_player_heal(const CombatState& state, int amount);
+
 // Ginger (Weak) and Turnip (Frail). Consulted BEFORE Artifact, so an immune
 // player does not spend an Artifact charge on a debuff that cannot land.
 bool player_is_immune_to(const CombatState& state, Debuff d);
