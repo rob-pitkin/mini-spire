@@ -245,7 +245,7 @@ per §1.
 
 ---
 
-## 7. Status: 96 of 140 wired
+## 7. Status: 97 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -278,7 +278,7 @@ have nothing to do with relics**, and those blockers are shared:
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed) |
-| **Nothing blocking — just unwritten** | **~21**: Prismatic Shard (Colorless half, §6.8), Unceasing Top, Champion Belt, Charon's Ashes, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest, Dead Branch, Snecko Eye, Ancient Tea Set, Pocketwatch, Chemical X, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them. **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
+| **Nothing blocking — just unwritten** | **~20**: Unceasing Top, Champion Belt, Charon's Ashes, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest, Dead Branch, Snecko Eye, Ancient Tea Set, Pocketwatch, Chemical X, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them. **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
 | **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
@@ -920,3 +920,59 @@ previous binary. Nothing shipped broken — CI installs clean and was green — 
 the local runs proved nothing about the changes they were quoted for. It is the
 vacuous-pass shape again, this time in the process rather than in a test.
 CLAUDE.md already documents the caveat; it was not applied. Tracked as a task.
+
+### 6.16 Prismatic Shard, as we define it
+
+The Colorless half, per §6.8's ruling. Card rewards now draw from
+**Ironclad + Colorless** at the rolled rarity instead of Ironclad alone.
+
+⚠️ **`PrismaticShard.onEquip` has nothing to do with card rewards.** It sets
+`masterMaxOrbs = 1` for a non-Defect character and that is all. Reading the
+relic class alone leads to "this relic does nothing to rewards" — §6.14's lesson
+pointing the other way. The real implementation is one line inside
+`AbstractDungeon`'s reward loop:
+
+    card = player.hasRelic("PrismaticShard")
+         ? CardLibrary.getAnyColorCard(rarity)
+         : AbstractDungeon.getCard(rarity);
+
+So it is a **per-card pool substitution**, applied after the rarity is rolled.
+`getAnyColorCard` filters out only Curse, Status and locked cards and applies no
+colour filter at all.
+
+**Three properties that follow, and each is worth stating because each is easy
+to lose:**
+
+1. **The rarity roll is untouched.** The relic changes which pool a rarity draws
+   from, never the odds of hitting it, so Question Card, Busted Crown and the
+   rarity pity counter behave exactly as before.
+2. **A Common roll is unaffected here.** Colorless has no common tier — `card.h`
+   says so outright — so in this engine the relic only ever widens Uncommon and
+   Rare draws. Real StS widens Common too, across the other characters' cards;
+   ours cannot. That is a second-order consequence of §6.8's divergence rather
+   than a new decision.
+3. **All three reward screens inherit it.** The combat reward, Dream Catcher's
+   rest-site reward and Prayer Wheel's second screen all route through
+   `generate_card_reward`, which is the same reason StS gets it everywhere by
+   hooking inside `getRewardCards`.
+
+**`reward_pool` is a SIBLING of `pool_of`, deliberately not a change to it.**
+`pool_of` feeds the shop's typed slots, and Prismatic Shard does not touch shop
+stock: the wiki lists only combat, boss and relic-triggered rewards, and the
+relic appears in exactly three files of the decompiled game, none of them shop
+generation. Modifying `pool_of` would have leaked Colorless cards into the shop
+and nothing else would have caught it, so
+`RewardRelics.PrismaticShardDoesNotChangeTheShop` pins it.
+
+**The Colorless ids are APPENDED**, so an Ironclad id keeps its index in the
+candidate list and a run without the relic draws exactly what it drew before.
+The whole suite staying green with no expectation changes is the evidence for
+that, not an assumption about it.
+
+**Testing note, since this is where the §6.14 trap would have recurred.** A
+`RewardSource::Boss` reward bypasses the rarity roll and is always Rare (§4.2),
+which makes the *pool* deterministic while the draw stays random — so the tests
+assert invariants true of every draw ("every offered card is in Ironclad +
+Colorless") rather than what a seed produces. The one sweep asserts that some
+colorless card is offered across 40 seeds, and that is a property of the pool's
+composition, identical on every platform, not of any seed's output.

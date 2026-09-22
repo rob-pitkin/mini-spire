@@ -554,6 +554,53 @@ std::vector<CardId> pool_of(CardRarity rarity, CardType type) {
   return out;
 }
 
+// What a CARD REWARD draws from at one rarity. Prismatic Shard widens it to
+// include the Colorless cards of that rarity.
+//
+// Deliberately NOT pool_of, and deliberately not a change to it: pool_of feeds
+// the shop's typed slots, and Prismatic Shard does not touch shop stock. StS
+// puts the check inside the reward loop only (AbstractDungeon's
+// `player.hasRelic("PrismaticShard") ? CardLibrary.getAnyColorCard(rarity)
+// : AbstractDungeon.getCard(rarity)`), and the relic appears in exactly three
+// files of the decompiled game, none of them shop generation.
+//
+// `getAnyColorCard` filters out only Curse, Status and locked cards and applies
+// NO colour filter, so in the real game this is every character's cards plus
+// Colorless. The other three characters are outside this vocabulary by design,
+// which makes our version Ironclad + Colorless — a documented divergence
+// (§6.8, and the README's divergence list).
+//
+// Two properties worth stating because they are easy to lose:
+//
+//  - The rarity is rolled BEFORE this is called and is untouched. The relic
+//    changes which pool a rarity draws from, never the odds of hitting it, so
+//    Question Card, Busted Crown and the pity counter all behave as before.
+//  - Colorless has no common tier (card.h says so outright), so a Common roll
+//    is unaffected. In this engine the relic only ever widens Uncommon and Rare
+//    draws. Real StS widens Common too, across the other characters; we cannot,
+//    and that is a second-order consequence of §6.8 rather than a new choice.
+//
+// The Colorless ids are APPENDED, so an Ironclad id keeps its index in the
+// candidate list and a run without the relic draws exactly what it drew before.
+std::vector<CardId> reward_pool(CardRarity rarity, bool prismatic) {
+  const std::vector<CardId>& base = rarity == CardRarity::Rare
+                                        ? IRONCLAD_RARE_POOL
+                                        : rarity == CardRarity::Uncommon
+                                              ? IRONCLAD_UNCOMMON_POOL
+                                              : IRONCLAD_COMMON_POOL;
+  if (!prismatic) return base;
+
+  std::vector<CardId> out = base;
+  if (rarity == CardRarity::Rare) {
+    out.insert(out.end(), COLORLESS_RARE_POOL.begin(),
+               COLORLESS_RARE_POOL.end());
+  } else if (rarity == CardRarity::Uncommon) {
+    out.insert(out.end(), COLORLESS_UNCOMMON_POOL.begin(),
+               COLORLESS_UNCOMMON_POOL.end());
+  }
+  return out;
+}
+
 }  // namespace
 
 void RunState::generate_shop() {
@@ -1174,11 +1221,12 @@ void RunState::generate_card_reward(RewardSource source) {
 
   for (int i = 0; i < size; ++i) {
     const CardRarity rarity = roll_card_rarity(rng, source);
-    const std::vector<CardId>& pool = rarity == CardRarity::Rare
-                                          ? IRONCLAD_RARE_POOL
-                                          : rarity == CardRarity::Uncommon
-                                                ? IRONCLAD_UNCOMMON_POOL
-                                                : IRONCLAD_COMMON_POOL;
+    // Prismatic Shard widens the pool, never the rarity odds. Every reward
+    // screen reaches this one function — the combat reward, Dream Catcher's
+    // rest-site reward and Prayer Wheel's second screen — so the relic applies
+    // to all three the way StS's check inside getRewardCards does.
+    const std::vector<CardId> pool =
+        reward_pool(rarity, has_relic(RelicId::PrismaticShard));
 
     // One reward never offers the same card twice. Drawn WITHOUT REPLACEMENT —
     // build the candidate list, take one draw — rather than re-rolling until

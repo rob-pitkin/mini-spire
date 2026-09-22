@@ -960,5 +960,87 @@ TEST(RunLayerRelics, MagicFlowerDoesNotBoostMealTicket) {
   EXPECT_EQ(run.hp, 40 + kMealTicketHeal);
 }
 
+// ------------------------------------------------------- Prismatic Shard
+
+namespace {
+
+bool in_pool(const std::vector<CardId>& pool, CardId id) {
+  for (CardId c : pool) {
+    if (c == id) return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+// A BOSS reward bypasses the rarity roll and is always Rare (§4.2). That makes
+// the POOL deterministic even though the draw is not, which is the handle these
+// assertions need — they state what is true of every draw, never what one seed
+// produces.
+TEST(RewardRelics, WithoutPrismaticShardRewardsAreIroncladOnly) {
+  for (uint64_t seed = 0; seed < 40; ++seed) {
+    RunState run = RunState::start(seed);
+    run.generate_card_reward(RewardSource::Boss);
+    ASSERT_FALSE(run.card_reward.empty()) << "seed " << seed;
+    for (const Card& c : run.card_reward) {
+      EXPECT_TRUE(in_pool(IRONCLAD_RARE_POOL, c.card_id))
+          << card_name(c.card_id) << " is not an Ironclad rare (seed " << seed
+          << ")";
+    }
+  }
+}
+
+TEST(RewardRelics, PrismaticShardWidensRewardsToColorless) {
+  int colorless_offered = 0;
+  for (uint64_t seed = 0; seed < 40; ++seed) {
+    RunState run = RunState::start(seed);
+    run.obtain_relic(RelicId::PrismaticShard);
+    run.generate_card_reward(RewardSource::Boss);
+    ASSERT_FALSE(run.card_reward.empty()) << "seed " << seed;
+    for (const Card& c : run.card_reward) {
+      EXPECT_TRUE(in_pool(IRONCLAD_RARE_POOL, c.card_id) ||
+                  in_pool(COLORLESS_RARE_POOL, c.card_id))
+          << card_name(c.card_id) << " is outside Ironclad + Colorless (seed "
+          << seed << ")";
+      if (in_pool(COLORLESS_RARE_POOL, c.card_id)) ++colorless_offered;
+    }
+  }
+  // The meaningfulness guard, and yes it is a sweep. It is deliberately NOT the
+  // trap §6.14 records: that one asserted WHICH card a given seed produces,
+  // which differs between standard libraries. This asserts a property of the
+  // POOL, which is identical on every platform.
+  //
+  // Counted, not estimated: 16 Ironclad rares + 15 colorless rares = 31
+  // candidates, of which nearly half are colorless. One reward draws 3 WITHOUT
+  // replacement, so an all-Ironclad reward has probability
+  // C(16,3)/C(31,3) = 560/4495, about 12%. Across 40 seeds that is 0.12^40.
+  EXPECT_GT(colorless_offered, 0)
+      << "the relic never widened the pool — is it wired at all?";
+}
+
+// Prismatic Shard does not touch SHOP stock. StS puts the check inside the
+// reward loop only, and the relic appears in three files of the decompiled game,
+// none of them shop generation. This is why reward_pool is a sibling of pool_of
+// rather than a change to it — modifying pool_of would have leaked colorless
+// into the shop's typed slots, and nothing else would have noticed.
+TEST(RewardRelics, PrismaticShardDoesNotChangeTheShop) {
+  RunState bare = RunState::start(1);
+  bare.floor = 5;
+  bare.phase = Phase::Shop;
+  bare.generate_shop();
+
+  RunState with = RunState::start(1);
+  with.obtain_relic(RelicId::PrismaticShard);
+  with.floor = 5;
+  with.phase = Phase::Shop;
+  with.generate_shop();
+
+  ASSERT_EQ(with.shop_cards.size(), bare.shop_cards.size());
+  for (size_t i = 0; i < bare.shop_cards.size(); ++i) {
+    EXPECT_EQ(with.shop_cards[i].card.card_id, bare.shop_cards[i].card.card_id)
+        << "shop slot " << i << " changed";
+  }
+}
+
 }  // namespace
 }  // namespace minispire
