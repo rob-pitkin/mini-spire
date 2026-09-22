@@ -129,6 +129,30 @@ inline constexpr int kIncenseBurnerTurns = 6;
 inline constexpr int kStoneCalendarTurn = 7;
 inline constexpr int kStoneCalendarDamage = 52;
 
+// --- run-layer relic amounts (§3.2, §6.14) ---
+
+// Maw Bank pays 12 gold on entering a room until the first time gold is spent,
+// and then never again for the rest of the run. The latch is the counter, set
+// to -2 — the value decompiled MawBank.setCounter treats as "used up", kept
+// rather than a bool so the held record stays one int and the displayed number
+// matches the game's.
+inline constexpr int kMawBankGold = 12;
+inline constexpr int kMawBankUsedUp = -2;
+
+// Meal Ticket heals this much on entering a SHOP, and only a shop.
+inline constexpr int kMealTicketHeal = 15;
+
+// Ceramic Fish pays out every time a card joins the master deck.
+inline constexpr int kCeramicFishGold = 9;
+
+// Old Coin's one payout, the moment it is taken.
+inline constexpr int kOldCoinGold = 300;
+
+// Tiny House pays four ways at once: one random upgrade, this much Max HP, this
+// much gold, and one potion. No card — see the note in obtain_relic.
+inline constexpr int kTinyHouseMaxHp = 5;
+inline constexpr int kTinyHouseGold = 50;
+
 // The card-play counter relics come in TWO kinds, and the difference is the
 // whole of their design:
 //

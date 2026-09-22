@@ -334,9 +334,30 @@ struct RunState {
   // through here; award_combat_gold applies Golden Idol first and then calls it.
   void gain_gold(int amount);
 
+  // Pay `amount` gold. The mirror of gain_gold, and the single spend path for
+  // the same reason: Maw Bank stops working the first time you spend gold
+  // (decompiled MawBank.onSpendGold), so a spend site that decremented `gold`
+  // itself would leave the relic paying out forever.
+  //
+  // NOT gain_gold with a negative — Ectoplasm refuses gains and must not refuse
+  // payments.
+  //
+  // The caller still checks it can afford the price. This debits and notifies;
+  // it does not authorise.
+  void spend_gold(int amount);
+
   // --- relics and potions ---
 
   bool has_relic(RelicId id) const;
+
+  // The held relic's mutable record, or nullptr when it is not held. For the
+  // run-layer relics that carry state: Maw Bank latches itself off the first
+  // time gold is spent, and that latch lives in HeldRelic::counter.
+  //
+  // has_relic answers "is it held", which is all most callers need. Reaching
+  // for `relics` directly to find the counter is the same shape as the bug in
+  // §6.7 — the accessor exists so the search is written once.
+  HeldRelic* held_relic(RelicId id);
 
   // Takes a relic. Duplicates are ignored: you cannot hold two of the same.
   // False when nothing was gained — the relic is already held. Callers that
@@ -370,7 +391,13 @@ struct RunState {
   // drawn without replacement. Returns how many were actually upgraded, which
   // can be fewer than asked when the deck has run out of eligible cards.
   // `source` indexes the RNG stream, so each relic's draw is its own.
-  int upgrade_random_cards(CardType type, int count, RelicId source);
+  //
+  // `type` of nullopt means ANY type. War Paint and Whetstone filter to Skills
+  // and Attacks; Tiny House upgrades one card of any kind (decompiled
+  // TinyHouse.onEquip shuffles every canUpgrade card together). One path rather
+  // than two, so the without-replacement discipline is stated once.
+  int upgrade_random_cards(std::optional<CardType> type, int count,
+                           RelicId source);
 
   // Takes a potion if a slot is free. Returns false when the belt is full,
   // which is a real decision point in the game rather than an error.
@@ -490,6 +517,15 @@ struct RunState {
   // Enters `room` on the current floor, setting the phase and doing whatever
   // the room does on arrival.
   void enter_room(RoomType room);
+
+  // Fire the relics that respond to walking into a room, in ACQUISITION order —
+  // the order `relics` is stored in, matching fire_relic_hooks. Called by
+  // enter_room BEFORE the room resolves, because a Treasure room opens its
+  // chest and leaves inside that same call.
+  //
+  // Maw Bank (any room) and Meal Ticket (shops only) today; Eternal Feather and
+  // Ssserpent Head attach here too (§3.2).
+  void fire_room_entry_relics(RoomType room);
 
   // Finishes with the current room: back to the map, or the run is won if this
   // was the last floor. Every room's exit goes through here so the win check

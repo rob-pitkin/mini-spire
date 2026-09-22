@@ -245,11 +245,24 @@ per §1.
 
 ---
 
-## 7. Status: 88 of 140 wired
+## 7. Status: 94 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
 Running the count is what caught the Juzu Bracelet / Tiny Chest error in §3.2.
+
+The command, recorded so successive counts are comparable:
+
+    grep -oh "RelicId::[A-Za-z_]*" src/*.cc src/*.h | sort -u | wc -l
+
+`bindings/` is excluded: it names every `RelicId` to bind the enum, so including
+it reports 140 whatever is implemented.
+
+This is written down because the number drifted. §7 read **88**, while the same
+command run against that same commit reported **89** — and no `RelicId::` in the
+tree appears only on a comment line, so the discrepancy is not comment noise.
+One of the two counts used a different rule and neither recorded which, which is
+the whole argument for pinning the command here.
 
 The 52 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
@@ -265,7 +278,7 @@ have nothing to do with relics**, and those blockers are shared:
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell | all pause for player input |
-| **Nothing blocking — just unwritten** | **~27**: Maw Bank, Meal Ticket, Ceramic Fish, Old Coin, Magic Flower, Unceasing Top, Champion Belt, Charon's Ashes, Eternal Feather, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest, Dead Branch, Snecko Eye, Ancient Tea Set, Pocketwatch, Chemical X, Tiny House, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11 and 5 in §6.12. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them |
+| **Nothing blocking — just unwritten** | **~22**: Magic Flower, Unceasing Top, Champion Belt, Charon's Ashes, Eternal Feather, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest, Dead Branch, Snecko Eye, Ancient Tea Set, Pocketwatch, Chemical X, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them. **Magic Flower wants a `heal()` funnel first** — see §6.14 |
 | **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
@@ -708,3 +721,79 @@ it fires on HEALING as well as damage and cannot ride this batch's hook. Note
 also the wiki detail that its removal is applied as an invisible debuff, so
 Artifact can block it and leave the player at +3 with another +3 available; that
 is unreachable for us while `Power::Artifact` is enemy-only.
+
+### 6.14 The run-layer batch, and a gold path that was not a path
+
+Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House. The first run-layer
+batch (§3.2), and the first to add no `Hook` values at all: these fire from
+`RunState` directly, the way `obtain_relic`'s pickup switch already did, because
+there is no fight to queue into.
+
+**Sourced from the decompiled game, not the wiki.** The wiki was unreachable —
+`WebFetch` returned HTTP 402 on both `api.php` and an article URL — so every
+number here comes from `aeubanks/sts` `relics/*.java`. That is the game itself
+rather than a reimplementation, so it outranks the usual cross-check; recording
+it because the rule in CLAUDE.md names the wiki specifically, and whether
+decompiled Java is a recognised tier is still an open ruling.
+
+**Gold was spent in four places and gained in one.** `gain_gold` was already the
+single gain path, with a comment explaining that Ectoplasm must not be
+forgettable by a new caller. Spending had no such path: `buy_relic`, `buy_potion`,
+`buy_card` and `buy_card_removal` each wrote `gold -=` themselves. Maw Bank stops
+working the first time gold is spent, so it needed all four. Added `spend_gold`
+as the mirror, and routed them through it.
+
+This is the shape of §6.7's removal bug exactly — two erase sites, a rule held in
+neither — and it was already latent here before any relic needed it.
+
+⚠️ **Maw Bank disables on ANY spend, not on shop purchases.**
+`MawBank.onSpendGold` has no room check. Every spend site today happens to be a
+shop, so "disabled by buying something" would pass every current test and be
+wrong the moment anything else costs gold. The rule lives in `spend_gold` for
+that reason, not in the four callers.
+
+⚠️ **Tiny House grants no card.** The remembered description — repeated widely —
+is "1 potion, 50 gold, 1 card, +5 Max HP". Decompiled `onEquip` calls
+`addGoldToRewards(50)` and `addPotionToRewards(...)` and adds no card at all. It
+also upgrades exactly ONE card: the two-card branch calls
+`bottledCardUpgradeCheck` on indices 0 and 1 but `upgrade()` on 0 only. Writing
+this from memory would have handed out a card the game does not, and possibly a
+second upgrade. Pinned by `RunLayerRelics.TinyHousePaysGoldMaxHpAndAPotion` and
+`TinyHouseUpgradesExactlyOneCard`.
+
+Its potion is a FLAT draw over all 33, not the rarity-weighted roll a combat drop
+uses — `getRandomPotion` picks uniformly from the whole list. `PotionId` is dense,
+so this is one uniform draw over `[0, kNumPotions)` and needs no new pool.
+
+**Tiny House is correct but unreachable.** It is Boss tier, and `random_relic` is
+never called with `RelicTier::Boss` at any of its four sites — nothing awards a
+boss relic yet. Same standing as Du-Vu Doll in §6.4: implemented, tested by
+calling `obtain_relic` directly, and waiting on the boss encounter (§11 step 8).
+
+**Ceramic Fish needed no funnel** — `add_card` was already the only way a card
+joins the master deck. Worth stating because the gold case next to it was the
+opposite, and the difference was not visible without checking. `RunState::start`
+deals the ten starter cards through `add_card` too, which would pay 90 gold; it
+cannot, because only Burning Blood is obtained before the deal. Unreachable
+rather than guarded, and worth re-checking if a Neow bonus ever grants a relic
+before the deck exists.
+
+**`upgrade_random_cards` now takes `std::optional<CardType>`.** War Paint and
+Whetstone filter to Skills and Attacks; Tiny House upgrades any card. One path
+with an optional filter rather than a second copy of the without-replacement
+discipline.
+
+Minor, recorded rather than hidden: `upgrade_random_cards` builds its own stream
+from `(RelicEffect, TinyHouse)`, and Tiny House's potion draw builds one from the
+same index, so both start from the same seed. They map that value onto different
+ranges and so look independent — an artifact of each helper owning its generator,
+not a designed correlation.
+
+**§7's count was one short.** The same command run against the pre-batch commit
+reported 89 where §7 said 88, and no `RelicId::` in the tree appears only on a
+comment line. The command is now written into §7 so the next count is comparable.
+
+**Follow-up: Magic Flower wants a `heal()` funnel.** Healing has the same shape
+gold spending had — `rest_heal` does its own arithmetic and Meal Ticket now does
+its own clamped `std::min` — and Magic Flower modifies every heal. Left out of
+this batch deliberately rather than expanded into it; tracked as its own task.

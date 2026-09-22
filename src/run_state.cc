@@ -9,6 +9,19 @@ namespace minispire {
 void RunState::add_card(Card card) {
   card.uid = next_card_uid++;
   master_deck.push_back(card);
+
+  // Ceramic Fish: 9 gold for every card that joins the deck (decompiled
+  // CeramicFish.onObtainCard). Through gain_gold, so Ectoplasm refuses it like
+  // any other gain.
+  //
+  // This is the single deck-add path — the shop, card rewards and events all
+  // arrive here — which is what lets the relic be written once. RunState::start
+  // deals the ten starter cards through it as well, and that would pay out ten
+  // times; it does not, because start obtains only Burning Blood before dealing
+  // and nothing can grant Ceramic Fish on floor 0. Unreachable rather than
+  // guarded, and worth re-checking if a Neow bonus ever hands out a relic
+  // before the deck exists.
+  if (has_relic(RelicId::CeramicFish)) gain_gold(kCeramicFishGold);
 }
 
 RunState RunState::start(uint64_t run_seed) {
@@ -57,6 +70,13 @@ bool RunState::has_relic(RelicId id) const {
   return false;
 }
 
+HeldRelic* RunState::held_relic(RelicId id) {
+  for (HeldRelic& r : relics) {
+    if (r.id == id) return &r;
+  }
+  return nullptr;
+}
+
 void RunState::gain_max_hp(int amount) {
   // Gaining Max HP HEALS by the same amount — the general rule in StS, not a
   // per-relic quirk, and the reason Strawberry is worth 7 HP now as well as 7
@@ -93,7 +113,8 @@ bool RunState::remove_card_from_deck(int index) {
   return true;
 }
 
-int RunState::upgrade_random_cards(CardType type, int count, RelicId source) {
+int RunState::upgrade_random_cards(std::optional<CardType> type, int count,
+                                   RelicId source) {
   // Indexed by the relic's own id (see RngStream::RelicEffect): two relics can
   // be picked up on the same floor, so a floor index would give both the same
   // upgrades.
@@ -104,9 +125,12 @@ int RunState::upgrade_random_cards(CardType type, int count, RelicId source) {
   // Eligible = right type AND actually upgradable. A deck of already-upgraded
   // Strikes leaves War Paint nothing to do, which is a real outcome rather than
   // an error.
+  //
+  // No type means every upgradable card is eligible — Tiny House, which shuffles
+  // all of them together rather than filtering.
   std::vector<int> eligible;
   for (size_t i = 0; i < master_deck.size(); ++i) {
-    if (CARD_DATABASE.at(master_deck[i].card_id).type != type) continue;
+    if (type && CARD_DATABASE.at(master_deck[i].card_id).type != *type) continue;
     Card probe = master_deck[i];
     if (upgrade_card_in_place(probe)) eligible.push_back(static_cast<int>(i));
   }
@@ -155,6 +179,43 @@ bool RunState::obtain_relic(RelicId id) {
     case RelicId::Whetstone:
       upgrade_random_cards(CardType::Attack, 2, id);
       break;
+
+    // Straight through gain_gold, so Ectoplasm refuses it exactly as it refuses
+    // every other gain. StS routes this through player.gainGold for the same
+    // reason.
+    case RelicId::OldCoin:
+      gain_gold(kOldCoinGold);
+      break;
+
+    case RelicId::TinyHouse: {
+      // Four payouts at once (decompiled TinyHouse.onEquip): upgrade one random
+      // card, +5 Max HP, 50 gold, one potion.
+      //
+      // NOT a card reward. The community description often says "1 card", and
+      // onEquip does not add one — it calls addGoldToRewards and
+      // addPotionToRewards only. Writing the remembered version would have
+      // handed out a card the game does not.
+      upgrade_random_cards(std::nullopt, 1, id);
+      gain_max_hp(kTinyHouseMaxHp);
+      gain_gold(kTinyHouseGold);
+
+      // A FLAT draw over every potion, not the rarity-weighted roll a combat
+      // drop uses: getRandomPotion picks uniformly from the whole potion list.
+      //
+      // This stream is seeded identically to the one upgrade_random_cards just
+      // built, since both index RelicEffect by this relic's id, so the potion
+      // and the upgrade are drawn from the same first value. They land in
+      // different ranges and so look independent; it is an artifact of each
+      // helper owning its own generator, recorded rather than hidden.
+      std::mt19937 rng = make_stream(run_seed, RngStream::RelicEffect,
+                                     static_cast<uint32_t>(id));
+      const PotionId rolled = static_cast<PotionId>(
+          std::uniform_int_distribution<int>(0, kNumPotions - 1)(rng));
+      // A full belt, or Sozu, means the potion is simply lost — obtain_potion
+      // is the single authority on that, the same as every other award.
+      obtain_potion(rolled);
+      break;
+    }
 
     default:
       break;
@@ -333,6 +394,23 @@ void RunState::gain_gold(int amount) {
   // comes straight through here — is not boosted by it.
   if (has_relic(RelicId::Ectoplasm)) return;
   gold += amount;
+}
+
+void RunState::spend_gold(int amount) {
+  // A zero-gold payment is not a spend, so it does not trip Maw Bank. Callers
+  // have already checked they can afford the price; this debits and notifies
+  // rather than authorising, so it does not re-check affordability either.
+  if (amount <= 0) return;
+  gold -= amount;
+
+  // Maw Bank stops the first time gold is spent, on ANYTHING — decompiled
+  // MawBank.onSpendGold has no room check. Reading it as "disabled by shop
+  // purchases" would be right today and wrong the moment something else costs
+  // gold, which is why this lives in the spend path rather than in the four
+  // buy_* callers.
+  if (HeldRelic* maw = held_relic(RelicId::MawBank)) {
+    maw->counter = kMawBankUsedUp;
+  }
 }
 
 std::vector<int> RunState::smithable_cards() const {
@@ -668,7 +746,7 @@ void RunState::buy_relic(int index) {
   // paying before checking would take the gold and the slot in exchange for
   // nothing.
   if (!obtain_relic(offer.id)) return;
-  gold -= offer.price;
+  spend_gold(offer.price);
   offer.sold = true;
 }
 
@@ -682,7 +760,7 @@ void RunState::buy_potion(int index) {
   // on whether it can be. Re-checking only the full-belt case inline would miss
   // Sozu, and a Sozu run would pay for potions it can never receive.
   if (!obtain_potion(offer.id)) return;
-  gold -= offer.price;
+  spend_gold(offer.price);
   offer.sold = true;
 }
 
@@ -692,7 +770,7 @@ void RunState::buy_card(int index) {
   ShopItem& item = shop_cards[index];
   if (item.sold || gold < item.price) return;
 
-  gold -= item.price;
+  spend_gold(item.price);
   item.sold = true;
   // add_card mints the uid: the card acquires identity when bought, not when
   // it was put on the shelf.
@@ -708,7 +786,7 @@ void RunState::buy_card_removal(int deck_index) {
   // leave the shop's one removal still unspent.
   if (!remove_card_from_deck(deck_index)) return;
 
-  gold -= shop_remove_price;
+  spend_gold(shop_remove_price);
   ++shop_remove_count;
   // One removal per shop; the next one costs more, for the rest of the run.
   shop_remove_price = -1;
@@ -778,9 +856,40 @@ RoomType RunState::resolve_unknown_room() {
   return choice;
 }
 
+void RunState::fire_room_entry_relics(RoomType room) {
+  // Acquisition order, iterating `relics` as it stands — the same rule and the
+  // same reason as fire_relic_hooks. Neither of these two interacts with the
+  // other today, but sorting or grouping the loop would be a silent ordering
+  // change the moment one does.
+  for (HeldRelic& r : relics) {
+    switch (r.id) {
+      case RelicId::MawBank:
+        // Every room, not only shops, and until the latch trips.
+        if (r.counter != kMawBankUsedUp) gain_gold(kMawBankGold);
+        break;
+
+      case RelicId::MealTicket:
+        // Shops only. Clamped, because a heal cannot carry HP above the
+        // maximum.
+        if (room == RoomType::Shop) {
+          hp = std::min(max_hp, hp + kMealTicketHeal);
+        }
+        break;
+
+      default:
+        break;
+    }
+  }
+}
+
 void RunState::enter_room(RoomType room) {
   current_room = room;
   last_room_was_shop = room == RoomType::Shop;
+
+  // BEFORE the room resolves. A Treasure room opens its chest and calls
+  // leave_room below, so firing afterwards would miss those rooms entirely —
+  // and Maw Bank's gold has to be in hand before a shop can take it.
+  fire_room_entry_relics(room);
 
   switch (room) {
     case RoomType::Monster:

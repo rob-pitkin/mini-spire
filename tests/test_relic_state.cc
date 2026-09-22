@@ -734,5 +734,165 @@ TEST(PotionDrops, WhiteBeastStatueGuaranteesADrop) {
   EXPECT_EQ(run.potions.size(), 1u);
 }
 
+// ----------------------------------------------- run-layer relics (batch 2b)
+//
+// Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House. None is a
+// combat trigger (§3.2): they fire on entering a room, on a card joining the
+// master deck, or the moment the relic is taken.
+
+TEST(RunLayerRelics, MawBankPaysOnEnteringARoom) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::MawBank);
+  run.enter_room(RoomType::Rest);
+  EXPECT_EQ(run.gold, kMawBankGold);
+}
+
+// onEnterRoom has no room check. Written as a shop effect it would pass a
+// shop-only test and be wrong in every other room.
+TEST(RunLayerRelics, MawBankPaysOnEveryRoomNotJustShops) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::MawBank);
+  run.enter_room(RoomType::Rest);
+  run.enter_room(RoomType::Shop);
+  EXPECT_EQ(run.gold, 2 * kMawBankGold);
+}
+
+TEST(RunLayerRelics, MawBankStopsForeverOnceGoldIsSpent) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::MawBank);
+  run.enter_room(RoomType::Rest);
+  ASSERT_EQ(run.gold, kMawBankGold);
+
+  run.spend_gold(5);
+  const int after_spending = run.gold;
+  run.enter_room(RoomType::Rest);
+  run.enter_room(RoomType::Rest);
+  EXPECT_EQ(run.gold, after_spending) << "the bank paid again after a spend";
+
+  const HeldRelic* maw = find_relic(run, RelicId::MawBank);
+  ASSERT_NE(maw, nullptr);
+  EXPECT_EQ(maw->counter, kMawBankUsedUp);
+}
+
+TEST(RunLayerRelics, AZeroGoldPaymentDoesNotUseUpMawBank) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::MawBank);
+  run.spend_gold(0);
+  run.enter_room(RoomType::Rest);
+  EXPECT_EQ(run.gold, kMawBankGold);
+}
+
+// Through the SHOP, not a direct spend_gold call. The four buy_* paths are the
+// reason the spend funnel exists, so one of them has to be exercised here.
+TEST(RunLayerRelics, BuyingFromAShopUsesUpMawBank) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::MawBank);
+  run.gold = 500;
+  run.enter_room(RoomType::Shop);
+  ASSERT_FALSE(run.shop_cards.empty());
+  run.buy_card(0);
+
+  const HeldRelic* maw = find_relic(run, RelicId::MawBank);
+  ASSERT_NE(maw, nullptr);
+  EXPECT_EQ(maw->counter, kMawBankUsedUp);
+}
+
+TEST(RunLayerRelics, MealTicketHealsFifteenOnEnteringAShop) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::MealTicket);
+  run.hp = 40;
+  run.enter_room(RoomType::Shop);
+  EXPECT_EQ(run.hp, 40 + kMealTicketHeal);
+}
+
+TEST(RunLayerRelics, MealTicketDoesNothingOutsideAShop) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::MealTicket);
+  run.hp = 40;
+  run.enter_room(RoomType::Rest);
+  EXPECT_EQ(run.hp, 40);
+}
+
+TEST(RunLayerRelics, MealTicketCannotHealAboveMaxHp) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::MealTicket);
+  run.hp = run.max_hp - 3;
+  run.enter_room(RoomType::Shop);
+  EXPECT_EQ(run.hp, run.max_hp);
+}
+
+TEST(RunLayerRelics, CeramicFishPaysNineForEachCardAdded) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::CeramicFish);
+  const int before = run.gold;
+  run.add_card(Card{CardId::Strike});
+  run.add_card(Card{CardId::Defend});
+  EXPECT_EQ(run.gold, before + 2 * kCeramicFishGold);
+}
+
+// add_card deals the starter deck too, so a relic held at that moment would pay
+// ten times. Ceramic Fish cannot be held on floor 0 — asserted because the
+// alternative is a 90-gold head start nothing else would notice.
+TEST(RunLayerRelics, ARunStartsWithNoGold) {
+  RunState run = RunState::start(1);
+  EXPECT_EQ(run.gold, 0);
+}
+
+TEST(RunLayerRelics, OldCoinPaysThreeHundredOnPickup) {
+  RunState run = RunState::start(1);
+  ASSERT_EQ(run.gold, 0);
+  run.obtain_relic(RelicId::OldCoin);
+  EXPECT_EQ(run.gold, kOldCoinGold);
+}
+
+// Old Coin's payout goes through gain_gold like every other gain, so the run
+// that can no longer gain gold gains none of it.
+TEST(RunLayerRelics, EctoplasmRefusesOldCoinsGold) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::Ectoplasm);
+  run.obtain_relic(RelicId::OldCoin);
+  EXPECT_EQ(run.gold, 0);
+}
+
+TEST(RunLayerRelics, EctoplasmRefusesMawBanksGold) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::Ectoplasm);
+  run.obtain_relic(RelicId::MawBank);
+  run.enter_room(RoomType::Rest);
+  EXPECT_EQ(run.gold, 0);
+}
+
+TEST(RunLayerRelics, TinyHousePaysGoldMaxHpAndAPotion) {
+  RunState run = RunState::start(1);
+  const int max_before = run.max_hp;
+  const size_t deck_before = run.master_deck.size();
+
+  run.obtain_relic(RelicId::TinyHouse);
+
+  EXPECT_EQ(run.gold, kTinyHouseGold);
+  EXPECT_EQ(run.max_hp, max_before + kTinyHouseMaxHp);
+  EXPECT_EQ(run.potions.size(), 1u);
+  // NOT a card. The description people remember says "1 card"; decompiled
+  // onEquip calls addGoldToRewards and addPotionToRewards and nothing else.
+  EXPECT_EQ(run.master_deck.size(), deck_before);
+}
+
+TEST(RunLayerRelics, TinyHouseUpgradesExactlyOneCard) {
+  RunState run = RunState::start(1);
+  std::vector<CardId> before;
+  for (const Card& c : run.master_deck) before.push_back(c.card_id);
+
+  run.obtain_relic(RelicId::TinyHouse);
+
+  ASSERT_EQ(run.master_deck.size(), before.size());
+  int changed = 0;
+  for (size_t i = 0; i < before.size(); ++i) {
+    if (run.master_deck[i].card_id != before[i]) ++changed;
+  }
+  // One, not two: the decompiled else-branch checks two bottled cards but
+  // upgrades only index 0.
+  EXPECT_EQ(changed, 1);
+}
+
 }  // namespace
 }  // namespace minispire
