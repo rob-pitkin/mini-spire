@@ -872,8 +872,11 @@ TEST(RunLayerRelics, TinyHousePaysGoldMaxHpAndAPotion) {
   EXPECT_EQ(run.gold, kTinyHouseGold);
   EXPECT_EQ(run.max_hp, max_before + kTinyHouseMaxHp);
   EXPECT_EQ(run.potions.size(), 1u);
-  // NOT a card. The description people remember says "1 card"; decompiled
-  // onEquip calls addGoldToRewards and addPotionToRewards and nothing else.
+  // The deck does not grow — a statement about THIS engine, not about StS.
+  // Tiny House really does give a card reward (onEquip -> combatRewardScreen
+  // .open -> setupItemReward), and that half is unimplemented because it needs
+  // a choice screen (§7). Pinned so the gap stays visible; INVERT this when the
+  // card reward lands.
   EXPECT_EQ(run.master_deck.size(), deck_before);
 }
 

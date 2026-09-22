@@ -188,13 +188,21 @@ bool RunState::obtain_relic(RelicId id) {
       break;
 
     case RelicId::TinyHouse: {
-      // Four payouts at once (decompiled TinyHouse.onEquip): upgrade one random
-      // card, +5 Max HP, 50 gold, one potion.
+      // FIVE payouts in StS: one random upgrade, +5 Max HP, 50 gold, a potion,
+      // and a CARD REWARD. Four of them are here. The card is not.
       //
-      // NOT a card reward. The community description often says "1 card", and
-      // onEquip does not add one — it calls addGoldToRewards and
-      // addPotionToRewards only. Writing the remembered version would have
-      // handed out a card the game does not.
+      // The card is easy to miss in the source, and this code first shipped
+      // claiming the game does not grant one. It does. onEquip adds only gold
+      // and a potion, then calls combatRewardScreen.open — and open() calls
+      // setupItemReward(), which is what appends the card reward, for every
+      // room that is not a Treasure or Rest room. An absent line in onEquip is
+      // not an absent effect (CLAUDE.md: only reading proves absence).
+      //
+      // The missing half is deliberate now rather than forgotten: the card is a
+      // player CHOICE and belongs with the boss reward screen, which does not
+      // exist (§11 step 8). Tiny House is listed under §7's "needs a choice
+      // screen" row for it. Unreachable either way — nothing awards a boss
+      // relic yet.
       upgrade_random_cards(std::nullopt, 1, id);
       gain_max_hp(kTinyHouseMaxHp);
       gain_gold(kTinyHouseGold);

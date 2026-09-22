@@ -67,6 +67,24 @@ targeting), and it now spans the whole Act 1 roster:
 
 Map traversal, card rewards, and relics are on the roadmap.
 
+### Deliberate divergences
+
+Parity is the default: where this engine differs from Slay the Spire, it is a
+decision with a reason, and the reason is written down. The list is short and
+lives here so it can be checked rather than assumed.
+
+- **Prismatic Shard offers Colorless and Ironclad cards only.** In the game it
+  adds *"cards from other colors"* — Silent, Defect and Watcher cards — to every
+  card reward. Those three characters have 228 cards between them, and this
+  vocabulary gives each card its own id for its upgraded form, so honouring it
+  means roughly **450 more card ids** — nearly tripling the 270-card
+  vocabulary — for one Shop-tier relic. `CardId` indexes the observation's
+  card-type block and the action space's card-indexed blocks, so all three grow
+  together, and every one of those indices is dead for a whole run unless that
+  single relic is held. The relic still does something real — Colorless cards
+  appear in rewards, which they otherwise never do — but it is weaker than the
+  game's version. Reasoning: `docs/design/relic-effects.md` §6.8.
+
 ## Install
 
 ```bash

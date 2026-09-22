@@ -271,14 +271,14 @@ have nothing to do with relics**, and those blockers are shared:
 |---|---|---|
 | ~~**Missing `Power`s**~~ | ~~Bronze Scales, Akabeko, Incense Burner, Fossilized Helix, Thread and Needle, Pen Nib~~ | ✅ **done.** All six Powers exist: Vigor, PenNibCharge, Intangible, Buffer, Thorns, PlatedArmor. Intangible is the one power that ticks — a named exception to the status model (Rob, 2026-09-12). |
 | **No curse cards** | Omamori, Darkstone Periapt, Blue Candle, and the unreachable halves of Du-Vu Doll and Cursed Key | §6.4 |
-| ~~**No colorless cards**~~ | ~~Toolbox, half of Prismatic Shard~~ | ✅ **cleared.** All 35 colorless cards are implemented (`colorless-effects.md`) and the shop's 2 colorless slots now stock. **Toolbox** is wired: a 1-of-3 colorless choice that pauses combat setup BEFORE the opening hand (§6.9 — Rob ruled, 2026-09-20). **Prismatic Shard**'s other half still needs §6.8. ⚠️ CORRECTED earlier: Orrery, Dolly's Mirror and Cauldron never needed colorless — Cauldron is potions only, and the other two need a shop CHOICE SCREEN over normal card rewards. |
+| ~~**No colorless cards**~~ | ~~Toolbox, half of Prismatic Shard~~ | ✅ **cleared.** All 35 colorless cards are implemented (`colorless-effects.md`) and the shop's 2 colorless slots now stock. **Toolbox** is wired: a 1-of-3 colorless choice that pauses combat setup BEFORE the opening hand (§6.9 — Rob ruled, 2026-09-20). **Prismatic Shard** is now unblocked: §6.8 was ruled (Rob, 2026-09-21) to the Colorless half only, a deliberate divergence recorded in the README. ⚠️ CORRECTED earlier: Orrery, Dolly's Mirror and Cauldron never needed colorless — Cauldron is potions only, and the other two need a shop CHOICE SCREEN over normal card rewards. |
 | **Needs a shop choice screen** | Orrery, Dolly's Mirror | moved here from the colorless row |
 | **Needs potion effects** | Cauldron, Toy Ornithopter, Sacred Bark | Cauldron moved here from the colorless row; the other two need `Hook::PotionDrunk`, which cannot fire until a potion can be drunk |
 | **No events** | Neow's Lament, Odd Mushroom, Warped Tongs, Spirit Poop, and the 5 Face Trader masks | 10 of the special-tier relics |
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
-| **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell | all pause for player input |
-| **Nothing blocking — just unwritten** | **~22**: Magic Flower, Unceasing Top, Champion Belt, Charon's Ashes, Eternal Feather, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest, Dead Branch, Snecko Eye, Ancient Tea Set, Pocketwatch, Chemical X, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them. **Magic Flower wants a `heal()` funnel first** — see §6.14 |
+| **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed) |
+| **Nothing blocking — just unwritten** | **~23**: Prismatic Shard (Colorless half, §6.8), Magic Flower, Unceasing Top, Champion Belt, Charon's Ashes, Eternal Feather, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest, Dead Branch, Snecko Eye, Ancient Tea Set, Pocketwatch, Chemical X, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them. **Magic Flower wants a `heal()` funnel first** — see §6.14 |
 | **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
@@ -423,7 +423,7 @@ property of which relics are wired, not a guarantee. Anything added there that
 Found because a test asserted the interaction rather than each relic alone. The
 naive version passes every single-relic test.
 
-### 6.8 Prismatic Shard reaches OUTSIDE the card vocabulary — needs a ruling
+### 6.8 Prismatic Shard reaches OUTSIDE the card vocabulary — RULED
 
 *"Combat reward screens now contain Colorless cards and cards from other
 colors."*
@@ -443,10 +443,34 @@ Two options, and neither is obviously right:
 | | cost |
 |---|---|
 | implement the colorless half only | a strictly weaker relic — the same failure mode as shipping a boss relic's upside without its drawback (§6.2), and as shipping an obtainable-but-unplayable card |
-| widen the vocabulary to other classes | contradicts the Act 1 scope rule, and adds ~600 card ids for one relic |
+| widen the vocabulary to other classes | contradicts the Act 1 scope rule, and adds ~450 card ids for one relic |
 
-**Unresolved.** Recorded rather than decided, because it is a scope question
-rather than an implementation one.
+⚠️ That row said **~600** until it was counted (2026-09-21). The decompiled
+`cards/` holds 75 green, 76 blue and 77 purple card classes — 228 — and this
+vocabulary gives each card a second id for its upgraded form, so the real figure
+is ~456. The Ironclad ratio is higher (75 red classes become 189 ids), but that
+gap is the rung ladders — Searing Blow, Rampage — which the other three
+characters do not have. The estimate was never checked before being used in an
+argument; the conclusion is unchanged, since ~456 still nearly triples a
+270-card vocabulary.
+
+**Ruled (Rob, 2026-09-21): the Colorless half only.** The vocabulary stays
+Colorless + Ironclad.
+
+The deciding argument is not the card count by itself but what the count drags
+with it. `CardId` indexes the observation's card-type block *and* the action
+space's card-indexed blocks (`ActionBlock::CardSelect` among them), so ~456 new
+ids expand the vocabulary, the observation and the action space together — and
+every one of those indices is dead for an entire run unless this single
+Shop-tier relic is held. That is the opposite of the §5.1 reasoning that cut
+Black Blood to avoid dead indices.
+
+So Prismatic Shard is implementable in full, as *we* define it: Colorless cards
+start appearing in card rewards, which they otherwise never do. It is weaker
+than the game's version, and that is a **deliberate divergence** rather than a
+gap to close later — written into the README's divergence list, because a reader
+comparing this engine against the game should find it stated rather than have to
+discover it.
 
 ### 6.5 The remaining counter relics need powers that do not exist
 
@@ -729,12 +753,16 @@ batch (§3.2), and the first to add no `Hook` values at all: these fire from
 `RunState` directly, the way `obtain_relic`'s pickup switch already did, because
 there is no fight to queue into.
 
-**Sourced from the decompiled game, not the wiki.** The wiki was unreachable —
-`WebFetch` returned HTTP 402 on both `api.php` and an article URL — so every
-number here comes from `aeubanks/sts` `relics/*.java`. That is the game itself
-rather than a reimplementation, so it outranks the usual cross-check; recording
-it because the rule in CLAUDE.md names the wiki specifically, and whether
-decompiled Java is a recognised tier is still an open ruling.
+**Sourced from decompiled StS1 Java, then cross-checked on wiki.gg.**
+
+⚠️ An earlier revision of this section said the wiki was unreachable and that
+this batch therefore rested on one source. That was wrong, and it is the reason
+the Tiny House error below got through. The **Fandom** wiki returns HTTP 402 to
+`WebFetch`; this project's wiki is
+[slaythespire.wiki.gg](https://slaythespire.wiki.gg), which fetches fine — as
+`v2-spec.md` §0 already required and the design docs already cite throughout.
+Reaching for the wrong host and concluding "the wiki is down" removed the check
+that would have caught the mistake immediately. CLAUDE.md now names the host.
 
 **Gold was spent in four places and gained in one.** `gain_gold` was already the
 single gain path, with a comment explaining that Ectoplasm must not be
@@ -752,14 +780,35 @@ shop, so "disabled by buying something" would pass every current test and be
 wrong the moment anything else costs gold. The rule lives in `spend_gold` for
 that reason, not in the four callers.
 
-⚠️ **Tiny House grants no card.** The remembered description — repeated widely —
-is "1 potion, 50 gold, 1 card, +5 Max HP". Decompiled `onEquip` calls
-`addGoldToRewards(50)` and `addPotionToRewards(...)` and adds no card at all. It
-also upgrades exactly ONE card: the two-card branch calls
-`bottledCardUpgradeCheck` on indices 0 and 1 but `upgrade()` on 0 only. Writing
-this from memory would have handed out a card the game does not, and possibly a
-second upgrade. Pinned by `RunLayerRelics.TinyHousePaysGoldMaxHpAndAPotion` and
-`TinyHouseUpgradesExactlyOneCard`.
+⚠️ **Tiny House DOES grant a card — and this section first claimed it does
+not.** The correction is kept in full, because the mistake has a name and will
+recur otherwise.
+
+`onEquip` calls `addGoldToRewards(50)` and `addPotionToRewards(...)` and adds no
+card reward. Read that method alone and the conclusion looks forced. It is
+wrong. The last thing `onEquip` does is `combatRewardScreen.open(...)`, and
+`open` calls `setupItemReward`, which appends a `RewardItem` card reward for
+every room that is not a Treasure room, a Rest room, or an event flagged
+`noCardsInRewards`. The card comes from the screen, one call further down.
+
+**An absent line is not an absent effect.** This is CLAUDE.md's "only reading
+proves absence" applied to a call chain rather than to a grep, and it was
+published here as a bold correction of the *right* answer.
+
+The corroboration was already in hand and read past: wiki.gg's Prismatic Shard
+page lists Tiny House among the relic-triggered **card** rewards that relic
+modifies, which only makes sense if a card exists.
+
+What shipped is the four deterministic payouts — one random upgrade, +5 Max HP,
+50 gold, one potion. The card is a player CHOICE and needs the boss reward
+screen (§11 step 8), so Tiny House now appears in §7's "needs a choice screen"
+row as well. Ruled by Rob, 2026-09-21: keep the four, record the fifth. Its test
+pins the current partial behaviour, says so in the assertion, and must be
+inverted when the card reward lands.
+
+It does upgrade exactly ONE card: the two-card branch calls
+`bottledCardUpgradeCheck` on indices 0 and 1 but `upgrade()` on index 0 only.
+Pinned by `RunLayerRelics.TinyHouseUpgradesExactlyOneCard`.
 
 Its potion is a FLAT draw over all 33, not the rarity-weighted roll a combat drop
 uses — `getRandomPotion` picks uniformly from the whole list. `PotionId` is dense,

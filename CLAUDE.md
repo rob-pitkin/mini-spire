@@ -67,13 +67,33 @@ We source game mechanics from `sts_lightspeed` and `sts_map_oracle`. Both are
 **reimplementations** — the best executable sources available, and not ground
 truth.
 
+**The wiki is [slaythespire.wiki.gg](https://slaythespire.wiki.gg)** — not the
+Fandom one. Two wikis exist, they disagree, and wiki.gg is the maintained one
+that `v2-spec.md` §0 and the design docs already cite. The Fandom wiki also
+cannot be fetched from here: it returns **HTTP 402** to `WebFetch`. So a failed
+wiki fetch means you reached for the wrong host, not that the wiki is down —
+a whole relic batch was once sourced from a single source on that mistaken
+conclusion.
+
 **Every mechanic taken from one of them is cross-checked against the wiki before
 it enters the spec or the engine.** This is not ceremony: the first check found
 that a *display string* (`"Take 30% Hp damage."`) had been read as a spec when
 the real formula is `floor(hp/10)*3`, and surfaced a pool constraint the code did
 not encode at all.
 
-Where the two disagree, that is a flag rather than an answer — resolution has
+**Decompiled StS1 Java is the strongest source** — it is the game, not a model of
+it. Fetch with
+`gh api repos/aeubanks/sts/contents/<path> -H "Accept: application/vnd.github.raw"`;
+the repo root is the package root (`relics/`, `cards/`, `screens/`, `rooms/`, …).
+
+It is not a free pass, and the failure mode is specific: **read the call chain,
+not the one method.** Tiny House's `onEquip` adds no card reward, and the relic
+grants a card anyway — `combatRewardScreen.open` does it, one call further down.
+That shipped as a confident "the game does not grant a card", in bold, in a
+design doc. An absent line is not an absent effect, which is the same rule as
+"only reading proves absence" applied to a call graph instead of a grep.
+
+Where two sources disagree, that is a flag rather than an answer — resolution has
 gone both ways. Audit table and the standing policy:
 `docs/design/prior-art-sts-lightspeed.md` §7.5–7.6.
 
