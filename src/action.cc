@@ -310,6 +310,34 @@ void push_sadistic_nature(const CombatState& state, int enemy_slot,
   q.push_back(a);
 }
 
+// Champion Belt: 1 Weak alongside a Vulnerable the player LANDS on an enemy.
+//
+// Called only from the branch where apply_debuff returned TRUE, and that is
+// what makes it match StS rather than approximate it. ApplyPowerAction guards
+// on `!target.hasPower("Artifact")` before firing, so an Artifact-bearing enemy
+// gets neither the Vulnerable nor the Weak — and apply_debuff returns false in
+// exactly that case. Reading it as "the Vulnerable was negated but the Weak
+// still lands" would be the natural mistake.
+//
+// StS's other guards hold here by construction: the enemy branch is reached
+// only by a player-sourced debuff, since nothing in this engine applies a
+// debuff from one enemy to another, so `source.isPlayer` and `target != source`
+// are both automatic.
+//
+// The pushed Weak goes back through this same executor. That is correct rather
+// than accidental — Sadistic Nature fires on ANY debuff applied to an enemy, so
+// the Weak earns its damage too, exactly as a Weak from a card would.
+void push_champion_belt(const CombatState& state, Debuff applied,
+                        int enemy_slot, ActionQueue& q) {
+  if (applied != Debuff::Vulnerable) return;
+  if (!state.has_relic(RelicId::ChampionBelt)) return;
+  Action a = make_action(ActionKind::ApplyDebuff);
+  a.target = enemy_slot;
+  a.debuff = Debuff::Weak;
+  a.amount = kChampionBeltWeak;
+  q.push_back(a);
+}
+
 // First slot not holding a living enemy (dead corpse OR empty), or -1 if all
 // slots are occupied by the living. A split overwrites a corpse (ROB-61 rule
 // A).
@@ -1162,6 +1190,24 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
         }
         break;
 
+      case Hook::CardExhausted:
+        // Charon's Ashes: 3 damage to ALL enemies whenever a card is exhausted
+        // — by any means, not only by being played.
+        //
+        // DamageAllEnemies is the fixed-damage path, so "unscaled by Strength,
+        // Weak and Vulnerable, and cannot trigger an enemy's Thorns" holds by
+        // construction rather than by remembering to exclude them. That is
+        // exactly what StS's createDamageMatrix(3, true) with
+        // DamageType.THORNS means, and the wiki confirms the consequences:
+        // the damage does not change Writhing Mass' intent and does not make
+        // the player take Thorns damage.
+        if (relic.id == RelicId::CharonsAshes) {
+          Action a = make_action(ActionKind::DamageAllEnemies);
+          a.amount = kCharonsAshesDamage;
+          q.push_back(a);
+        }
+        break;
+
       default:
         // Every other hook is wired in a later batch. Listed explicitly rather
         // than silently ignored so an unhandled hook is a visible gap.
@@ -1609,7 +1655,12 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
                               DebuffApplication{a.debuff, a.amount,
                                                 Target::Enemy},
                               a.target)) {
+        // Both hang off the debuff having actually LANDED. Sadistic Nature
+        // first, then Champion Belt, so the Weak is queued behind the damage
+        // the Vulnerable earned — a fixed order, since both are follow-ups to
+        // the same application and neither reads what the other wrote.
         push_sadistic_nature(state, a.target, q);
+        push_champion_belt(state, a.debuff, a.target, q);
       }
       break;
     case ActionKind::ApplyPower:
@@ -1663,6 +1714,14 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       if (energy > 0) gain_energy(state, energy);
       // Feel No Pain / Dark Embrace: whenever a card is exhausted.
       fire_player_power_hooks(state, Hook::CardExhausted, q, a.card);
+      // Charon's Ashes hangs off the same event. The hook already existed and
+      // nothing fired it for RELICS — the §6.10 shape, where a hook is present
+      // but unreached — so this call is the wiring, not just the relic.
+      //
+      // Powers before relics, as everywhere else in the engine. Nothing here
+      // reads what the other wrote: Feel No Pain gains block, Dark Embrace
+      // draws, and Charon's Ashes damages enemies.
+      fire_relic_hooks(state, Hook::CardExhausted, q);
       break;
     }
     case ActionKind::DiscardCard:

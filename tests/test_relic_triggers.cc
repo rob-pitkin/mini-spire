@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "action.h"
+#include "enemy.h"  // make_jaw_worm, for the deterministic multi-enemy fixture
 #include "query.h"
 #include "run_state.h"
 #include "turn_loop.h"
@@ -2473,6 +2474,173 @@ TEST(MagicFlower, FeedWithoutTheRelicHealsItsFaceValue) {
 
   EXPECT_EQ(s.character.max_hp, max_before + 5);
   EXPECT_EQ(s.character.hp, hp_before + 5);
+}
+
+// ------------------------------------ Charon's Ashes and Champion Belt (§6.17)
+
+// Exhaust through the real executor, so the hooks see it as a card exhausted in
+// play would. Charon's Ashes fires on ANY exhaust, not only a played card's.
+void exhaust_a_card(CombatState& s, CardId id = CardId::Strike) {
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::ExhaustCard};
+  a.card = id;
+  q.push_back(a);
+  drain(s, q, ctx);
+}
+
+// Apply a debuff to an enemy through the real executor, so Artifact, Sadistic
+// Nature and Champion Belt all see it exactly as a card's application would.
+void debuff_enemy(CombatState& s, int slot, Debuff d, int amount) {
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::ApplyDebuff};
+  a.target = slot;
+  a.debuff = d;
+  a.amount = amount;
+  q.push_back(a);
+  drain(s, q, ctx);
+}
+
+// The enemies are BUILT, not sampled. An encounter drawn from a pool is the
+// wrong fixture for an "ALL enemies" claim: the Weak pool holds single enemies
+// as well as groups, so a fixed seed might give a lone Jaw Worm and this would
+// loop once and pass while proving nothing.
+//
+// Sweeping seeds until a group turns up does not fix it either — WHICH
+// encounter a seed draws is platform-dependent (ROB-100), so such a sweep can
+// pass here and fail on CI for reasons that have nothing to do with the relic.
+// That is the Chrysalis shape (§6.14).
+//
+// Two Jaw Worms is the fixture test_choice.cc already uses for Sword Boomerang,
+// the other fixed-damage-to-everything effect. One fight, two enemies, every
+// platform.
+TEST(RelicTriggers, CharonsAshesDamagesEveryLivingEnemyOnExhaust) {
+  CombatState s = fight_with({RelicId::CharonsAshes});
+  std::mt19937 rng(7);
+  s.enemies.clear();
+  s.enemies.push_back(make_jaw_worm(rng));
+  s.enemies.push_back(make_jaw_worm(rng));
+  ASSERT_EQ(s.enemies.size(), 2u);
+
+  std::vector<int> before;
+  for (const Enemy& e : s.enemies) {
+    ASSERT_GT(e.hp, 0) << "a freshly built Jaw Worm should be alive";
+    before.push_back(e.hp);
+  }
+
+  exhaust_a_card(s);
+
+  for (size_t i = 0; i < s.enemies.size(); ++i) {
+    EXPECT_EQ(s.enemies[i].hp, before[i] - kCharonsAshesDamage)
+        << "enemy in slot " << i;
+  }
+}
+
+TEST(RelicTriggers, WithoutCharonsAshesExhaustingIsSilent) {
+  CombatState s = bare_fight();
+  const int before = s.enemies[0].hp;
+  exhaust_a_card(s);
+  EXPECT_EQ(s.enemies[0].hp, before);
+}
+
+TEST(RelicTriggers, CharonsAshesFiresOncePerExhaust) {
+  CombatState s = fight_with({RelicId::CharonsAshes});
+  const int before = s.enemies[0].hp;
+  exhaust_a_card(s);
+  exhaust_a_card(s);
+  EXPECT_EQ(s.enemies[0].hp, before - 2 * kCharonsAshesDamage);
+}
+
+// Fixed damage, not an attack. StS uses createDamageMatrix(3, true) with
+// DamageType.THORNS, so Strength does not scale it — and if this ever moves to
+// the attack path, this is the assertion that notices.
+TEST(RelicTriggers, CharonsAshesIsUnscaledByStrength) {
+  CombatState s = fight_with({RelicId::CharonsAshes});
+  s.character.powers[Power::Strength] = 5;
+  const int before = s.enemies[0].hp;
+
+  exhaust_a_card(s);
+
+  EXPECT_EQ(s.enemies[0].hp, before - kCharonsAshesDamage)
+      << "Strength leaked into fixed damage";
+}
+
+TEST(RelicTriggers, CharonsAshesIsUnscaledByVulnerable) {
+  CombatState s = fight_with({RelicId::CharonsAshes});
+  s.enemies[0].debuffs[Debuff::Vulnerable] = 3;
+  const int before = s.enemies[0].hp;
+
+  exhaust_a_card(s);
+
+  EXPECT_EQ(s.enemies[0].hp, before - kCharonsAshesDamage)
+      << "Vulnerable scaled damage that is not an attack";
+}
+
+TEST(RelicTriggers, ChampionBeltAddsWeakAlongsideVulnerable) {
+  CombatState s = fight_with({RelicId::ChampionBelt});
+
+  debuff_enemy(s, 0, Debuff::Vulnerable, 2);
+
+  EXPECT_EQ(get_status(s.enemies[0].debuffs, Debuff::Vulnerable), 2);
+  EXPECT_EQ(get_status(s.enemies[0].debuffs, Debuff::Weak), kChampionBeltWeak);
+}
+
+TEST(RelicTriggers, WithoutChampionBeltVulnerableBringsNoWeak) {
+  CombatState s = bare_fight();
+  debuff_enemy(s, 0, Debuff::Vulnerable, 2);
+  EXPECT_EQ(get_status(s.enemies[0].debuffs, Debuff::Weak), 0);
+}
+
+// ONE Weak per application, whatever the Vulnerable stack — ChampionsBelt's
+// EFFECT is the constant 1, not a multiple of what was applied.
+TEST(RelicTriggers, ChampionBeltAddsOneWeakNotOnePerStack) {
+  CombatState s = fight_with({RelicId::ChampionBelt});
+  debuff_enemy(s, 0, Debuff::Vulnerable, 5);
+  EXPECT_EQ(get_status(s.enemies[0].debuffs, Debuff::Weak), 1);
+}
+
+// Vulnerable only. Applying Weak directly must not chain into a second Weak,
+// which is the shape a careless "any debuff" reading would produce.
+TEST(RelicTriggers, ChampionBeltIgnoresOtherDebuffs) {
+  CombatState s = fight_with({RelicId::ChampionBelt});
+  debuff_enemy(s, 0, Debuff::Weak, 1);
+  EXPECT_EQ(get_status(s.enemies[0].debuffs, Debuff::Weak), 1)
+      << "the relic chained off its own Weak";
+}
+
+// Artifact suppresses BOTH halves. StS guards on !target.hasPower("Artifact")
+// before firing, so a negated Vulnerable grants no Weak either — the natural
+// misreading being "the Vulnerable is eaten but the Weak still lands".
+TEST(RelicTriggers, ArtifactBlocksChampionBeltsWeakAsWellAsTheVulnerable) {
+  CombatState s = fight_with({RelicId::ChampionBelt});
+  s.enemies[0].powers[Power::Artifact] = 1;
+
+  debuff_enemy(s, 0, Debuff::Vulnerable, 2);
+
+  EXPECT_EQ(get_status(s.enemies[0].debuffs, Debuff::Vulnerable), 0);
+  EXPECT_EQ(get_status(s.enemies[0].debuffs, Debuff::Weak), 0)
+      << "the Weak slipped past the charge that ate the Vulnerable";
+  EXPECT_EQ(get_status(s.enemies[0].powers, Power::Artifact), 0)
+      << "exactly one charge should have been spent";
+}
+
+// Receiving Vulnerable is not applying it. StS requires source.isPlayer and
+// target != source; here the player branch simply never consults the relic.
+TEST(RelicTriggers, ChampionBeltDoesNotFireWhenTheENEMYDebuffsYou) {
+  CombatState s = fight_with({RelicId::ChampionBelt});
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::ApplyDebuff};
+  a.target = kPlayerSlot;
+  a.debuff = Debuff::Vulnerable;
+  a.amount = 2;
+  q.push_back(a);
+  drain(s, q, ctx);
+
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::Vulnerable), 2);
+  EXPECT_EQ(get_status(s.character.debuffs, Debuff::Weak), 0)
+      << "the player weakened themselves by being made Vulnerable";
 }
 
 }  // namespace

@@ -178,6 +178,22 @@ inline constexpr int kEternalFeatherHeal = 3;
 inline constexpr int kMagicFlowerHealNumerator = 3;
 inline constexpr int kMagicFlowerHealDenominator = 2;
 
+// Charon's Ashes: 3 damage to ALL enemies whenever a card is exhausted.
+// THORNS-type in StS — `createDamageMatrix(3, true)`, the same call Bird-Faced
+// Urn's neighbour uses — so it is unscaled by Strength, Weak and Vulnerable and
+// cannot trigger an enemy's Thorns. DamageAllEnemies already means exactly that
+// here, so the property holds by construction rather than by remembering it.
+inline constexpr int kCharonsAshesDamage = 3;
+
+// Champion Belt: 1 Weak alongside every Vulnerable the PLAYER applies to an
+// enemy.
+//
+// Suppressed entirely when the target holds Artifact. StS guards on
+// `!target.hasPower("Artifact")` BEFORE the charge is spent (ApplyPowerAction),
+// so an Artifact-bearing enemy eats the Vulnerable and gets no Weak either —
+// not "the Vulnerable is negated but the Weak lands".
+inline constexpr int kChampionBeltWeak = 1;
+
 // The card-play counter relics come in TWO kinds, and the difference is the
 // whole of their design:
 //

@@ -173,7 +173,7 @@ already uses, where "the card only says which rule applies."
 | Turnip | cannot gain Frail |
 | The Boot ⚠️ | outgoing unblocked attack damage floor |
 | PaperPhrog, StrikeDummy | damage calculation |
-| ChampionBelt | Vulnerable also applies Weak |
+| ~~ChampionBelt~~ | ⚠️ **miscategorised here** — it is a TRIGGER, not a query modifier. `ApplyPowerAction` calls the relic's `onTrigger` to apply a *separate* Weak; nothing computes a modified value. Wired in §6.17. |
 | BlueCandle, MedicalKit | card playability / cost |
 | Calipers | block retention |
 | RunicPyramid | end-of-turn discard |
@@ -245,7 +245,7 @@ per §1.
 
 ---
 
-## 7. Status: 97 of 140 wired
+## 7. Status: 99 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -278,7 +278,7 @@ have nothing to do with relics**, and those blockers are shared:
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed) |
-| **Nothing blocking — just unwritten** | **~20**: Unceasing Top, Champion Belt, Charon's Ashes, Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest, Dead Branch, Snecko Eye, Ancient Tea Set, Pocketwatch, Chemical X, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them. **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
+| **Nothing blocking — just unwritten** | **~18**: Unceasing Top (its own task — the trigger point is a post-drain check in `apply_action`, so it is not the drop-in the others are), Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest, Dead Branch, Snecko Eye, Ancient Tea Set, Pocketwatch, Chemical X, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them. **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
 | **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
@@ -969,10 +969,99 @@ candidate list and a run without the relic draws exactly what it drew before.
 The whole suite staying green with no expectation changes is the evidence for
 that, not an assumption about it.
 
-**Testing note, since this is where the §6.14 trap would have recurred.** A
-`RewardSource::Boss` reward bypasses the rarity roll and is always Rare (§4.2),
-which makes the *pool* deterministic while the draw stays random — so the tests
-assert invariants true of every draw ("every offered card is in Ironclad +
-Colorless") rather than what a seed produces. The one sweep asserts that some
-colorless card is offered across 40 seeds, and that is a property of the pool's
-composition, identical on every platform, not of any seed's output.
+⚠️ **Testing note — and the first version of this note was wrong.**
+
+The widening is proved DIRECTLY on `reward_pool`, which was lifted out of an
+anonymous namespace into `run_state.h` so a test can call it. It is a pure
+function, so membership is checked exhaustively: every Ironclad rare still
+present, every colorless rare added, the Common pool untouched, and the Ironclad
+ids still at their original indices (which is what makes a run without the relic
+draw exactly what it drew before).
+
+The first version instead drew rewards across 40 seeds and asserted that some
+colorless card turned up, defended right here as "a property of the pool's
+composition, identical on every platform". That defence was wrong in kind rather
+than in degree: it is a probability argument about a fact the RNG has nothing to
+do with, and dressing it in a hypergeometric calculation made it look rigorous.
+Rob's rule, now in CLAUDE.md: **unless the randomness itself is under test, a
+test must not depend on it — period.**
+
+What remains seed-driven is one integration test asserting an invariant true of
+every draw — every offered card lies inside Ironclad + Colorless. A loop over
+seeds is fine there, because the assertion holds for all of them.
+
+### 6.17 Charon's Ashes and Champion Belt: a dead hook, and a miscategorisation
+
+Two combat-layer relics that drop into sites the engine already had. **Unceasing
+Top was planned as the third and split out** (task, Rob's call): its trigger is a
+post-drain check in `apply_action`, the hot path M2's throughput number is
+measured on, so it gets its own batch and its own measurement rather than riding
+along.
+
+**Charon's Ashes: the hook existed and nothing fired it.** `Hook::CardExhausted`
+was already declared and already fired for *powers* — Feel No Pain and Dark
+Embrace — but `fire_relic_hooks` was never called with it. Exactly the §6.10
+shape. So most of this relic was one line of wiring at the `ExhaustCard`
+executor, and the arm itself is four.
+
+It fires on ANY exhaust, not only a played card's, which falls out of hanging off
+the executor rather than off the play path. The damage is `DamageAllEnemies`, the
+engine's fixed-damage path, so "unscaled by Strength, Weak and Vulnerable, and
+cannot trigger an enemy's Thorns" holds **by construction** rather than by
+remembering to exclude them — which is what StS's `createDamageMatrix(3, true)`
+with `DamageType.THORNS` means, and what the wiki's consequences confirm (the
+damage does not change Writhing Mass' intent, and does not make the player take
+Thorns damage). Two tests pin the Strength and Vulnerable cases, because that
+property would break silently if it ever moved to the attack path.
+
+⚠️ **§3.3 had Champion Belt in the wrong category**, listed under "Query
+modifiers — not triggers at all" as *"Vulnerable also applies Weak"*. It is a
+trigger: `ApplyPowerAction` calls the relic's `onTrigger`, which applies a
+separate Weak power. Nothing computes a modified value. The §3.3 row is now
+struck through and corrected.
+
+**Champion Belt's guard is five conditions, and four collapse here.** StS:
+
+    hasRelic("Champion Belt") && source != null && source.isPlayer
+      && target != source && powerToApply.ID.equals("Vulnerable")
+      && !target.hasPower("Artifact")
+
+`source.isPlayer` and `target != source` are automatic in our `ApplyDebuff`
+enemy branch, because nothing in this engine applies a debuff from one enemy to
+another. The Vulnerable check is explicit. And the Artifact guard coincides with
+`apply_debuff`'s return value, which is false in exactly the negated case — so
+hanging the relic off the *successful* branch is faithful rather than
+convenient.
+
+That last one is the trap worth naming: the natural misreading is "the Vulnerable
+was negated, but the Weak still lands". StS checks `!hasPower("Artifact")`
+*before* the charge is spent, so an Artifact-bearing enemy gets neither.
+`ArtifactBlocksChampionBeltsWeakAsWellAsTheVulnerable` pins it, including that
+exactly one charge is consumed.
+
+**The pushed Weak re-enters the same executor, and that is correct rather than
+accidental.** Sadistic Nature fires on ANY debuff applied to an enemy, so the
+Weak earns its damage exactly as a Weak from a card would. It cannot recurse:
+Weak is not Vulnerable, so the second pass returns immediately.
+
+**A naming trap for the next person.** The class file is `ChampionsBelt.java`
+(plural) while the in-game ID is `"Champion Belt"` (singular), which is what our
+enum uses. A `gh api` fetch of `ChampionBelt.java` 404s; the code search is what
+finds it.
+
+⚠️ **The multi-enemy fixture is BUILT, not sampled**, and the first draft got
+this wrong twice. Charon's Ashes hits *all* enemies, so the test needs more than
+one — but `fight_with` samples its encounter from the Weak pool, which holds
+single enemies as well as groups, so a fixed seed can give a lone Jaw Worm and
+the loop runs once, passing while proving nothing.
+
+The first correction swept seeds until a group appeared, justified as "a
+property of the pool's composition". That justification does not hold: WHICH
+encounter a seed draws is platform-dependent (ROB-100), so the sweep could pass
+locally and fail on CI for reasons unrelated to the relic — the Chrysalis shape
+again (§6.14), one layer up. Rob caught it before it shipped.
+
+The fixture now pushes two Jaw Worms directly, which is what `test_choice.cc`
+already does for Sword Boomerang, the other fixed-damage-to-everything effect.
+The general rule: when a test needs a particular SHAPE of state, construct that
+shape. Sampling until the shape appears makes the test depend on the sampler.
