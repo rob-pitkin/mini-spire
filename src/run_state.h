@@ -47,6 +47,19 @@ inline constexpr int kCardRewardSize = 3;
 // rare (§4.2).
 enum class RewardSource { Monster, Elite, Boss };
 
+// The pool a CARD REWARD draws from at one rarity. `prismatic` widens it to
+// include the Colorless cards of that rarity (§6.16, §6.8's ruling).
+//
+// Declared here rather than left file-local so the widening can be tested
+// DIRECTLY: it is a pure function, so membership is provable exhaustively
+// instead of being sampled from draws. The earlier version of that test drew
+// rewards across 40 seeds and asserted a colorless card turned up, which made
+// an RNG-independent fact depend on the RNG.
+//
+// NOT the shop's pool. `pool_of` in run_state.cc feeds the shop's typed slots,
+// and Prismatic Shard must not touch shop stock.
+std::vector<CardId> reward_pool(CardRarity rarity, bool prismatic);
+
 // What you can do at a campfire (§8).
 //
 // Five, not six: Recall obtains the Ruby Key and is Act 4 content, so it can

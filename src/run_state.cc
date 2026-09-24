@@ -554,6 +554,8 @@ std::vector<CardId> pool_of(CardRarity rarity, CardType type) {
   return out;
 }
 
+}  // namespace
+
 // What a CARD REWARD draws from at one rarity. Prismatic Shard widens it to
 // include the Colorless cards of that rarity.
 //
@@ -600,8 +602,6 @@ std::vector<CardId> reward_pool(CardRarity rarity, bool prismatic) {
   }
   return out;
 }
-
-}  // namespace
 
 void RunState::generate_shop() {
   shop_cards.clear();

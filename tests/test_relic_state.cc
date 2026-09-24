@@ -990,8 +990,65 @@ TEST(RewardRelics, WithoutPrismaticShardRewardsAreIroncladOnly) {
   }
 }
 
-TEST(RewardRelics, PrismaticShardWidensRewardsToColorless) {
-  int colorless_offered = 0;
+// The widening, proved DIRECTLY on the pool function. reward_pool is pure, so
+// membership is exhaustive: no seed, no probability, no platform.
+//
+// This replaces a version that drew rewards across 40 seeds and asserted some
+// colorless card turned up, defended as "a property of the pool's composition".
+// That was still a probabilistic argument about a fact the RNG has nothing to do
+// with. The rule is absolute: unless the randomness IS the subject, a test must
+// not depend on it.
+TEST(RewardRelics, PrismaticShardWidensTheRarePool) {
+  const std::vector<CardId> without = reward_pool(CardRarity::Rare, false);
+  const std::vector<CardId> with = reward_pool(CardRarity::Rare, true);
+
+  EXPECT_EQ(without, IRONCLAD_RARE_POOL) << "the unheld pool must be untouched";
+  ASSERT_EQ(with.size(),
+            IRONCLAD_RARE_POOL.size() + COLORLESS_RARE_POOL.size());
+  for (CardId id : IRONCLAD_RARE_POOL) {
+    EXPECT_TRUE(in_pool(with, id)) << card_name(id) << " was dropped";
+  }
+  for (CardId id : COLORLESS_RARE_POOL) {
+    EXPECT_TRUE(in_pool(with, id)) << card_name(id) << " was not added";
+  }
+}
+
+TEST(RewardRelics, PrismaticShardWidensTheUncommonPool) {
+  const std::vector<CardId> without = reward_pool(CardRarity::Uncommon, false);
+  const std::vector<CardId> with = reward_pool(CardRarity::Uncommon, true);
+
+  EXPECT_EQ(without, IRONCLAD_UNCOMMON_POOL);
+  ASSERT_EQ(with.size(),
+            IRONCLAD_UNCOMMON_POOL.size() + COLORLESS_UNCOMMON_POOL.size());
+  for (CardId id : COLORLESS_UNCOMMON_POOL) {
+    EXPECT_TRUE(in_pool(with, id)) << card_name(id) << " was not added";
+  }
+}
+
+// Colorless has no common tier, so a Common roll is untouched even while the
+// relic is held (§6.16). Real StS widens Common too, across the other
+// characters' cards; ours cannot, which is a consequence of §6.8's divergence
+// rather than a separate decision.
+TEST(RewardRelics, PrismaticShardLeavesTheCommonPoolAlone) {
+  EXPECT_EQ(reward_pool(CardRarity::Common, true), IRONCLAD_COMMON_POOL);
+  EXPECT_EQ(reward_pool(CardRarity::Common, false), IRONCLAD_COMMON_POOL);
+}
+
+// Appended, not reordered: an Ironclad id keeps its index, so a run without the
+// relic draws exactly what it drew before the relic existed. Asserted rather
+// than inferred from the suite staying green.
+TEST(RewardRelics, PrismaticShardAppendsWithoutReordering) {
+  const std::vector<CardId> with = reward_pool(CardRarity::Rare, true);
+  ASSERT_GE(with.size(), IRONCLAD_RARE_POOL.size());
+  for (size_t i = 0; i < IRONCLAD_RARE_POOL.size(); ++i) {
+    EXPECT_EQ(with[i], IRONCLAD_RARE_POOL[i]) << "index " << i;
+  }
+}
+
+// Integration: every card a reward offers stays inside the widened pool. An
+// invariant true of every draw, so no seed and no standard library can make it
+// flaky.
+TEST(RewardRelics, PrismaticShardRewardsStayInsideIroncladPlusColorless) {
   for (uint64_t seed = 0; seed < 40; ++seed) {
     RunState run = RunState::start(seed);
     run.obtain_relic(RelicId::PrismaticShard);
@@ -1002,20 +1059,8 @@ TEST(RewardRelics, PrismaticShardWidensRewardsToColorless) {
                   in_pool(COLORLESS_RARE_POOL, c.card_id))
           << card_name(c.card_id) << " is outside Ironclad + Colorless (seed "
           << seed << ")";
-      if (in_pool(COLORLESS_RARE_POOL, c.card_id)) ++colorless_offered;
     }
   }
-  // The meaningfulness guard, and yes it is a sweep. It is deliberately NOT the
-  // trap §6.14 records: that one asserted WHICH card a given seed produces,
-  // which differs between standard libraries. This asserts a property of the
-  // POOL, which is identical on every platform.
-  //
-  // Counted, not estimated: 16 Ironclad rares + 15 colorless rares = 31
-  // candidates, of which nearly half are colorless. One reward draws 3 WITHOUT
-  // replacement, so an all-Ironclad reward has probability
-  // C(16,3)/C(31,3) = 560/4495, about 12%. Across 40 seeds that is 0.12^40.
-  EXPECT_GT(colorless_offered, 0)
-      << "the relic never widened the pool — is it wired at all?";
 }
 
 // Prismatic Shard does not touch SHOP stock. StS puts the check inside the

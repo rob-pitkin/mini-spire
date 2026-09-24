@@ -1254,16 +1254,11 @@ TEST(Colorless, ShuffledInCardsAreStillFreeNextTurn) {
   EXPECT_EQ(free_cards, 3) << "all three survive into the next turn";
 }
 
-// The already-free case, exercised deliberately instead of left to whichever
-// three Skills one platform's RNG happens to pick. 7 of the 28 Skills in the
-// generation pool cost 0 — Warcry, Flex, Intimidate, Rage, Battle Trance,
-// Bloodletting, Offering — so a sweep hits the branch reliably while any single
-// seed may miss it. That difference is exactly what passed on macOS and failed
-// on Linux CI: std::uniform_int_distribution is not specified to agree across
-// libstdc++ and libc++, so the same seed generates different cards (ROB-100).
-TEST(Colorless, ChrysalisLeavesAlreadyFreeSkillsCostingNothing) {
-  int already_free_generated = 0;
-
+// Whatever is generated costs nothing to play. An invariant true of every draw,
+// so no seed and no standard library can make it flaky — which is the whole
+// point, since asserting cost_override directly is what passed on macOS and
+// failed on Linux CI (ROB-100).
+TEST(Colorless, ChrysalisMakesEveryGeneratedSkillFree) {
   for (uint32_t seed = 0; seed < 25; ++seed) {
     CombatState s = fight_holding(CardId::Chrysalis, seed);
     s.draw_pile.clear();
@@ -1274,13 +1269,25 @@ TEST(Colorless, ChrysalisLeavesAlreadyFreeSkillsCostingNothing) {
     for (const Card& c : s.draw_pile) {
       EXPECT_EQ(instance_effective_cost(s, c), 0)
           << card_name(c.card_id) << " at seed " << seed;
-      if (CARD_DATABASE.at(c.card_id).cost == 0) ++already_free_generated;
     }
   }
+}
 
-  EXPECT_GT(already_free_generated, 0)
-      << "25 seeds generated no already-free Skill, so the branch that skips "
-         "the override went untested on this platform";
+// GenerateCards skips the cost override for a card that already costs 0, and
+// that branch is REACHABLE because the pool contains 0-cost Skills. Asserted as
+// a fact about the data, with no RNG involved.
+//
+// An earlier version of this counted 0-cost Skills generated across 25 seeds
+// and required at least one. That made an RNG-independent fact depend on the
+// RNG — the same defect the test was written to fix, one level up.
+TEST(Colorless, TheGeneratableSkillPoolContainsAlreadyFreeSkills) {
+  int free_skills = 0;
+  for (CardId id : generatable_class_skill_pool()) {
+    if (CARD_DATABASE.at(id).cost == 0) ++free_skills;
+  }
+  EXPECT_GT(free_skills, 0)
+      << "no 0-cost Skill in the pool, so GenerateCards' skip-the-override "
+         "branch is unreachable and its guard is dead code";
 }
 
 // ================================= batch 4: choices over the draw pile

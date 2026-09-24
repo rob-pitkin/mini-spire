@@ -168,6 +168,43 @@ The vacuous pass is the more dangerous of the two. A failing test reports
 itself. A test that holds for the wrong reason reports nothing, and the only way
 to tell them apart is to break the code on purpose and confirm the test notices.
 
+**Stronger form, because the rule above was read too loosely.** *Unless the
+randomness itself is the thing under test, a test must not depend on it —
+period.* (Rob, 2026-09-24.)
+
+"Assert an invariant true of every draw" is correct. "Sweep enough seeds that it
+is overwhelmingly likely" is not, however good the odds, and the odds are how
+this keeps getting rationalized. Three times in one session a sweep was defended
+as safe:
+
+- **Which card** a draw produced — 25 seeds, "at least one already-free Skill".
+- **Which pool member** was offered — 40 seeds, "nearly half the candidates are
+  colorless, so 0.12^40".
+- **Which encounter** was sampled — 30 seeds, "the Weak pool contains groups".
+
+Each defence was a probability argument about a fact the RNG had nothing to do
+with. The third is the clearest: the test needed a two-enemy fight, and *which
+encounter a seed draws is exactly the platform-dependent thing* ROB-100 is
+about, so the sweep reintroduced the bug one layer up.
+
+So, in order of preference:
+
+1. **Test the pure function.** If the behaviour is "the pool is widened", call
+   the pool function and check membership exhaustively. Expose a file-local
+   helper if that is what it takes — `reward_pool` was lifted out of an
+   anonymous namespace for exactly this.
+2. **Construct the state you need.** When a test needs a particular *shape* —
+   two enemies, a 0-cost card in hand — build it. `s.enemies.push_back(
+   make_jaw_worm(rng))` is deterministic; sampling until a group appears makes
+   the test depend on the sampler.
+3. **Assert an invariant true of every draw.** Fine, and a loop over seeds is
+   fine here, because the assertion holds for all of them.
+4. **Assert a fact about the data.** "The pool contains a 0-cost Skill" proves a
+   branch is reachable without generating anything.
+
+The tell: if a test's assertion could fail on a different standard library while
+the engine is correct, it is the wrong assertion.
+
 ### The interaction model
 
 Claude is used in three modes:
