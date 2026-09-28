@@ -157,7 +157,7 @@ No combat hook at all; these fire between fights.
 | **Gold change** | 2 | Ectoplasm, MawBank |
 | **Event options** | 4 | BloodVial, GoldenIdol, OddMushroom, WarpedTongs |
 | **Face Trader** | 5 | CultistHeadpiece, FaceOfCleric, GremlinVisage, NlothsHungryFace, SsserpentHead |
-| **Map / room resolution** | 2 | JuzuBracelet, TinyChest — ⚠️ NOT implemented. The `?`-room drift machinery exists in `resolve_unknown_room`; the relics that modify it do not. An earlier revision of this table claimed otherwise. |
+| **Map / room resolution** | 2 | JuzuBracelet, TinyChest — ✅ wired in `resolve_unknown_room` (§6.18). An earlier revision of this table claimed they were implemented before they were. |
 | **AfterBattle** | 1 | FaceOfCleric |
 | **Neow** | 1 | NeowsLament |
 
@@ -245,7 +245,7 @@ per §1.
 
 ---
 
-## 7. Status: 99 of 140 wired
+## 7. Status: 101 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -264,7 +264,7 @@ tree appears only on a comment line, so the discrepancy is not comment noise.
 One of the two counts used a different rule and neither recorded which, which is
 the whole argument for pinning the command here.
 
-The 52 remaining are not one backlog. **Most are blocked on engine pieces that
+The 39 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
@@ -278,7 +278,7 @@ have nothing to do with relics**, and those blockers are shared:
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed) |
-| **Nothing blocking — just unwritten** | **~18**: Unceasing Top (its own task — the trigger point is a post-drain check in `apply_action`, so it is not the drop-in the others are), Singing Bowl, Matryoshka, Wing Boots, Juzu Bracelet, Tiny Chest, Dead Branch, Snecko Eye, Ancient Tea Set, Pocketwatch, Chemical X, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them. **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
+| **Nothing blocking — just unwritten** | **15** — an exact count of the list that follows, not an estimate. The `~` this row carried for several batches was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. Juzu Bracelet and Tiny Chest shipped in §6.18. Unceasing Top (its own task — the trigger point is a post-drain check in `apply_action`, so it is not the drop-in the others are), Singing Bowl, Matryoshka, Wing Boots, Dead Branch, Snecko Eye, Ancient Tea Set, Pocketwatch, Chemical X, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them. **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
 | **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
@@ -1065,3 +1065,54 @@ The fixture now pushes two Jaw Worms directly, which is what `test_choice.cc`
 already does for Sword Boomerang, the other fixed-damage-to-everything effect.
 The general rule: when a test needs a particular SHAPE of state, construct that
 shape. Sampling until the shape appears makes the test depend on the sampler.
+
+### 6.18 Juzu Bracelet and Tiny Chest: two relics that rewrite a `?` roll
+
+Both live entirely in decompiled `EventHelper.roll`; the relic classes carry no
+behaviour beyond Tiny Chest's `onEquip` setting its counter to 0. wiki.gg agrees
+("Regular enemy combats are no longer encountered in ? rooms"; "Every 4th ? room
+is a Treasure room") but is silent on everything below, so the source is the
+only authority for these details. Both are wired in `resolve_unknown_room`.
+
+**The roll is always drawn, once.** Neither relic re-rolls or skips the draw.
+Our Event stream is also rebuilt from `(run_seed, floor)` on every call, so no
+relic could shift a later roll even if it did.
+
+**Tiny Chest** increments its counter on EVERY `?`, the forced one included, and
+at 4 wraps to 0 and forces Treasure. The force happens after the band lookup and
+before drift, so the forced chest drifts as a Treasure result: treasure resets,
+monster and shop rise.
+
+**Juzu Bracelet replaces the room, not the drift.** A Monster result becomes an
+Event, with no re-roll — the monster band's whole share goes to Event, and shop
+and treasure odds are unchanged. The monster chance still **resets** to 0.10, as
+if the fight had happened, because StS swaps the choice inside the same branch
+that resets the chance. Swapping before drift would raise it instead. The
+outcome difference is smaller than that sounds: every monster roll becomes an
+Event either way, and the shop and treasure bands keep their widths, only
+shifting upward. They start losing share only once the monster band grows far
+enough to push them past 100 — so the wrong ordering is mostly invisible in
+play and would survive any test that only checked room types.
+`JuzuBraceletTurnsAMonsterIntoAnEventAndStillResetsTheChance` asserts the
+chance itself for that reason.
+
+Juzu only touches monsters, so a chest Tiny Chest forces stays a chest when both
+are held.
+
+**The tests construct the roll, not sample it.** Setting the monster band to
+cover every possible roll makes the outcome independent of what the stream
+draws. The band is 1.01, not 1.0: `uniform_real_distribution<float>` may return
+exactly 1.0 on some standard libraries, which reads as 100 and would fall
+through to Event. A control test without Juzu confirms the stacked band really
+produces a Monster, so the Juzu test cannot pass on a roll that was never one.
+
+⚠️ **Found while sourcing: relic room hooks fire at two different moments.**
+`AbstractDungeon.nextRoomTransition` calls `onEnterRoom` BEFORE the `?` is
+rolled — the room is still the unresolved `EventRoom` — and `justEnteredRoom`
+after it, on the resolved room. Our `fire_room_entry_relics` runs once, after
+resolution. Every relic wired today is unaffected: Maw Bank fires on any room,
+Eternal Feather on rest sites (a `?` never becomes one), and Meal Ticket uses
+`justEnteredRoom`, so a `?` that becomes a shop does heal. **Ssserpent Head is
+affected**: its `onEnterRoom` pays 50 gold on every `?` NODE, including ones
+that roll into a fight, so it must read the map symbol rather than the resolved
+room. It is unreachable until events exist; fix it when it is wired.

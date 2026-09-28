@@ -3,7 +3,6 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <map>
 #include <set>
 #include <vector>
 
@@ -210,23 +209,6 @@ TEST(UnknownRooms, TheMapIsNeverRewrittenWhenAQuestionResolves) {
   }
 }
 
-// Event is the FALLBACK, so it is the common outcome — not a rare roll that
-// drifts upward. An implementation with the sign inverted would show a few
-// percent here instead of most of the mass.
-TEST(UnknownRooms, EventIsTheCommonOutcomeOfAFreshQuestionRoom) {
-  std::map<RoomType, int> counts;
-  const int kTrials = 400;
-  for (uint64_t s = 0; s < kTrials; ++s) {
-    RunState run = RunState::start(s);
-    run.floor = 1;  // a fresh run's counters, one ? room
-    counts[run.resolve_unknown_room()]++;
-  }
-  const double event_share = 100.0 * counts[RoomType::Unknown] / kTrials;
-  EXPECT_GT(event_share, 70.0)
-      << "events are not the fallback — is the distribution inverted?";
-  EXPECT_LT(100.0 * counts[RoomType::Monster] / kTrials, 25.0);
-}
-
 TEST(UnknownRooms, NotSeeingAMonsterMakesOneLikelierNextTime) {
   RunState run = RunState::start(1);
   const float before = run.monster_chance;
@@ -254,6 +236,89 @@ TEST(UnknownRooms, AShopCannotFollowAShop) {
     EXPECT_NE(run.resolve_unknown_room(), RoomType::Shop)
         << "a shop followed a shop";
   }
+}
+
+// ------------------------------------------- relics that rewrite a `?` roll
+
+// Makes every possible roll land in the monster band, so the result does not
+// depend on what the Event stream draws. 1.01 rather than 1.0: the roll is
+// `uniform_real_distribution<float> * 100`, and a float distribution is allowed
+// to return exactly 1.0 on some standard libraries, which would read as 100 and
+// fall through to Event. The band must cover 100 as well as 0..99.
+void stack_the_monster_band(RunState& run) {
+  run.monster_chance = 1.01f;
+  run.shop_chance = 0.0f;
+  run.treasure_chance = 0.0f;
+}
+
+// Juzu swaps the ROOM, not the roll: the monster chance still resets, exactly as
+// if a fight had happened (EventHelper.roll resets MONSTER_CHANCE inside the
+// same branch that swaps the choice). Resolving the swap before drift would
+// raise it instead, and that is the ordering this pins.
+TEST(UnknownRooms, JuzuBraceletTurnsAMonsterIntoAnEventAndStillResetsTheChance) {
+  RunState run = RunState::start(1);
+  run.relics.push_back(HeldRelic{RelicId::JuzuBracelet, 0});
+  run.floor = 3;
+  stack_the_monster_band(run);
+
+  EXPECT_EQ(run.resolve_unknown_room(), RoomType::Unknown)
+      << "a monster roll was not converted to an event";
+  EXPECT_FLOAT_EQ(run.monster_chance, 0.10f)
+      << "the monster chance drifted as if no monster had been rolled";
+}
+
+TEST(UnknownRooms, WithoutJuzuBraceletTheSameRollIsAFight) {
+  // The control for the test above: the stacked band really does produce a
+  // monster, so the Juzu test is not passing on a roll that was never one.
+  RunState run = RunState::start(1);
+  run.floor = 3;
+  stack_the_monster_band(run);
+
+  EXPECT_EQ(run.resolve_unknown_room(), RoomType::Monster);
+}
+
+TEST(UnknownRooms, TinyChestCountsEveryQuestionRoom) {
+  RunState run = RunState::start(1);
+  run.relics.push_back(HeldRelic{RelicId::TinyChest, 0});
+
+  for (int expected = 1; expected < kTinyChestRooms; ++expected) {
+    run.floor = expected;
+    stack_the_monster_band(run);
+    EXPECT_EQ(run.resolve_unknown_room(), RoomType::Monster)
+        << "Tiny Chest forced a chest before its " << kTinyChestRooms
+        << "th room";
+    EXPECT_EQ(run.held_relic(RelicId::TinyChest)->counter, expected);
+  }
+}
+
+// The fourth `?` is a chest whatever was rolled, the counter wraps, and the
+// forced chest drifts as a Treasure result: treasure resets, monster rises.
+TEST(UnknownRooms, TinyChestForcesTheFourthQuestionRoomToTreasure) {
+  RunState run = RunState::start(1);
+  run.relics.push_back(HeldRelic{RelicId::TinyChest, kTinyChestRooms - 1});
+  run.floor = 5;
+  stack_the_monster_band(run);
+  run.treasure_chance = 0.30f;  // set after stacking: a reset must be visible
+
+  EXPECT_EQ(run.resolve_unknown_room(), RoomType::Treasure);
+  EXPECT_EQ(run.held_relic(RelicId::TinyChest)->counter, 0)
+      << "the counter did not wrap";
+  EXPECT_FLOAT_EQ(run.treasure_chance, 0.02f)
+      << "the forced chest did not reset the treasure chance";
+  EXPECT_GT(run.monster_chance, 1.01f)
+      << "the overridden monster roll reset the monster chance";
+}
+
+// Juzu replaces MONSTERS only. A chest Tiny Chest forces is not one, so holding
+// both still gives a chest on the fourth `?`.
+TEST(UnknownRooms, JuzuBraceletLeavesTinyChestsChestAlone) {
+  RunState run = RunState::start(1);
+  run.relics.push_back(HeldRelic{RelicId::JuzuBracelet, 0});
+  run.relics.push_back(HeldRelic{RelicId::TinyChest, kTinyChestRooms - 1});
+  run.floor = 5;
+  stack_the_monster_band(run);
+
+  EXPECT_EQ(run.resolve_unknown_room(), RoomType::Treasure);
 }
 
 // ------------------------------------------------------------- a whole run

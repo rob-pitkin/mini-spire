@@ -160,6 +160,11 @@ inline constexpr int kTinyHouseGold = 50;
 inline constexpr int kEternalFeatherCardsPer = 5;
 inline constexpr int kEternalFeatherHeal = 3;
 
+// Tiny Chest turns every 4th `?` room into a Treasure room. The counter counts
+// EVERY `?` entered, the forced chest included, and wraps to 0 when it fires
+// (EventHelper.roll). It starts at 0 on pickup, which HeldRelic's default gives.
+inline constexpr int kTinyChestRooms = 4;
+
 // --- combat-layer relic amounts ---
 
 // Magic Flower multiplies healing by 1.5 — but only DURING COMBAT

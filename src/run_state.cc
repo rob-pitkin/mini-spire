@@ -889,11 +889,28 @@ RoomType RunState::resolve_unknown_room() {
     choice = RoomType::Unknown;
   }
 
-  // Drift applies to the final choice. Note the counter still increments when
-  // an outcome did not happen even though its band was suppressed — a shop
-  // skipped because the last room was a shop still makes shops likelier next
-  // time.
+  // Tiny Chest overrides the roll, it does not replace it: the roll above is
+  // drawn either way, and the forced chest then drifts like any other Treasure
+  // result — treasure resets, monster and shop rise.
+  if (HeldRelic* chest = held_relic(RelicId::TinyChest)) {
+    if (++chest->counter == kTinyChestRooms) {
+      chest->counter = 0;
+      choice = RoomType::Treasure;
+    }
+  }
+
+  // Drift applies to the final choice, with one exception: a monster Juzu
+  // Bracelet swaps away still resets the monster chance. Note the counter still
+  // increments when an outcome did not happen even though its band was
+  // suppressed — a shop skipped because the last room was a shop still makes
+  // shops likelier next time.
   if (choice == RoomType::Monster) {
+    // Juzu swaps the ROOM, not the drift: the chance below still resets as if
+    // a fight had happened (EventHelper.roll does both in this branch). There
+    // is no re-roll — the monster band's whole share becomes Event. Rewriting
+    // `choice` here leaves the shop and treasure drift below unchanged, since
+    // Monster and Event are both "not a shop" and "not a treasure".
+    if (has_relic(RelicId::JuzuBracelet)) choice = RoomType::Unknown;
     monster_chance = 0.10f;
   } else {
     monster_chance += 0.10f;
