@@ -6,7 +6,25 @@
 
 namespace minispire {
 
+void RunState::apply_egg_upgrades(Card& card) const {
+  // StS's `canUpgrade() && !upgraded`. The canUpgrade half is
+  // upgrade_card_in_place's own no-op on a card with no upgrade; the one card it
+  // would still move, SearingBlow5, is already caught here as upgraded.
+  if (is_upgraded(card.card_id)) return;
+  const CardType type = CARD_DATABASE.at(card.card_id).type;
+  if ((has_relic(RelicId::FrozenEgg) && type == CardType::Power) ||
+      (has_relic(RelicId::MoltenEgg) && type == CardType::Attack) ||
+      (has_relic(RelicId::ToxicEgg) && type == CardType::Skill)) {
+    upgrade_card_in_place(card);
+  }
+}
+
 void RunState::add_card(Card card) {
+  // Eggs BEFORE the card joins the deck: StS fires onObtainCard ahead of
+  // souls.obtain, which is what adds it. A card offered by a reward or the shop
+  // was already previewed and arrives upgraded; this call is what catches every
+  // other way into the deck.
+  apply_egg_upgrades(card);
   card.uid = next_card_uid++;
   master_deck.push_back(card);
 
@@ -178,6 +196,21 @@ bool RunState::obtain_relic(RelicId id) {
       break;
     case RelicId::Whetstone:
       upgrade_random_cards(CardType::Attack, 2, id);
+      break;
+
+    // The Eggs upgrade what is ALREADY on offer, not only what comes later.
+    // Two StS paths, one line here: onEquip previews the pending card reward,
+    // and StoreRelic.purchaseRelic previews the shop shelf. Each list is empty
+    // outside its own phase, so walking both is exact.
+    //
+    // An elite that drops an Egg therefore upgrades that fight's card reward:
+    // end_combat collects the relic before the player can take a card, which is
+    // StS's "take the relic first" order (§6.19).
+    case RelicId::FrozenEgg:
+    case RelicId::MoltenEgg:
+    case RelicId::ToxicEgg:
+      for (Card& offer : card_reward) apply_egg_upgrades(offer);
+      for (ShopItem& item : shop_cards) apply_egg_upgrades(item.card);
       break;
 
     // Straight through gain_gold, so Ectoplasm refuses it exactly as it refuses
@@ -750,6 +783,11 @@ void RunState::generate_shop() {
         jitter * kColorlessShopMarkup));
     shop_cards.push_back(item);
   }
+
+  // The Eggs preview the whole shelf, colored and colorless (ShopScreen's
+  // initCards). Last, for the same reason as generate_card_reward's pass:
+  // draw_distinct compares shelf ids against unupgraded pool ids.
+  for (ShopItem& item : shop_cards) apply_egg_upgrades(item.card);
 }
 
 float RunState::shop_price_multiplier() const {
@@ -1263,6 +1301,15 @@ void RunState::generate_card_reward(RewardSource source) {
     // Not in the master deck yet, so no uid: it is an offer, not a possession.
     card_reward.push_back(Card{chosen});
   }
+
+  // The Eggs preview every offer, so the screen shows what will be received
+  // (getRewardCards calls onPreviewObtainCard on each card).
+  //
+  // A SEPARATE PASS, after every card is chosen — as StS does it, over retVal2.
+  // Upgrading inside the loop would break the distinctness filter above, which
+  // compares offered ids against unupgraded pool ids: an offered Bash+ no longer
+  // matches Bash, and the same card could be offered twice.
+  for (Card& offer : card_reward) apply_egg_upgrades(offer);
 }
 
 void RunState::take_card_reward(int index) {

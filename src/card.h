@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "status_effect.h"
@@ -1091,6 +1092,22 @@ inline bool is_upgradable(CardId id) {
   // Searing Blow is upgradable without limit via its instance counter, so it
   // qualifies even though it has no entry in CARD_UPGRADES.
   return CARD_UPGRADES.count(id) > 0 || is_instance_upgradable(id);
+}
+
+// Has this card been upgraded at least once? StS keeps an `upgraded` flag on the
+// instance; here an upgrade is an id swap, so the answer is read off the upgrade
+// graph instead: an id is upgraded exactly when some upgrade edge leads to it.
+//
+// NOT the negation of is_upgradable. The two differ on Searing Blow's ladder —
+// SearingBlowPlus through SearingBlow4 are upgraded AND still upgradable — and
+// that is the case the Egg relics exist to tell apart (`!c.upgraded`).
+inline bool is_upgraded(CardId id) {
+  static const std::unordered_set<CardId> kUpgradedIds = [] {
+    std::unordered_set<CardId> ids;
+    for (const auto& [from, to] : CARD_UPGRADES) ids.insert(to);
+    return ids;
+  }();
+  return kUpgradedIds.count(id) > 0;
 }
 
 // Upper bound on simultaneous options. Set to kNumCardTypes so a pile choice

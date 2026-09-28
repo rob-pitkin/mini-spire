@@ -293,6 +293,15 @@ struct RunState {
   // ONLY place a run-scoped uid is minted.
   void add_card(Card card);
 
+  // Frozen, Molten and Toxic Egg: upgrade `card` if a held Egg covers its type
+  // and it is upgradable and not already upgraded. No RNG.
+  //
+  // Called wherever StS calls onObtainCard OR onPreviewObtainCard — add_card,
+  // and the reward and shop generators — plus on picking up an Egg, over what
+  // is currently on offer. The preview sites are what make the observation
+  // right: a human sees "Bash+" on the reward screen, not "Bash".
+  void apply_egg_upgrades(Card& card) const;
+
   // Starts a run: seeds the RNG and deals the Ironclad the starter deck, each
   // card with its own uid.
   static RunState start(uint64_t run_seed);

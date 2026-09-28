@@ -238,6 +238,18 @@ TEST(UnknownRooms, AShopCannotFollowAShop) {
   }
 }
 
+// Event is the FALLBACK: a roll that lands in no band is an event. Every band
+// emptied, so no roll can land in one — no RNG dependence.
+TEST(UnknownRooms, ARollOutsideEveryBandIsAnEvent) {
+  RunState run = RunState::start(1);
+  run.floor = 3;
+  run.monster_chance = 0.0f;
+  run.shop_chance = 0.0f;
+  run.treasure_chance = 0.0f;
+
+  EXPECT_EQ(run.resolve_unknown_room(), RoomType::Unknown);
+}
+
 // ------------------------------------------- relics that rewrite a `?` roll
 
 // Makes every possible roll land in the monster band, so the result does not

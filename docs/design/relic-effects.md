@@ -146,7 +146,7 @@ No combat hook at all; these fire between fights.
 | trigger | n | relics |
 |---|---|---|
 | **Pickup** (`obtainRelic`) | 21 | Astrolabe, BottledFlame, BottledLightning, BottledTornado, BurningBlood, CallingBell, Cauldron, EmptyCage, LeesWaffle, Mango, MawBank, NeowsLament, Omamori, PandorasBox, Pear, PotionBelt, PrismaticShard, Strawberry, TinyHouse, WarPaint, Whetstone |
-| **ObtainCard** | 5 | CeramicFish, FrozenEgg, MoltenEgg, Omamori, ToxicEgg |
+| **ObtainCard** | 5 | CeramicFish, FrozenEgg, MoltenEgg, Omamori, ToxicEgg — the Eggs also fire on the PREVIEW path (reward and shop generation) and on pickup; §6.19 |
 | **EnterRoom** | 3 | EternalFeather, MawBank, SsserpentHead |
 | **CardReward generation** | 3 | BustedCrown, PrismaticShard, QuestionCard |
 | **CombatReward generation** | 3 | BlackStar, GoldenIdol, PrayerWheel |
@@ -245,7 +245,7 @@ per §1.
 
 ---
 
-## 7. Status: 101 of 140 wired
+## 7. Status: 104 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -264,7 +264,7 @@ tree appears only on a comment line, so the discrepancy is not comment noise.
 One of the two counts used a different rule and neither recorded which, which is
 the whole argument for pinning the command here.
 
-The 39 remaining are not one backlog. **Most are blocked on engine pieces that
+The 36 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
@@ -278,7 +278,7 @@ have nothing to do with relics**, and those blockers are shared:
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed) |
-| **Nothing blocking — just unwritten** | **15** — an exact count of the list that follows, not an estimate. The `~` this row carried for several batches was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. Juzu Bracelet and Tiny Chest shipped in §6.18. Unceasing Top (its own task — the trigger point is a post-drain check in `apply_action`, so it is not the drop-in the others are), Singing Bowl, Matryoshka, Wing Boots, Dead Branch, Snecko Eye, Ancient Tea Set, Pocketwatch, Chemical X, Frozen Egg, Molten Egg, Toxic Egg, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics and the Eggs may each need a card-selection screen at pickup — check before batching them. **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
+| **Nothing blocking — just unwritten** | **12** — an exact count of the list that follows, not an estimate. The `~` this row carried for several batches was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. Juzu Bracelet and Tiny Chest shipped in §6.18, the three Eggs in §6.19. Unceasing Top (its own task — the trigger point is a post-drain check in `apply_action`, so it is not the drop-in the others are), Singing Bowl, Matryoshka, Wing Boots, Dead Branch, Snecko Eye, Ancient Tea Set, Pocketwatch, Chemical X, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics may need a card-selection screen at pickup — check before batching them (the Eggs did not: §6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
 | **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
@@ -1116,3 +1116,57 @@ Eternal Feather on rest sites (a `?` never becomes one), and Meal Ticket uses
 affected**: its `onEnterRoom` pays 50 gold on every `?` NODE, including ones
 that roll into a fight, so it must read the map symbol rather than the resolved
 room. It is unreachable until events exist; fix it when it is wired.
+
+### 6.19 The Eggs: one rule, three entry points
+
+Frozen, Molten and Toxic Egg are one mechanism differing by a card type (Power,
+Attack, Skill), shipped as one batch rather than split (Rob, 2026-09-27). The
+decompiled classes are `FrozenEgg2`, `MoltenEgg2`, `ToxicEgg2` — IDs `"Frozen
+Egg 2"` and so on, from a Weekly Patch 10 rework — and are identical apart from
+the type. The rule in all three: upgrade the card if `type matches &&
+canUpgrade() && !upgraded`. **No selection screen**, which settles the question
+§7 left open.
+
+wiki.gg agrees on everything it covers: only cards *added to the deck* are
+upgraded, never cards generated mid-combat (Infernal Blade, Nilry's Codex), and
+the reward screen and shop shelf show the upgrade. Our combat generation writes
+to `CombatState`'s piles and never reaches `RunState::add_card`, so the
+mid-combat exclusion holds by the layer split rather than by a check.
+
+**Three entry points, and `onObtainCard` is only one of them:**
+
+| StS | our site |
+|---|---|
+| `onObtainCard`, from `FastCardObtainEffect` / `ShowCardAndObtainEffect` — every way into the deck | `add_card`, before the uid is minted |
+| `onPreviewObtainCard`, from `getRewardCards` and the shop's `initCards` | `generate_card_reward`, `generate_shop` |
+| `onEquip` (pending combat reward) and `StoreRelic.purchaseRelic` (shop shelf) | the Egg cases in `obtain_relic`, over `card_reward` and `shop_cards` |
+
+The preview path is what makes the **observation** right. A human sees "Bash+"
+on the reward screen; upgrading only in `add_card` would get the deck right and
+show the agent the wrong offer.
+
+**The preview is a SEPARATE PASS after every card is chosen**, as StS does it
+over `retVal2`. Both generators filter duplicates by comparing offered ids
+against unupgraded pool ids, so upgrading inside the draw loop would let an
+offered Bash+ fail to match a later Bash, and the same card could be offered
+twice. The first draft of this batch did exactly that and was caught before the
+build. `EveryCardRewardOfferIsPreviewed` and `EveryShopCardIsPreviewed` assert
+distinct ids as an invariant over every draw.
+
+**`!upgraded` needed a new helper.** Upgrades here are id swaps, so there is no
+flag; `is_upgraded(CardId)` is true when some `CARD_UPGRADES` edge leads to the
+id. It is not `!is_upgradable`: Searing Blow's middle rungs are both upgraded
+and upgradable, and an Egg must leave a Searing Blow+ alone. War Paint,
+Whetstone and Tiny House are unaffected — StS uses `canUpgrade()` alone for
+them, so they can take a Searing Blow+ to +2, and `upgrade_random_cards`
+already does.
+
+**An elite that drops an Egg upgrades that fight's card reward.** In StS the
+player chooses the order: take the relic first and `onEquip` upgrades the
+pending card; take the card first and it arrives unupgraded. `end_combat`
+collects the elite's relic after rolling the reward and before the player can
+act, which is the relic-first order — never worse for the player. Kept rather
+than modelled as a choice (Rob, 2026-09-27), and logged here as the ordering
+it is.
+
+No RNG is drawn anywhere on these paths, so every stream is unchanged.

@@ -838,6 +838,150 @@ TEST(RunLayerRelics, ARunStartsWithNoGold) {
   EXPECT_EQ(run.gold, 0);
 }
 
+// ------------------------------------------------------------ the Eggs (§6.19)
+
+// is_upgraded reads the upgrade graph. Searing Blow's ladder is the case that
+// separates it from !is_upgradable: its middle rungs are both.
+TEST(CardUpgrades, IsUpgradedReadsTheUpgradeGraph) {
+  EXPECT_FALSE(is_upgraded(CardId::Strike));
+  EXPECT_TRUE(is_upgraded(CardId::StrikePlus));
+  EXPECT_FALSE(is_upgraded(CardId::SearingBlow));
+  EXPECT_TRUE(is_upgraded(CardId::SearingBlowPlus));
+  EXPECT_TRUE(is_upgradable(CardId::SearingBlowPlus));
+  EXPECT_TRUE(is_upgraded(CardId::SearingBlow5));
+  EXPECT_FALSE(is_upgraded(CardId::Slimed));
+}
+
+struct EggCase {
+  RelicId relic;
+  CardType type;
+};
+constexpr EggCase kEggs[] = {
+    {RelicId::MoltenEgg, CardType::Attack},
+    {RelicId::ToxicEgg, CardType::Skill},
+    {RelicId::FrozenEgg, CardType::Power},
+};
+
+// Exhaustive over the card database, so no card type or edge case is left to
+// whichever cards a test happened to name: `type matches && canUpgrade() &&
+// !upgraded` (decompiled *Egg2.onObtainCard), and otherwise untouched.
+TEST(EggRelics, EachEggUpgradesExactlyItsOwnTypeAcrossTheWholeDatabase) {
+  for (const EggCase& egg : kEggs) {
+    RunState run = RunState::start(1);
+    run.obtain_relic(egg.relic);
+
+    for (const auto& [id, data] : CARD_DATABASE) {
+      Card card{id};
+      run.apply_egg_upgrades(card);
+
+      const bool eligible =
+          data.type == egg.type && is_upgradable(id) && !is_upgraded(id);
+      Card expected{id};
+      if (eligible) upgrade_card_in_place(expected);
+      EXPECT_TRUE(card.same_as(expected))
+          << "egg " << static_cast<int>(egg.relic) << " on card "
+          << static_cast<int>(id) << (eligible ? " (eligible)" : " (not eligible)");
+    }
+  }
+}
+
+// The one case `!upgraded` exists for: an upgraded Searing Blow is still
+// upgradable, and the Egg must leave it alone.
+TEST(EggRelics, MoltenEggLeavesAnAlreadyUpgradedSearingBlowAlone) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::MoltenEgg);
+
+  Card base{CardId::SearingBlow};
+  run.apply_egg_upgrades(base);
+  EXPECT_EQ(base.card_id, CardId::SearingBlowPlus);
+
+  Card plus{CardId::SearingBlowPlus};
+  run.apply_egg_upgrades(plus);
+  EXPECT_EQ(plus.card_id, CardId::SearingBlowPlus)
+      << "the Egg upgraded a card that was already upgraded";
+}
+
+TEST(EggRelics, AddingAMatchingCardToTheDeckUpgradesIt) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::MoltenEgg);
+
+  run.add_card(Card{CardId::Strike});
+  EXPECT_EQ(run.master_deck.back().card_id, CardId::StrikePlus);
+
+  run.add_card(Card{CardId::Defend});
+  EXPECT_EQ(run.master_deck.back().card_id, CardId::Defend)
+      << "Molten Egg upgraded a Skill";
+}
+
+// onEquip: the reward already on screen is upgraded the moment the Egg is taken.
+TEST(EggRelics, PickingUpAnEggUpgradesThePendingCardReward) {
+  RunState run = RunState::start(1);
+  run.card_reward = {Card{CardId::Strike}, Card{CardId::Defend},
+                     Card{CardId::Inflame}};
+
+  run.obtain_relic(RelicId::FrozenEgg);
+
+  EXPECT_EQ(run.card_reward[0].card_id, CardId::Strike);
+  EXPECT_EQ(run.card_reward[1].card_id, CardId::Defend);
+  EXPECT_EQ(run.card_reward[2].card_id, CardId::InflamePlus);
+}
+
+// StoreRelic.purchaseRelic: buying an Egg upgrades the shelf in front of you.
+TEST(EggRelics, TakingAnEggInAShopUpgradesTheShelf) {
+  RunState run = RunState::start(1);
+  run.phase = Phase::Shop;
+  ShopItem strike;
+  strike.card = Card{CardId::Strike};
+  ShopItem defend;
+  defend.card = Card{CardId::Defend};
+  run.shop_cards = {strike, defend};
+
+  run.obtain_relic(RelicId::ToxicEgg);
+
+  EXPECT_EQ(run.shop_cards[0].card.card_id, CardId::Strike);
+  EXPECT_EQ(run.shop_cards[1].card.card_id, CardId::DefendPlus);
+}
+
+// The preview passes, as invariants over every draw: with all three Eggs held,
+// no offer can still be an unupgraded upgradable card, whatever was rolled.
+//
+// The distinct-ids assertion guards the ordering: previewing INSIDE the draw
+// loop would let an offered Bash+ fail to match a later Bash, and the reward
+// would show Bash+ twice.
+TEST(EggRelics, EveryCardRewardOfferIsPreviewed) {
+  RunState run = RunState::start(1);
+  for (const EggCase& egg : kEggs) run.obtain_relic(egg.relic);
+
+  for (int floor = 1; floor <= 15; ++floor) {
+    run.floor = floor;
+    run.generate_card_reward(RewardSource::Monster);
+    std::set<CardId> seen;
+    for (const Card& offer : run.card_reward) {
+      EXPECT_FALSE(is_upgradable(offer.card_id) && !is_upgraded(offer.card_id))
+          << "an offer was shown unupgraded: " << static_cast<int>(offer.card_id);
+      EXPECT_TRUE(seen.insert(offer.card_id).second)
+          << "the same card was offered twice";
+    }
+  }
+}
+
+TEST(EggRelics, EveryShopCardIsPreviewed) {
+  RunState run = RunState::start(1);
+  for (const EggCase& egg : kEggs) run.obtain_relic(egg.relic);
+
+  for (int floor = 1; floor <= 15; ++floor) {
+    run.floor = floor;
+    run.generate_shop();
+    std::set<CardId> seen;
+    for (const ShopItem& item : run.shop_cards) {
+      const CardId id = item.card.card_id;
+      EXPECT_FALSE(is_upgradable(id) && !is_upgraded(id))
+          << "a shop card was shown unupgraded: " << static_cast<int>(id);
+      EXPECT_TRUE(seen.insert(id).second) << "the shelf stocked a card twice";
+    }
+  }
+}
+
 TEST(RunLayerRelics, OldCoinPaysThreeHundredOnPickup) {
   RunState run = RunState::start(1);
   ASSERT_EQ(run.gold, 0);
