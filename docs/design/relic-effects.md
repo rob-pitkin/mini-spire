@@ -245,7 +245,7 @@ per §1.
 
 ---
 
-## 7. Status: 108 of 140 wired
+## 7. Status: 109 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -264,7 +264,7 @@ tree appears only on a comment line, so the discrepancy is not comment noise.
 One of the two counts used a different rule and neither recorded which, which is
 the whole argument for pinning the command here.
 
-The 32 remaining are not one backlog. **Most are blocked on engine pieces that
+The 31 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
@@ -278,7 +278,7 @@ have nothing to do with relics**, and those blockers are shared:
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed) |
-| **Nothing blocking — just unwritten** | **8** — an exact count of the list that follows, not an estimate. The `~` this row carried for several batches was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. Juzu Bracelet and Tiny Chest shipped in §6.18, the three Eggs in §6.19, Matryoshka and Ancient Tea Set in §6.20, Chemical X and Pocketwatch in §6.21. Unceasing Top (its own task — the trigger point is a post-drain check in `apply_action`, so it is not the drop-in the others are), Singing Bowl, Wing Boots, Dead Branch, Snecko Eye, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics may need a card-selection screen at pickup — check before batching them (the Eggs did not: §6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
+| **Nothing blocking — but each needs a design first** | **7** — an exact count of the list that follows, not an estimate. The `~` this row carried for several batches was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. Juzu Bracelet and Tiny Chest shipped in §6.18, the three Eggs in §6.19, Matryoshka and Ancient Tea Set in §6.20, Chemical X and Pocketwatch in §6.21, Dead Branch in §6.22. **None of the 7 is a drop-in:** Unceasing Top (a post-drain check in `apply_action`, the hot path M2 measures), Snecko Eye (§6.22 — hand size and a Confusion cost roll the single `cost_override` slot cannot hold), Singing Bowl (a new option on the card reward screen), Wing Boots (off-path moves in `available_paths` and the path mask), and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics may need a card-selection screen at pickup — check before batching them (the Eggs did not: §6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
 | **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
@@ -1245,3 +1245,29 @@ behind the turn's `DrawCards` action (Rob, 2026-09-28). It must be a queued
 action rather than a call: a hook fired before `drain` would run before the
 draw resolves. Warped Tongs, which upgrades a card in hand every turn, will
 need exactly this.
+
+### 6.22 Dead Branch, and why Snecko Eye was split out
+
+**Dead Branch** (decompiled `DeadBranch.onExhaust`; wiki.gg agrees on every
+point). Whenever a card is exhausted, a random class card is added to the hand
+at its normal cost. It sits in the `CardExhausted` relic switch beside Charon's
+Ashes, so it sees the same exhausts — the `ExhaustCard` executor is the single
+path for played Exhaust cards, Ethereal cards at end of turn, True Grit, Havoc
+and Corruption. The card is a `GenerateCards` action with `ClassAny`, which is
+exactly StS's `returnTrulyRandomCardInCombat`: the Ironclad rarity pools minus
+HEALING cards, never Colorless (Prismatic Shard does not reach it, as the wiki
+notes). A full hand overflows to the discard through `add_card_to_hand`.
+
+The guard is StS's `!areMonstersBasicallyDead()`: once no enemy has HP left —
+the same test the win check makes, and escapes set HP to 0 — exhausting the card
+that ended the fight makes nothing.
+
+**Snecko Eye was planned for this batch and split out** (task, pending design).
+Its `onEquip` raises `masterHandSize` by 2, so every draw including the opening
+hand is 7, where the engine uses the constant `STARTING_HAND_SIZE`. And its
+Confusion power's `onCardDraw` sets the drawn card's *base* cost to a roll of
+0–3 for the rest of combat. `Card` has one `cost_override` slot, shared by
+Madness, Mummified Hand, Forethought and Infernal Blade; Mummified Hand's "0
+until played" on a Snecko-rolled card would, when played, clear back to the
+printed cost instead of the rolled one. That needs a layered cost model, which
+is a design decision rather than a relic.

@@ -1231,6 +1231,25 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
           a.amount = kCharonsAshesDamage;
           q.push_back(a);
         }
+        // Dead Branch: a random class card into the hand, at its normal cost.
+        // ClassAny is exactly StS's returnTrulyRandomCardInCombat — the three
+        // rarity pools minus HEALING cards — and a full hand overflows to the
+        // discard in add_card_to_hand. The guard is StS's
+        // !areMonstersBasicallyDead(): once no enemy has HP left (escapes set
+        // it to 0), exhausting the card that ended the fight makes nothing.
+        if (relic.id == RelicId::DeadBranch) {
+          bool any_alive = false;
+          for (const Enemy& e : state.enemies) {
+            if (e.hp > 0) any_alive = true;
+          }
+          if (any_alive) {
+            Action a = make_action(ActionKind::GenerateCards);
+            a.amount = 1;
+            a.gen_pool = GenerationPool::ClassAny;
+            a.gen_pile = GeneratedPile::Hand;
+            q.push_back(a);
+          }
+        }
         break;
 
       default:

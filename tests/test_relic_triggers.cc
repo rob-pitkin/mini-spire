@@ -1068,6 +1068,81 @@ TEST(RelicTriggers, PocketwatchDrawsNothingAfterFourCards) {
   }
 }
 
+// -------------------------------------------------------------- Dead Branch
+
+// Exhaust one card through the real executor, the single path every exhaust
+// takes, so the relic sees it exactly as it would in play.
+void exhaust_one(CombatState& s, CardId id) {
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::ExhaustCard};
+  a.carry(Card{id});
+  q.push_back(a);
+  drain(s, q, ctx);
+}
+
+// Which card is made depends on the roll, so the assertion is what holds for
+// every roll: exactly one card, and from the class pool minus healing.
+TEST(RelicTriggers, DeadBranchAddsOneClassCardWhenACardIsExhausted) {
+  CombatState s = fight_with({RelicId::DeadBranch});
+  one_durable_enemy(s);
+  s.current_hand.clear();
+
+  exhaust_one(s, CardId::Strike);
+
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  const std::vector<CardId>& pool = generatable_class_pool();
+  EXPECT_NE(std::find(pool.begin(), pool.end(), s.current_hand[0].card_id),
+            pool.end())
+      << "Dead Branch made a card outside the class pool";
+  EXPECT_FALSE(card_is_healing(s.current_hand[0].card_id));
+  EXPECT_EQ(s.current_hand[0].cost_override, kNoCostOverride)
+      << "the card should cost what it normally costs";
+}
+
+// areMonstersBasicallyDead: exhausting once the fight is won makes nothing.
+TEST(RelicTriggers, DeadBranchMakesNothingOnceEveryEnemyIsDead) {
+  CombatState s = fight_with({RelicId::DeadBranch});
+  one_durable_enemy(s);
+  s.enemies[0].hp = 0;
+  s.current_hand.clear();
+
+  exhaust_one(s, CardId::Strike);
+
+  EXPECT_TRUE(s.current_hand.empty());
+}
+
+TEST(RelicTriggers, DeadBranchOverflowsToTheDiscardWithAFullHand) {
+  CombatState s = fight_with({RelicId::DeadBranch});
+  one_durable_enemy(s);
+  s.current_hand.assign(HAND_SIZE_LIMIT, Card{CardId::Defend});
+  const size_t discard_before = s.discard_pile.size();
+
+  exhaust_one(s, CardId::Strike);
+
+  EXPECT_EQ(s.current_hand.size(), static_cast<size_t>(HAND_SIZE_LIMIT));
+  EXPECT_EQ(s.discard_pile.size(), discard_before + 1);
+}
+
+// Ethereal cards exhaust at end of turn through the same executor, so they
+// trigger it too. Compared as a card COUNT against the same fight without the
+// relic, which holds whatever was rolled or drawn.
+TEST(RelicTriggers, DeadBranchFiresOnAnEtherealCardAtEndOfTurn) {
+  auto total_cards = [](const CombatState& s) {
+    return s.current_hand.size() + s.draw_pile.size() + s.discard_pile.size() +
+           s.exhaust_pile.size();
+  };
+  CombatState with = fight_with({RelicId::DeadBranch});
+  CombatState without = bare_fight();
+  for (CombatState* s : {&with, &without}) {
+    one_durable_enemy(*s);
+    s->current_hand.push_back(Card{CardId::Dazed});
+    ASSERT_TRUE(end_turn(*s));
+  }
+
+  EXPECT_EQ(total_cards(with), total_cards(without) + 1);
+}
+
 // Blood Vial heals, so it needs a fight that starts damaged to be visible.
 TEST(RelicTriggers, BloodVialHealsAtCombatStart) {
   CombatSetup setup;
