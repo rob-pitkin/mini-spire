@@ -213,6 +213,12 @@ bool RunState::obtain_relic(RelicId id) {
       for (ShopItem& item : shop_cards) apply_egg_upgrades(item.card);
       break;
 
+    // The charges live on the counter. StS's constructor sets it to 2; ours
+    // defaults to 0, which would read as already spent.
+    case RelicId::Matryoshka:
+      held_relic(id)->counter = kMatryoshkaCharges;
+      break;
+
     // Straight through gain_gold, so Ectoplasm refuses it exactly as it refuses
     // every other gain. StS routes this through player.gainGold for the same
     // reason.
@@ -391,9 +397,35 @@ void RunState::open_chest() {
                              ? RelicTier::Uncommon
                              : RelicTier::Rare;
 
-  if (const std::optional<RelicId> drawn = random_relic(tier, rng)) {
-    obtain_relic(*drawn);
+  // Drawn now, obtained last: Matryoshka's relic is collected first (below).
+  const std::optional<RelicId> chest_relic = random_relic(tier, rng);
+
+  // Matryoshka (§6.20). Its draws come AFTER every chest draw above, so holding
+  // it cannot change what the chest itself rolls — the stream is an interface.
+  // Its relic is still OBTAINED before the chest's: StS fires onChestOpen before
+  // the chest adds its own relic, and acquisition order is hook order later.
+  //
+  // `counter > 0`, as StS checks it, which also rules out the spent -2.
+  HeldRelic* matryoshka = held_relic(RelicId::Matryoshka);
+  if (matryoshka && matryoshka->counter > 0) {
+    --matryoshka->counter;
+    if (matryoshka->counter == 0) matryoshka->counter = kMatryoshkaUsedUp;
+
+    const RelicTier extra_tier =
+        std::uniform_int_distribution<int>(0, 99)(rng) < kMatryoshkaCommonChance
+            ? RelicTier::Common
+            : RelicTier::Uncommon;
+    // Never the chest's own relic: StS pops both from the same shuffled pool,
+    // so they cannot coincide.
+    std::vector<RelicId> exclude;
+    if (chest_relic) exclude.push_back(*chest_relic);
+    if (const std::optional<RelicId> extra =
+            random_relic(extra_tier, rng, exclude)) {
+      obtain_relic(*extra);
+    }
   }
+
+  if (chest_relic) obtain_relic(*chest_relic);
 }
 
 void RunState::award_combat_gold(RewardSource source) {
@@ -1001,6 +1033,14 @@ void RunState::fire_room_entry_relics(RoomType room) {
                              kEternalFeatherCardsPer * kEternalFeatherHeal;
           hp = std::min(max_hp, hp + healed);
         }
+        break;
+
+      case RelicId::AncientTeaSet:
+        // Armed on ENTERING, whatever option is then taken (wiki.gg). Setting a
+        // flag rather than adding is what makes a second rest site before the
+        // next fight worth nothing extra. Spent at CombatStart (action.cc); the
+        // counter is run-scoped, so it waits across rooms until a fight uses it.
+        if (room == RoomType::Rest) r.counter = kAncientTeaSetArmed;
         break;
 
       default:

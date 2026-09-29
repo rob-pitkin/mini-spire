@@ -683,6 +683,70 @@ TEST(Chest, IsDeterministicPerFloor) {
   EXPECT_NE(opened(5, 9), opened(6, 9));
 }
 
+// ------------------------------------------------------ Matryoshka (§6.20)
+
+TEST(Chest, MatryoshkaStartsWithTwoCharges) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::Matryoshka);
+  EXPECT_EQ(find_relic(run, RelicId::Matryoshka)->counter, kMatryoshkaCharges);
+}
+
+// Two relics from one chest, Matryoshka's collected FIRST (it fires before the
+// chest adds its own), and one charge spent.
+TEST(Chest, MatryoshkaAddsASecondRelicToTheNextChest) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::Matryoshka);
+  run.floor = 9;
+  const size_t before = run.relics.size();
+
+  run.open_chest();
+
+  ASSERT_EQ(run.relics.size(), before + 2) << "a Matryoshka chest pays twice";
+  const RelicTier extra = relic_tier(run.relics[before].id);
+  EXPECT_TRUE(extra == RelicTier::Common || extra == RelicTier::Uncommon)
+      << "Matryoshka's relic is only ever Common or Uncommon";
+  EXPECT_EQ(find_relic(run, RelicId::Matryoshka)->counter, 1);
+}
+
+// The CHEST's own roll is identical whether or not a charge is spent, because
+// Matryoshka draws after it. The baseline holds a SPENT Matryoshka rather than
+// none: held relics are excluded from every draw, so dropping Matryoshka from
+// the run would change the chest's candidate list and prove nothing.
+TEST(Chest, MatryoshkaDoesNotChangeWhatTheChestItselfRolls) {
+  for (uint64_t seed = 0; seed < 20; ++seed) {
+    RunState charged = RunState::start(seed);
+    charged.obtain_relic(RelicId::Matryoshka);
+    RunState spent = charged;
+    spent.held_relic(RelicId::Matryoshka)->counter = kMatryoshkaUsedUp;
+    charged.floor = spent.floor = 9;
+
+    charged.open_chest();
+    spent.open_chest();
+
+    ASSERT_EQ(spent.relics.size() + 1, charged.relics.size());
+    EXPECT_EQ(charged.relics.back().id, spent.relics.back().id)
+        << "seed " << seed << ": the chest's own relic moved";
+    EXPECT_EQ(charged.gold, spent.gold) << "seed " << seed;
+  }
+}
+
+TEST(Chest, MatryoshkaIsSpentAfterTwoChests) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::Matryoshka);
+
+  run.floor = 9;
+  run.open_chest();
+  run.floor = 10;
+  run.open_chest();
+  EXPECT_EQ(find_relic(run, RelicId::Matryoshka)->counter, kMatryoshkaUsedUp);
+
+  const size_t before = run.relics.size();
+  run.floor = 11;
+  run.open_chest();
+  EXPECT_EQ(run.relics.size(), before + 1) << "a third chest paid twice";
+  EXPECT_EQ(find_relic(run, RelicId::Matryoshka)->counter, kMatryoshkaUsedUp);
+}
+
 // ----------------------------------------------------------- potion drops
 
 TEST(PotionDrops, SomeFightsDropPotionsAndSomeDoNot) {
@@ -819,6 +883,47 @@ TEST(RunLayerRelics, MealTicketCannotHealAboveMaxHp) {
   run.hp = run.max_hp - 3;
   run.enter_room(RoomType::Shop);
   EXPECT_EQ(run.hp, run.max_hp);
+}
+
+// Armed on entering a rest site; a second one before the next fight arms it
+// again rather than stacking; and a non-rest room leaves it armed.
+TEST(RunLayerRelics, AncientTeaSetArmsAtARestSiteAndDoesNotStack) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::AncientTeaSet);
+  EXPECT_NE(find_relic(run, RelicId::AncientTeaSet)->counter,
+            kAncientTeaSetArmed);
+
+  run.enter_room(RoomType::Rest);
+  EXPECT_EQ(find_relic(run, RelicId::AncientTeaSet)->counter,
+            kAncientTeaSetArmed);
+  run.enter_room(RoomType::Rest);
+  EXPECT_EQ(find_relic(run, RelicId::AncientTeaSet)->counter,
+            kAncientTeaSetArmed);
+  run.enter_room(RoomType::Shop);
+  EXPECT_EQ(find_relic(run, RelicId::AncientTeaSet)->counter,
+            kAncientTeaSetArmed)
+      << "the charge did not survive a room that was not a fight";
+}
+
+// End to end through the run layer: armed at a rest site, spent by the next
+// fight's first turn, and disarmed in the state the fight writes back.
+TEST(RunLayerRelics, AncientTeaSetIsSpentByTheNextFight) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::AncientTeaSet);
+  run.enter_room(RoomType::Rest);
+
+  RunState control = RunState::start(1);
+  control.obtain_relic(RelicId::AncientTeaSet);
+
+  run.floor = control.floor = 3;
+  run.begin_combat(EncounterPool::Weak);
+  control.begin_combat(EncounterPool::Weak);
+
+  EXPECT_EQ(run.combat.character.energy,
+            control.combat.character.energy + kAncientTeaSetEnergy);
+  for (const HeldRelic& r : run.combat.relics) {
+    if (r.id == RelicId::AncientTeaSet) EXPECT_NE(r.counter, kAncientTeaSetArmed);
+  }
 }
 
 TEST(RunLayerRelics, CeramicFishPaysNineForEachCardAdded) {

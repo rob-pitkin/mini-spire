@@ -245,7 +245,7 @@ per §1.
 
 ---
 
-## 7. Status: 104 of 140 wired
+## 7. Status: 106 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -264,7 +264,7 @@ tree appears only on a comment line, so the discrepancy is not comment noise.
 One of the two counts used a different rule and neither recorded which, which is
 the whole argument for pinning the command here.
 
-The 36 remaining are not one backlog. **Most are blocked on engine pieces that
+The 34 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
@@ -278,7 +278,7 @@ have nothing to do with relics**, and those blockers are shared:
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed) |
-| **Nothing blocking — just unwritten** | **12** — an exact count of the list that follows, not an estimate. The `~` this row carried for several batches was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. Juzu Bracelet and Tiny Chest shipped in §6.18, the three Eggs in §6.19. Unceasing Top (its own task — the trigger point is a post-drain check in `apply_action`, so it is not the drop-in the others are), Singing Bowl, Matryoshka, Wing Boots, Dead Branch, Snecko Eye, Ancient Tea Set, Pocketwatch, Chemical X, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics may need a card-selection screen at pickup — check before batching them (the Eggs did not: §6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
+| **Nothing blocking — just unwritten** | **10** — an exact count of the list that follows, not an estimate. The `~` this row carried for several batches was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. Juzu Bracelet and Tiny Chest shipped in §6.18, the three Eggs in §6.19, Matryoshka and Ancient Tea Set in §6.20. Unceasing Top (its own task — the trigger point is a post-drain check in `apply_action`, so it is not the drop-in the others are), Singing Bowl, Wing Boots, Dead Branch, Snecko Eye, Pocketwatch, Chemical X, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics may need a card-selection screen at pickup — check before batching them (the Eggs did not: §6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
 | **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
@@ -1170,3 +1170,42 @@ than modelled as a choice (Rob, 2026-09-27), and logged here as the ordering
 it is.
 
 No RNG is drawn anywhere on these paths, so every stream is unchanged.
+
+### 6.20 Matryoshka and Ancient Tea Set
+
+**Matryoshka** (decompiled `Matryoshka.onChestOpen`, called from
+`AbstractChest.open`; wiki.gg agrees). The next 2 non-boss chests each add a
+second relic, 75% Common and otherwise Uncommon. The counter starts at 2 in
+StS's constructor; ours defaults to 0, which would read as spent, so
+`obtain_relic` sets it. It becomes -2 when the last charge goes, the used-up
+value Maw Bank also uses. The boss-chest exclusion (`BossChest.open` skips
+Matryoshka) needs no code: the scope is Act 1, and a boss chest never opens.
+
+Two orderings, deliberately different:
+
+- **Draw order: after the chest.** The chest's size, gold/tier roll and relic
+  are drawn first, then Matryoshka's 75/25 roll and relic from the same
+  floor-indexed Relic stream, excluding the chest's relic. Holding a charge
+  therefore cannot change what the chest itself rolls. StS draws these from
+  different RNGs (`treasureRng` for the chest, `relicRng` for Matryoshka), and
+  our chest already uses the Relic stream, so draw-order parity was never
+  available; stream stability was.
+- **Acquisition order: Matryoshka's relic first.** `onChestOpen` fires before
+  the chest adds its own relic, and acquisition order is hook order later.
+
+`MatryoshkaDoesNotChangeWhatTheChestItselfRolls` compares a charged Matryoshka
+against a SPENT one, not against none. `random_relic` excludes held relics, so
+a baseline without Matryoshka has a different candidate list and could draw a
+different chest relic for that reason alone.
+
+**Ancient Tea Set** (decompiled `AncientTeaSet`; wiki.gg agrees). Entering a Rest
+site arms it — in `fire_room_entry_relics`, beside Eternal Feather — whatever
+option is then taken. The next fight's first turn gains 2 Energy and disarms it,
+in the `CombatStart` switch beside Lantern, which is the same `atTurnStart`
+first-turn shape. Arming sets a flag rather than adding, so two rest sites
+before a fight give 2 Energy, not 4. The charge survives any number of
+non-combat rooms, because relic counters are run-scoped (v2-spec §3.3).
+
+The counter is a plain flag, 1 armed and 0 idle (Rob, 2026-09-28). StS uses -2
+and -1, but neither is displayed — the relic glows instead — and our default
+of 0 could not mirror -1 without a special case.

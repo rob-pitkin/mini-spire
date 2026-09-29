@@ -937,6 +937,14 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
           case RelicId::Lantern:
             push_player_energy(q, 1);
             break;
+          case RelicId::AncientTeaSet:
+            // Armed by a rest site (run_state.cc). atTurnStart on the first
+            // turn, the same shape as Lantern, and disarmed as it fires.
+            if (relic.counter == kAncientTeaSetArmed) {
+              push_player_energy(q, kAncientTeaSetEnergy);
+              relic.counter = 0;
+            }
+            break;
           case RelicId::BagOfMarbles:
             push_debuff_all_enemies(state, q, Debuff::Vulnerable, 1);
             break;

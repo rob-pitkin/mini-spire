@@ -165,6 +165,21 @@ inline constexpr int kEternalFeatherHeal = 3;
 // (EventHelper.roll). It starts at 0 on pickup, which HeldRelic's default gives.
 inline constexpr int kTinyChestRooms = 4;
 
+// Matryoshka adds a relic to the next 2 chests: 75% Common, else Uncommon
+// (decompiled onChestOpen, `relicRng.randomBoolean(0.75f)`). The counter starts
+// at the charge count — set in obtain_relic, since HeldRelic defaults to 0 —
+// and becomes -2 when spent, the value StS's setCounter treats as used up.
+inline constexpr int kMatryoshkaCharges = 2;
+inline constexpr int kMatryoshkaCommonChance = 75;
+inline constexpr int kMatryoshkaUsedUp = -2;
+
+// Ancient Tea Set: entering a Rest site arms it; the next combat's first turn
+// gains 2 Energy and disarms it. It does not stack. StS encodes armed as -2 and
+// idle as -1, neither of which is displayed (the relic glows instead); here the
+// counter is a plain flag, 1 armed and 0 idle, so the default is idle.
+inline constexpr int kAncientTeaSetEnergy = 2;
+inline constexpr int kAncientTeaSetArmed = 1;
+
 // --- combat-layer relic amounts ---
 
 // Magic Flower multiplies healing by 1.5 — but only DURING COMBAT
