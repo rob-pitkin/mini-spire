@@ -98,6 +98,9 @@ enum class ActionKind {
                         // opening hand.
   CombatStartPostDraw,  // the two relic hooks that follow the opening draw,
                         // queued so they ride behind a parked draw
+  TurnStartPostDraw,    // turns 2+: fire Hook::TurnStartPostDraw once the
+                        // turn's draw has resolved (Pocketwatch). Turn 1 fires
+                        // the same hook from CombatStartPostDraw.
   PlaceOnBottomOfDraw,  // Forethought: the carried card goes UNDER the draw
                         // pile, costing 0 until played. An action rather than
                         // an inline move so the multi-select path and the

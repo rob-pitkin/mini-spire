@@ -114,8 +114,15 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
   } else if (ctx_play.forced_x >= 0) {
     x = ctx_play.forced_x;
   }
+  // Chemical X raises the EFFECT of an X-cost card, not the energy it spent.
+  // `x` stays raw because the Double Tap replay below carries it: the replay
+  // adds its own +2, as each StS X action does, so it must not inherit this
+  // play's (wiki.gg: free and duplicated X plays both get the bonus).
+  const int x_effect = (data.cost == kXCost && state.has_relic(RelicId::ChemicalX))
+                           ? x + kChemicalXBonus
+                           : x;
   // hits: -1 means "X hits" (Whirlwind); otherwise the literal count.
-  const int hits = (data.hits < 0) ? x : data.hits;
+  const int hits = (data.hits < 0) ? x_effect : data.hits;
 
   // 2. The played card leaves the hand now — it is "in flight" during
   // resolution (StS) and rejoins a pile via the queued ExhaustCard/DiscardCard.
@@ -583,7 +590,7 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
   if (data.generates_pool != GenerationPool::None) {
     Action a;
     a.kind = ActionKind::GenerateCards;
-    a.amount = data.generates_x_count ? x : data.generates_count;
+    a.amount = data.generates_x_count ? x_effect : data.generates_count;
     a.gen_pool = data.generates_pool;
     a.gen_pile = data.generates_into;
     a.gen_upgraded = data.generates_upgraded;
@@ -637,7 +644,7 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     a.card_bonus_damage = played.bonus_damage;
     a.card_upgrades = played.upgrades;
     a.target = target;
-    a.copies = x;  // reuse the first play's X
+    a.copies = x;  // reuse the first play's RAW X — the replay adds Chemical X itself
     q.push_back(a);
   }
   // The card's choice (Stage 4c) normally queues LAST, after draw: Warcry draws
@@ -975,6 +982,9 @@ void handle_end_turn(CombatState& state) {
     draw.kind = ActionKind::DrawCards;
     draw.amount = STARTING_HAND_SIZE;
     q.push_back(draw);
+    // Queued, not called: a hook fired here would run before the draw above
+    // resolves. Riding behind it in the queue is what makes it POST-draw.
+    q.push_back(Action{ActionKind::TurnStartPostDraw});
     drain(state, q, ctx);
     // Brutality's HP loss can kill; Fire Breathing can clear the room.
     check_character_terminal(state);

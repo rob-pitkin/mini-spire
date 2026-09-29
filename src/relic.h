@@ -180,6 +180,18 @@ inline constexpr int kMatryoshkaUsedUp = -2;
 inline constexpr int kAncientTeaSetEnergy = 2;
 inline constexpr int kAncientTeaSetArmed = 1;
 
+// Chemical X adds 2 to the EFFECT of an X-cost card — its hits, or how many
+// cards it makes — without changing the energy spent (wiki.gg). In StS the
+// check sits inside each X card's own action, so a free play (Havoc) and a
+// replay (Double Tap) each get their own +2.
+inline constexpr int kChemicalXBonus = 2;
+
+// Pocketwatch: play this many cards or FEWER in a turn and draw
+// kPocketwatchDraw extra at the start of the next, after the normal draw. The
+// counter is the cards played this turn, which the game displays on the relic.
+inline constexpr int kPocketwatchMaxCards = 3;
+inline constexpr int kPocketwatchDraw = 3;
+
 // --- combat-layer relic amounts ---
 
 // Magic Flower multiplies healing by 1.5 — but only DURING COMBAT

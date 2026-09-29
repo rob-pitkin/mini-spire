@@ -957,6 +957,117 @@ TEST(RelicTriggers, LanternGrantsEnergy) {
   EXPECT_EQ(with.character.energy, bare.character.energy + 1);
 }
 
+// ------------------------------------------------ Chemical X and Pocketwatch
+
+// One Jaw Worm with far more HP than any test here deals, so damage counts hits
+// exactly and the fight cannot end mid-test. BUILT rather than sampled:
+// fight_with draws its encounter from the Weak pool (§6.17).
+void one_durable_enemy(CombatState& s) {
+  s.enemies.clear();
+  s.enemies.push_back(make_jaw_worm(s.rng));
+  s.enemies[0].hp = s.enemies[0].max_hp = 500;
+  s.enemies[0].current_block = 0;
+}
+
+// Whirlwind deals 5 per hit, X hits. Chemical X adds 2 hits and no energy.
+TEST(RelicTriggers, ChemicalXAddsTwoToAnXCostAttack) {
+  CombatState s = fight_with({RelicId::ChemicalX});
+  one_durable_enemy(s);
+  s.character.energy = 3;
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Whirlwind});
+  const int hp0 = s.enemies[0].hp;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Whirlwind)));
+
+  EXPECT_EQ(hp0 - s.enemies[0].hp, 5 * (3 + kChemicalXBonus));
+  EXPECT_EQ(s.character.energy, 0) << "the bonus is effect, not energy";
+}
+
+TEST(RelicTriggers, WithoutChemicalXWhirlwindHitsX) {
+  CombatState s = bare_fight();
+  one_durable_enemy(s);
+  s.character.energy = 3;
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Whirlwind});
+  const int hp0 = s.enemies[0].hp;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Whirlwind)));
+
+  EXPECT_EQ(hp0 - s.enemies[0].hp, 5 * 3);
+}
+
+// Transmutation's X is a card count, and Chemical X raises it the same way.
+TEST(RelicTriggers, ChemicalXAddsTwoToTransmutationsCount) {
+  CombatState s = fight_with({RelicId::ChemicalX});
+  s.character.energy = 1;
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Transmutation});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Transmutation)));
+
+  EXPECT_EQ(s.current_hand.size(), static_cast<size_t>(1 + kChemicalXBonus));
+}
+
+// The Double Tap replay carries the RAW X and adds its own +2, as each StS X
+// action does. Carrying the boosted X would make the replay X+4: with X = 1
+// that is 3 + 5 = 8 hits instead of 3 + 3 = 6.
+TEST(RelicTriggers, ChemicalXAppliesOnceToEachDoubleTapPlay) {
+  CombatState s = fight_with({RelicId::ChemicalX});
+  one_durable_enemy(s);
+  s.character.energy = 1;
+  s.character.powers[Power::DoubleTap] = 1;
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Whirlwind});
+  const int hp0 = s.enemies[0].hp;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Whirlwind)));
+
+  EXPECT_EQ(hp0 - s.enemies[0].hp, 5 * 2 * (1 + kChemicalXBonus));
+}
+
+// Turn 1 only resets the counter: there was no previous turn.
+TEST(RelicTriggers, PocketwatchDrawsNothingOnTurnOne) {
+  const CombatState bare = bare_fight();
+  const CombatState with = fight_with({RelicId::Pocketwatch});
+  EXPECT_EQ(with.current_hand.size(), bare.current_hand.size());
+}
+
+// Three or fewer cards played — here none — and the next turn draws 3 more.
+TEST(RelicTriggers, PocketwatchDrawsThreeAfterAQuietTurn) {
+  CombatState s = fight_with({RelicId::Pocketwatch});
+  one_durable_enemy(s);
+
+  ASSERT_TRUE(end_turn(s));
+
+  EXPECT_EQ(s.current_hand.size(),
+            static_cast<size_t>(STARTING_HAND_SIZE + kPocketwatchDraw));
+}
+
+// Four cards played and the next turn is a normal draw. The four are whatever
+// the opening hand holds: every starter card is playable with 10 energy, so
+// the assertion does not depend on which cards were dealt.
+TEST(RelicTriggers, PocketwatchDrawsNothingAfterFourCards) {
+  CombatState s = fight_with({RelicId::Pocketwatch});
+  one_durable_enemy(s);
+  s.character.energy = 10;
+
+  for (int i = 0; i < 4; ++i) {
+    ASSERT_FALSE(s.current_hand.empty());
+    ASSERT_TRUE(apply_action(s, card_action(s.current_hand[0].card_id, 0)));
+  }
+  for (const HeldRelic& r : s.relics) {
+    if (r.id == RelicId::Pocketwatch) EXPECT_EQ(r.counter, 4);
+  }
+
+  ASSERT_TRUE(end_turn(s));
+
+  EXPECT_EQ(s.current_hand.size(), static_cast<size_t>(STARTING_HAND_SIZE));
+  for (const HeldRelic& r : s.relics) {
+    if (r.id == RelicId::Pocketwatch) EXPECT_EQ(r.counter, 0);
+  }
+}
+
 // Blood Vial heals, so it needs a fight that starts damaged to be visible.
 TEST(RelicTriggers, BloodVialHealsAtCombatStart) {
   CombatSetup setup;

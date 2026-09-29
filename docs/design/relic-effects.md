@@ -245,7 +245,7 @@ per §1.
 
 ---
 
-## 7. Status: 106 of 140 wired
+## 7. Status: 108 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -264,7 +264,7 @@ tree appears only on a comment line, so the discrepancy is not comment noise.
 One of the two counts used a different rule and neither recorded which, which is
 the whole argument for pinning the command here.
 
-The 34 remaining are not one backlog. **Most are blocked on engine pieces that
+The 32 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
@@ -278,7 +278,7 @@ have nothing to do with relics**, and those blockers are shared:
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed) |
-| **Nothing blocking — just unwritten** | **10** — an exact count of the list that follows, not an estimate. The `~` this row carried for several batches was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. Juzu Bracelet and Tiny Chest shipped in §6.18, the three Eggs in §6.19, Matryoshka and Ancient Tea Set in §6.20. Unceasing Top (its own task — the trigger point is a post-drain check in `apply_action`, so it is not the drop-in the others are), Singing Bowl, Wing Boots, Dead Branch, Snecko Eye, Pocketwatch, Chemical X, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics may need a card-selection screen at pickup — check before batching them (the Eggs did not: §6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
+| **Nothing blocking — just unwritten** | **8** — an exact count of the list that follows, not an estimate. The `~` this row carried for several batches was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. Juzu Bracelet and Tiny Chest shipped in §6.18, the three Eggs in §6.19, Matryoshka and Ancient Tea Set in §6.20, Chemical X and Pocketwatch in §6.21. Unceasing Top (its own task — the trigger point is a post-drain check in `apply_action`, so it is not the drop-in the others are), Singing Bowl, Wing Boots, Dead Branch, Snecko Eye, and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics may need a card-selection screen at pickup — check before batching them (the Eggs did not: §6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
 | **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
@@ -1209,3 +1209,39 @@ non-combat rooms, because relic counters are run-scoped (v2-spec §3.3).
 The counter is a plain flag, 1 armed and 0 idle (Rob, 2026-09-28). StS uses -2
 and -1, but neither is displayed — the relic glows instead — and our default
 of 0 could not mirror -1 without a special case.
+
+### 6.21 Chemical X and Pocketwatch, and a post-draw hook that fired once
+
+**Chemical X** has no logic in its own class. StS puts `if hasRelic("Chemical
+X") effect += 2` inside each X-cost card's ACTION (`WhirlwindAction`,
+`TransmutationAction`, …), after `effect` is read from `energyOnUse`. wiki.gg
+states the consequences: it raises the effect, not the energy spent, and it
+applies to X cards played for free (Havoc, Mayhem) and to duplicated plays.
+
+Here X is settled once, in `handle_play_card`, so the bonus is applied there to
+a separate `x_effect`, used for Whirlwind's hits and Transmutation's card count.
+Every use of `x` in that function was read, not grepped: those two plus the
+Double Tap replay's `copies`. **The replay keeps the RAW X.** StS's replay
+builds a fresh action from the same `energyOnUse`, and that action adds its
+own +2; carrying `x_effect` would make the replay X+4.
+`ChemicalXAppliesOnceToEachDoubleTapPlay` pins it — with X = 1, 6 hits rather
+than 8. A Havoc play has `forced_x = 0` and gets 2 hits, as the wiki says.
+
+**Pocketwatch** (decompiled; wiki.gg gives only the description). The counter
+is cards played this turn, raised in `fire_card_played_relic` beside Ink
+Bottle, which counts the same set: StS's `onPlayCard` fires for every card that
+resolves from the card queue, Havoc and Double Tap copies included, and not for
+an unplayable card Havoc exhausts. At `TurnStartPostDraw`, if the turn is not
+the first and the count is 3 or fewer, draw 3; then reset. Turn 1 only resets,
+which is StS's `firstTurn` flag, and also clears the previous fight's count
+from the run-scoped counter.
+
+⚠️ **`Hook::TurnStartPostDraw` fired on turn 1 only.** `CombatStartPostDraw`
+fired it after the opening hand, and the per-turn start in `turn_loop.cc` drew
+5 and stopped — the §6.10 shape again, a hook declared and listened for but
+unreachable after the first turn. Nothing was wired to it, so nothing was
+wrong until Pocketwatch. Now a new `ActionKind::TurnStartPostDraw` is queued
+behind the turn's `DrawCards` action (Rob, 2026-09-28). It must be a queued
+action rather than a call: a hook fired before `drain` would run before the
+draw resolves. Warped Tongs, which upgrades a card in hand every turn, will
+need exactly this.

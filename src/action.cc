@@ -852,6 +852,14 @@ void fire_card_played_relic(CombatState& state, HeldRelic& relic, CardType type,
       }
       break;
 
+    case RelicId::Pocketwatch:
+      // Every card played this turn, the same set Ink Bottle counts: StS's
+      // onPlayCard fires for each card that resolves from the card queue,
+      // Havoc and Double Tap copies included. Read and cleared at the next
+      // TurnStartPostDraw.
+      ++relic.counter;
+      break;
+
     case RelicId::MummifiedHand:
       // "Whenever you play a Power, a random card in your hand costs 0." The
       // wiki corrects the card's own text: the discount lasts UNTIL THE CARD IS
@@ -1121,6 +1129,15 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
       case Hook::TurnStartPostDraw:
         // Gambling Chip and Warped Tongs need a choice and an upgrade path
         // respectively; both land in later batches.
+        if (relic.id == RelicId::Pocketwatch) {
+          // Turn 1 only resets: StS's firstTurn flag skips the draw, and there
+          // was no previous turn to have played few cards in. The counter is
+          // run-scoped, so this reset is also what clears the last fight's.
+          if (state.turn_number > 1 && relic.counter <= kPocketwatchMaxCards) {
+            push_draw(q, kPocketwatchDraw);
+          }
+          relic.counter = 0;
+        }
         break;
 
       case Hook::EnemyDeath:
@@ -1853,6 +1870,11 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // The two relic hooks that follow the opening hand. Queued so that a
       // pre-draw pause parks them too — resolve_choice resumes exactly here.
       fire_relic_hooks(state, Hook::CombatStart, q);
+      fire_relic_hooks(state, Hook::TurnStartPostDraw, q);
+      break;
+    case ActionKind::TurnStartPostDraw:
+      // Every later turn's post-draw hook. Until Pocketwatch this hook fired on
+      // turn 1 only, with nothing listening — the §6.10 shape again.
       fire_relic_hooks(state, Hook::TurnStartPostDraw, q);
       break;
     case ActionKind::PlaceOnBottomOfDraw: {
