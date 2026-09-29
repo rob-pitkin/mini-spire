@@ -195,8 +195,32 @@ bool RunState::relic_can_spawn(RelicId id) const {
     case RelicId::BottledFlame: return deck_has(CardType::Attack, true);
     case RelicId::BottledLightning: return deck_has(CardType::Skill, true);
     case RelicId::BottledTornado: return deck_has(CardType::Power, false);
+
+    // `!(getCurrRoom() instanceof ShopRoom)`: never stocked on a shop shelf
+    // (wiki.gg: Maw Bank "cannot be bought from the Merchant"). enter_room sets
+    // the phase before generate_shop runs, so the phase is the room here.
+    case RelicId::TheCourier:
+    case RelicId::MawBank:
+    case RelicId::OldCoin:
+    case RelicId::SmilingMask:
+      return phase != Phase::Shop;
+
+    // Fewer than two of the three campfire relics HELD. wiki.gg says "once two
+    // have been OFFERED", which the decompiled gate does not say: it counts
+    // relics held, and a skipped offer leaves the third reachable (§6.24).
+    case RelicId::Girya:
+    case RelicId::PeacePipe:
+    case RelicId::Shovel:
+      return campfire_relics_held() < kMaxCampfireRelics;
+
     default: return true;
   }
+}
+
+int RunState::campfire_relics_held() const {
+  return static_cast<int>(has_relic(RelicId::Girya)) +
+         static_cast<int>(has_relic(RelicId::PeacePipe)) +
+         static_cast<int>(has_relic(RelicId::Shovel));
 }
 
 bool RunState::remove_card_from_deck(int index) {
@@ -1356,8 +1380,17 @@ void RunState::end_combat() {
       for (int i = 0; i < count; ++i) {
         // Excluding what this same screen already drew, so an elite cannot pay
         // the same relic twice.
+        std::vector<RelicId> exclude = elite_relics;
+        // Black Star's extra relic is never a campfire relic: StS draws it with
+        // returnRandomNonCampfireRelic, which re-draws past Girya, Peace Pipe
+        // and Shovel (MonsterRoomElite.dropReward; wiki.gg agrees).
+        if (i > 0) {
+          exclude.push_back(RelicId::Girya);
+          exclude.push_back(RelicId::PeacePipe);
+          exclude.push_back(RelicId::Shovel);
+        }
         if (const std::optional<RelicId> drawn = random_relic(
-                relic_tier_standard(relic_rng), relic_rng, elite_relics)) {
+                relic_tier_standard(relic_rng), relic_rng, exclude)) {
           elite_relics.push_back(*drawn);
         }
       }

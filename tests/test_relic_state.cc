@@ -621,6 +621,73 @@ TEST(RewardRelics, BlackStarsTwoRelicsAreDistinct) {
   }
 }
 
+// returnRandomNonCampfireRelic: Black Star's extra relic is never Girya, Peace
+// Pipe or Shovel. Every other Rare is already held, so a Rare second draw has
+// only campfire relics to pick from — without the exclusion it takes one; with
+// it, it draws nothing. The assertion holds for every seed; the held Rares only
+// make a Rare second draw decisive rather than rare.
+TEST(RewardRelics, BlackStarsExtraRelicIsNeverACampfireRelic) {
+  const auto is_campfire = [](RelicId id) {
+    return id == RelicId::Girya || id == RelicId::PeacePipe ||
+           id == RelicId::Shovel;
+  };
+  for (uint64_t s = 0; s < 60; ++s) {
+    RunState run = RunState::start(s);
+    run.obtain_relic(RelicId::BlackStar);
+    for (RelicId id : relic_pool(RelicTier::Rare)) {
+      if (!is_campfire(id)) run.relics.push_back(HeldRelic{id, 0});
+    }
+    const size_t before = run.relics.size();
+    run.begin_combat(EncounterPool::Elite);
+    run.combat.character.hp = 50;
+    run.end_combat();
+
+    if (run.relics.size() == before + 2) {
+      EXPECT_FALSE(is_campfire(run.relics[before + 1].id)) << "seed " << s;
+    }
+  }
+}
+
+// ------------------------------------------------- run-state spawn gates
+
+// Never stocked in a shop, anywhere else as normal.
+TEST(RelicSpawn, ShopExcludedRelicsCannotSpawnInAShop) {
+  RunState run = RunState::start(1);
+  for (RelicId id : {RelicId::TheCourier, RelicId::MawBank, RelicId::OldCoin,
+                     RelicId::SmilingMask}) {
+    run.phase = Phase::Shop;
+    EXPECT_FALSE(run.relic_can_spawn(id)) << static_cast<int>(id);
+    run.phase = Phase::Reward;
+    EXPECT_TRUE(run.relic_can_spawn(id)) << static_cast<int>(id);
+  }
+}
+
+// The same rule through generate_shop, as an invariant over every stocking.
+TEST(RelicSpawn, AShopNeverStocksAShopExcludedRelic) {
+  for (int floor = 1; floor <= 15; ++floor) {
+    RunState run = RunState::start(static_cast<uint64_t>(floor));
+    run.floor = floor;
+    run.enter_room(RoomType::Shop);
+    for (const ShopRelic& offer : run.shop_relics) {
+      EXPECT_NE(offer.id, RelicId::TheCourier) << "floor " << floor;
+      EXPECT_NE(offer.id, RelicId::MawBank) << "floor " << floor;
+      EXPECT_NE(offer.id, RelicId::OldCoin) << "floor " << floor;
+      EXPECT_NE(offer.id, RelicId::SmilingMask) << "floor " << floor;
+    }
+  }
+}
+
+// Fewer than two of the three HELD. One held leaves the other two open.
+TEST(RelicSpawn, CampfireRelicsStopAtTwoHeld) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::Girya);
+  EXPECT_TRUE(run.relic_can_spawn(RelicId::PeacePipe));
+  EXPECT_TRUE(run.relic_can_spawn(RelicId::Shovel));
+
+  run.obtain_relic(RelicId::PeacePipe);
+  EXPECT_FALSE(run.relic_can_spawn(RelicId::Shovel));
+}
+
 // --------------------------------------------------------------- the chest
 
 // A treasure room is a pass-through: it opens and EXITS. Every generated map

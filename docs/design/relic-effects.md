@@ -1335,3 +1335,35 @@ A bottled card cannot be removed — StS's shop and Toke screens list
 `getGroupWithoutBottledCards` — so `remove_card_from_deck` refuses it, which
 covers both. A transform would unbottle it (wiki.gg); there are no transforms
 yet.
+
+### 6.24 The remaining run-state spawn gates, and Black Star's exclusion
+
+§6.23 applied the Bottles' `canSpawn`; reading all 35 decompiled overrides found
+two more Act 1 groups that read the run, now applied in `relic_can_spawn` (Rob,
+2026-09-28):
+
+- **Courier, Maw Bank, Old Coin, Smiling Mask** — `!(getCurrRoom() instanceof
+  ShopRoom)`, so never stocked on a shop shelf (wiki.gg: Maw Bank "cannot be
+  bought from the Merchant"). `enter_room` sets the phase before
+  `generate_shop`, so `phase != Phase::Shop` is the room test.
+- **Girya, Peace Pipe, Shovel** — spawn only while fewer than two of the three
+  are held.
+
+⚠️ **wiki.gg and the decompiled source disagree on the campfire cap.** The wiki:
+"once two have been *offered*, the third will no longer be accessible by any
+means." The code counts relics *held*. The two effects are separate: StS also
+POPS every drawn relic from its tier pool, so an offered relic is gone whether
+or not it was taken. Take neither of two offered campfire relics and the third
+is still reachable — which the wiki's "by any means" says it is not. The
+decompiled gate ships; our pools are not consumed at all yet, which is its own
+gap (task, pending Rob).
+
+**Black Star's extra relic is never a campfire relic.** Not a `canSpawn` rule:
+`MonsterRoomElite.dropReward` draws the second relic with
+`returnRandomNonCampfireRelic`, which re-draws past Girya, Peace Pipe and
+Shovel (wiki.gg agrees). `end_combat` adds the three to the second draw's
+exclusion list. `BlackStarsExtraRelicIsNeverACampfireRelic` was checked by
+disabling the exclusion: 8 of its 60 seeds then fail.
+
+A sibling, `returnRandomScreenlessRelic`, re-draws past the three Bottles and
+Whetstone. Only Calling Bell and events call it; apply it when they land.

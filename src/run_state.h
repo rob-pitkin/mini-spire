@@ -438,6 +438,10 @@ struct RunState {
   // than the floor. random_relic skips a relic this refuses.
   bool relic_can_spawn(RelicId id) const;
 
+  // How many of Girya, Peace Pipe and Shovel are held — the campfire relics,
+  // which stop spawning at kMaxCampfireRelics.
+  int campfire_relics_held() const;
+
   // Raise Max HP by `amount` and heal by the same — gaining Max HP heals in
   // StS, which is a general rule rather than a per-relic quirk.
   void gain_max_hp(int amount);

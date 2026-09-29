@@ -30,8 +30,7 @@ namespace minispire {
 // can spawn on a starter deck), Courier / Maw Bank / Old Coin / Smiling Mask
 // (never while the current room is a shop), and Girya / Peace Pipe / Shovel
 // (fewer than two of those three held). RunState::relic_can_spawn applies the
-// Bottles' gates (relic-effects.md §6.23); the other two groups are not yet
-// applied.
+// gates for all three groups (relic-effects.md §6.23, §6.24).
 //
 // ⚠️ BLACK BLOOD IS EXCLUDED, and the reason is an ordering, not a property.
 // relicCanSpawn(BLACK_BLOOD) is `has(BURNING_BLOOD)`, which is TRUE for the
@@ -186,6 +185,10 @@ inline constexpr int kMatryoshkaUsedUp = -2;
 // gains 2 Energy and disarms it. It does not stack. StS encodes armed as -2 and
 // idle as -1, neither of which is displayed (the relic glows instead); here the
 // counter is a plain flag, 1 armed and 0 idle, so the default is idle.
+// Girya, Peace Pipe and Shovel stop spawning once this many of the three are
+// held (decompiled canSpawn, `campfireRelicCount < 2`).
+inline constexpr int kMaxCampfireRelics = 2;
+
 inline constexpr int kAncientTeaSetEnergy = 2;
 inline constexpr int kAncientTeaSetArmed = 1;
 
