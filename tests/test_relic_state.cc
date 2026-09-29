@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <random>
 #include <set>
 #include <vector>
 
@@ -681,6 +683,154 @@ TEST(Chest, IsDeterministicPerFloor) {
   };
   EXPECT_EQ(opened(5, 9), opened(5, 9));
   EXPECT_NE(opened(5, 9), opened(6, 9));
+}
+
+// --------------------------------------------------- Bottled relics (§6.23)
+
+int count_bottled(const RunState& run, Bottle b) {
+  int n = 0;
+  for (const Card& c : run.master_deck) {
+    if (c.bottle == b) ++n;
+  }
+  return n;
+}
+
+// canSpawn: a NON-basic Attack or Skill, or any Power. The starter deck has
+// none of the three.
+TEST(Bottles, NoBottleCanSpawnOnAStarterDeck) {
+  const RunState run = RunState::start(1);
+  EXPECT_FALSE(run.relic_can_spawn(RelicId::BottledFlame));
+  EXPECT_FALSE(run.relic_can_spawn(RelicId::BottledLightning));
+  EXPECT_FALSE(run.relic_can_spawn(RelicId::BottledTornado));
+}
+
+TEST(Bottles, EachBottleSpawnsOnceItsCardTypeIsInTheDeck) {
+  RunState run = RunState::start(1);
+  run.add_card(Card{CardId::Anger});
+  EXPECT_TRUE(run.relic_can_spawn(RelicId::BottledFlame));
+  EXPECT_FALSE(run.relic_can_spawn(RelicId::BottledLightning));
+
+  run.add_card(Card{CardId::ShrugItOff});
+  EXPECT_TRUE(run.relic_can_spawn(RelicId::BottledLightning));
+
+  EXPECT_FALSE(run.relic_can_spawn(RelicId::BottledTornado));
+  run.add_card(Card{CardId::Inflame});
+  EXPECT_TRUE(run.relic_can_spawn(RelicId::BottledTornado));
+}
+
+// random_relic honours the gate. Every other Uncommon is excluded, so the only
+// candidates left are the Bottles, which a starter deck cannot spawn — the
+// draw must come back empty whatever the RNG does.
+TEST(Bottles, RandomRelicSkipsABottleThatCannotSpawn) {
+  const RunState run = RunState::start(1);
+  std::vector<RelicId> exclude;
+  for (RelicId id : relic_pool(RelicTier::Uncommon)) {
+    if (id != RelicId::BottledFlame && id != RelicId::BottledLightning &&
+        id != RelicId::BottledTornado) {
+      exclude.push_back(id);
+    }
+  }
+  std::mt19937 rng(1);
+  EXPECT_FALSE(run.random_relic(RelicTier::Uncommon, rng, exclude).has_value());
+}
+
+// Pickup opens the choice over EVERY card of the type, starters included.
+TEST(Bottles, PickingUpBottledFlameOpensAChoiceOverTheDecksAttacks) {
+  RunState run = RunState::start(1);
+  run.add_card(Card{CardId::Anger});
+
+  run.obtain_relic(RelicId::BottledFlame);
+
+  ASSERT_TRUE(run.has_pending_deck_choice());
+  std::vector<CardId> expected = {CardId::Strike, CardId::Bash, CardId::Anger};
+  std::sort(expected.begin(), expected.end());
+  EXPECT_EQ(run.deck_choice_candidates(), expected);
+}
+
+TEST(Bottles, ResolvingBottlesExactlyOneCopy) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::BottledFlame);
+
+  EXPECT_FALSE(run.resolve_deck_choice(CardId::Defend)) << "not an Attack";
+  EXPECT_TRUE(run.has_pending_deck_choice());
+
+  EXPECT_TRUE(run.resolve_deck_choice(CardId::Strike));
+  EXPECT_FALSE(run.has_pending_deck_choice());
+  EXPECT_EQ(count_bottled(run, Bottle::Flame), 1);
+}
+
+// The marker is on the instance, so an upgrade — an id swap — keeps it.
+TEST(Bottles, ABottledCardStaysBottledWhenUpgraded) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::BottledFlame);
+  ASSERT_TRUE(run.resolve_deck_choice(CardId::Bash));
+
+  for (Card& c : run.master_deck) {
+    if (c.bottle == Bottle::Flame) upgrade_card_in_place(c);
+  }
+  for (const Card& c : run.master_deck) {
+    if (c.bottle == Bottle::Flame) EXPECT_EQ(c.card_id, CardId::BashPlus);
+  }
+}
+
+TEST(Bottles, AnOpenChoiceBlocksOtherRunActions) {
+  RunState run = RunState::start(1);
+  run.phase = Phase::Reward;
+  run.card_reward = {Card{CardId::Anger}};
+  run.obtain_relic(RelicId::BottledFlame);
+  const size_t deck_before = run.master_deck.size();
+
+  run.take_card_reward(0);
+
+  EXPECT_EQ(run.master_deck.size(), deck_before);
+  EXPECT_EQ(run.card_reward.size(), 1u) << "the reward screen moved on";
+}
+
+// Two Bottles from one room wait in acquisition order, each asking for its
+// own card type.
+TEST(Bottles, TwoBottlesAreAskedInTurn) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::BottledFlame);
+  run.obtain_relic(RelicId::BottledLightning);
+  ASSERT_EQ(run.pending_deck_choices.size(), 2u);
+
+  ASSERT_TRUE(run.resolve_deck_choice(CardId::Strike));
+  ASSERT_TRUE(run.has_pending_deck_choice());
+  EXPECT_EQ(run.deck_choice_candidates(), std::vector<CardId>{CardId::Defend})
+      << "the second choice should ask for Skills";
+
+  ASSERT_TRUE(run.resolve_deck_choice(CardId::Defend));
+  EXPECT_EQ(count_bottled(run, Bottle::Flame), 1);
+  EXPECT_EQ(count_bottled(run, Bottle::Lightning), 1);
+}
+
+// A room does not exit under an open choice: a chest that paid a Bottle
+// leaves only once the card is chosen.
+TEST(Bottles, AChestWaitsForTheChoiceBeforeLeaving) {
+  RunState run = RunState::start(1);
+  run.phase = Phase::Treasure;
+  run.obtain_relic(RelicId::BottledFlame);
+
+  run.leave_room();
+  EXPECT_EQ(run.phase, Phase::Treasure) << "left with the choice still open";
+
+  ASSERT_TRUE(run.resolve_deck_choice(CardId::Strike));
+  EXPECT_EQ(run.phase, Phase::Map);
+}
+
+TEST(Bottles, ABottledCardCannotBeRemoved) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::BottledFlame);
+  ASSERT_TRUE(run.resolve_deck_choice(CardId::Bash));
+  int bash = -1;
+  for (int i = 0; i < static_cast<int>(run.master_deck.size()); ++i) {
+    if (run.master_deck[i].bottle == Bottle::Flame) bash = i;
+  }
+  ASSERT_GE(bash, 0);
+  const size_t before = run.master_deck.size();
+
+  EXPECT_FALSE(run.remove_card_from_deck(bash));
+  EXPECT_EQ(run.master_deck.size(), before);
 }
 
 // ------------------------------------------------------ Matryoshka (§6.20)

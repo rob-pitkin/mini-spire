@@ -24,6 +24,15 @@ namespace minispire {
 // the tightest is Tiny Chest at floor <= 35 against Act 1's ~16 — and every
 // conditional gate is satisfiable.
 //
+// Satisfiable is not the same as satisfied: a gate that reads the RUN can be
+// false at the moment of a draw. Reading all 35 decompiled canSpawn overrides
+// finds three such groups in Act 1: the Bottles (a card type in the deck — none
+// can spawn on a starter deck), Courier / Maw Bank / Old Coin / Smiling Mask
+// (never while the current room is a shop), and Girya / Peace Pipe / Shovel
+// (fewer than two of those three held). RunState::relic_can_spawn applies the
+// Bottles' gates (relic-effects.md §6.23); the other two groups are not yet
+// applied.
+//
 // ⚠️ BLACK BLOOD IS EXCLUDED, and the reason is an ordering, not a property.
 // relicCanSpawn(BLACK_BLOOD) is `has(BURNING_BLOOD)`, which is TRUE for the
 // Ironclad. It is unreachable only because Neow's boss-relic option applies its

@@ -245,7 +245,7 @@ per §1.
 
 ---
 
-## 7. Status: 109 of 140 wired
+## 7. Status: 112 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -264,7 +264,7 @@ tree appears only on a comment line, so the discrepancy is not comment noise.
 One of the two counts used a different rule and neither recorded which, which is
 the whole argument for pinning the command here.
 
-The 31 remaining are not one backlog. **Most are blocked on engine pieces that
+The 28 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
@@ -277,8 +277,8 @@ have nothing to do with relics**, and those blockers are shared:
 | **No events** | Neow's Lament, Odd Mushroom, Warped Tongs, Spirit Poop, and the 5 Face Trader masks | 10 of the special-tier relics |
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
-| **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed) |
-| **Nothing blocking — but each needs a design first** | **7** — an exact count of the list that follows, not an estimate. The `~` this row carried for several batches was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. Juzu Bracelet and Tiny Chest shipped in §6.18, the three Eggs in §6.19, Matryoshka and Ancient Tea Set in §6.20, Chemical X and Pocketwatch in §6.21, Dead Branch in §6.22. **None of the 7 is a drop-in:** Unceasing Top (a post-drain check in `apply_action`, the hot path M2 measures), Snecko Eye (§6.22 — hand size and a Confusion cost roll the single `cost_override` slot cannot hold), Singing Bowl (a new option on the card reward screen), Wing Boots (off-path moves in `available_paths` and the path mask), and the three Bottled relics | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics may need a card-selection screen at pickup — check before batching them (the Eggs did not: §6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
+| **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed). **A run-layer deck choice now exists** (§6.23, `pending_deck_choices`) — Empty Cage (remove 2) and Astrolabe (transform 3) need a new purpose on it, not a new mechanism |
+| **Nothing blocking — but each needs a design first** | **4** — an exact count of the list that follows, not an estimate. The `~` this row carried for several batches was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. Juzu Bracelet and Tiny Chest shipped in §6.18, the three Eggs in §6.19, Matryoshka and Ancient Tea Set in §6.20, Chemical X and Pocketwatch in §6.21, Dead Branch in §6.22, the three Bottled relics in §6.23. **None of the 4 is a drop-in:** Unceasing Top (a post-drain check in `apply_action`, the hot path M2 measures), Snecko Eye (§6.22 — hand size and a Confusion cost roll the single `cost_override` slot cannot hold), Singing Bowl (a new option on the card reward screen), and Wing Boots (off-path moves in `available_paths` and the path mask) | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics did need a card-selection screen at pickup, which §6.23 built; the Eggs did not (§6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
 | **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
@@ -1271,3 +1271,67 @@ Madness, Mummified Hand, Forethought and Infernal Blade; Mummified Hand's "0
 until played" on a Snecko-rolled card would, when played, clear back to the
 printed cost instead of the rolled one. That needs a layered cost model, which
 is a design decision rather than a relic.
+
+### 6.23 The Bottled relics, and a run-layer deck choice
+
+Bottled Flame, Lightning and Tornado are one mechanism differing by card type
+(Attack, Skill, Power), shipped as one batch. Decompiled `Bottled*`,
+`CardGroup.initializeDeck` / `getPurgeableCards` /
+`getGroupWithoutBottledCards` and `AbstractCard`'s `inBottle*` flags; wiki.gg
+agrees on every point it covers. Four decisions, all Rob's (2026-09-28):
+
+**1. The marker is on the card instance.** `Card::bottle` (none / flame /
+lightning / tornado), as StS keeps `inBottleFlame` and friends on the card. It
+survives an upgrade (an id swap), rides into a fight on the deck copy, and makes
+the copy unremovable. The alternative — the card's uid in the relic's counter —
+would have put a meaningless integer into the relic-counter observation.
+`same_as` ignores it: a bottled Strike in hand plays exactly as any other. Which
+card is bottled is something a human sees (the deck view's bottle icon, the
+relic's tooltip), so the run observation will need it (task #9).
+
+**2. A pending run-layer deck choice.** Pickup opens StS's grid select over the
+deck's purgeable cards of the type — starter Strikes and Bash included — with no
+cancel. `RunState::pending_deck_choices` is that screen, and it is v2-spec
+§6.1's `pending_purpose`: `DeckChoicePurpose::Bottle`, answered entity-indexed
+by `resolve_deck_choice(CardId)` (§6.2 — copies of a CardId are
+interchangeable). Three properties the tests pin:
+
+- **A queue, not a slot.** Matryoshka makes one chest pay two relics and Black
+  Star one elite; StS collects those one at a time, each opening its own
+  screen, and ours are collected together, so the screens wait in acquisition
+  order. The first draft judged "is there anything to bottle" by the queue's
+  FRONT, which would have tested a second Bottle against the first one's card
+  type; it now checks the relic being taken.
+- **Every other run action refuses while one is open** — paths, rewards, shop,
+  campfire, potion discard. It overlays the phase rather than replacing it, as
+  the grid select sits over the room in StS.
+- **A room does not exit under an open choice.** A chest and a Dig both call
+  `leave_room` straight after paying; `leave_room` records the exit and
+  `resolve_deck_choice` takes it once the queue empties. One rule in
+  `leave_room` rather than a check at every caller.
+
+**3. Spawn gating, and the wider gap it exposed.** StS's `canSpawn` for the
+Bottles reads the deck: Flame wants a NON-basic Attack, Lightning a non-basic
+Skill, Tornado any Power. A starter deck has none, so no Bottle can spawn until
+a card is added — which our pools did not know. `RunState::relic_can_spawn` now
+applies those gates inside `random_relic`, skipping the relic without removing
+it, as StS falls back to the pool's end. `CardRarity` has no Basic, so
+`is_basic_card` enumerates the starters.
+
+⚠️ `relic.h` said every conditional gate was *satisfiable* in Act 1, which is
+true and was read as "can be ignored". Reading all 35 decompiled `canSpawn`
+overrides finds two more groups that read the run and are still not applied:
+Courier / Maw Bank / Old Coin / Smiling Mask are never stocked in a shop, and
+Girya / Peace Pipe / Shovel spawn only while fewer than two of those three are
+held. Recorded as a task, pending Rob.
+
+**4. Every Innate and bottled card reaches the opening hand.** StS's
+`initializeDeck` puts them all on top and queues an extra draw for however many
+exceed the hand size. `draw_opening_hand` capped them at 5, a pre-existing
+divergence that three Bottles plus Innate cards could now reach; it now pulls
+all of them and fills the rest of the hand as before.
+
+A bottled card cannot be removed — StS's shop and Toke screens list
+`getGroupWithoutBottledCards` — so `remove_card_from_deck` refuses it, which
+covers both. A transform would unbottle it (wiki.gg); there are no transforms
+yet.

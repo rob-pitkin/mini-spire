@@ -162,6 +162,17 @@ inline constexpr int kShopCardSlots = 5;
 inline constexpr float kColorlessShopMarkup = 1.2f;
 
 // One item on offer.
+// Why a deck choice is open — the pending_purpose of v2-spec §6.1, which the
+// observation will need so "pick a card to bottle" does not alias another
+// purpose. Bottle is the only one today.
+enum class DeckChoicePurpose : uint8_t { Bottle };
+
+// One forced choice over the master deck, and the relic that opened it.
+struct PendingDeckChoice {
+  DeckChoicePurpose purpose;
+  RelicId relic;
+};
+
 struct ShopItem {
   Card card;
   // Visible to a player as the card's border colour, and what sets the price.
@@ -389,6 +400,43 @@ struct RunState {
   // War Paint's upgrades). Those run here rather than at a trigger site because
   // there is no fight to queue them into.
   bool obtain_relic(RelicId id);
+
+  // --- pending deck choices (§6.23; v2-spec §6.1) ---
+  //
+  // A choice over the master deck that a pickup forces before anything else can
+  // happen: StS opens a grid select with no cancel. Today only the Bottled
+  // relics open one; Empty Cage, Astrolabe and Dolly's Mirror will reuse it.
+  //
+  // A QUEUE, front first, because one room can open two: Matryoshka makes a
+  // chest pay two relics, and Black Star makes an elite drop two. StS collects
+  // relics one at a time, each opening its own screen; ours are collected
+  // together, so the screens wait in acquisition order.
+  //
+  // While one is pending every other run action refuses. It overlays the
+  // phase rather than replacing it — the reward, shop or chest is still there
+  // underneath, as the grid select sits over it in StS.
+  std::vector<PendingDeckChoice> pending_deck_choices;
+
+  bool has_pending_deck_choice() const { return !pending_deck_choices.empty(); }
+
+  // leave_room was called while a choice was open; resolve_deck_choice takes
+  // the exit once the queue empties.
+  bool leave_room_after_deck_choice = false;
+
+  // The distinct CardIds the front choice may pick, ascending. Entity-indexed
+  // (v2-spec §6.2): two copies of a CardId are interchangeable, so one entry
+  // stands for all of them. Empty when nothing is pending.
+  std::vector<CardId> deck_choice_candidates() const;
+
+  // Answer the front choice with `id`, applying it to the first eligible copy.
+  // False, and nothing changes, if nothing is pending or `id` is not a
+  // candidate. A treasure room that was waiting on the choice leaves once the
+  // last one is answered.
+  bool resolve_deck_choice(CardId id);
+
+  // StS's relic canSpawn, for the relics whose gate depends on the run rather
+  // than the floor. random_relic skips a relic this refuses.
+  bool relic_can_spawn(RelicId id) const;
 
   // Raise Max HP by `amount` and heal by the same — gaining Max HP heals in
   // StS, which is a general rule rather than a per-relic quirk.

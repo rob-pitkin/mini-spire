@@ -2469,6 +2469,47 @@ TEST(TurnLoop, InnateCardStartsInTheOpeningHand) {
   EXPECT_TRUE(found) << "Innate card must start in the opening hand";
 }
 
+// A bottled card is placed like an Innate one. Over several seeds, because the
+// claim is that NO shuffle can keep it out — true of every one.
+TEST(TurnLoop, ABottledCardStartsInTheOpeningHand) {
+  for (uint32_t seed = 0; seed < 10; ++seed) {
+    std::vector<Card> deck;
+    Card bottled{CardId::Bash};
+    bottled.bottle = Bottle::Flame;
+    deck.push_back(bottled);
+    for (int i = 0; i < 9; ++i) deck.push_back(Card{CardId::Strike});
+
+    CombatState s = start_combat(seed, EncounterPool::Weak, deck);
+
+    bool found = false;
+    for (const Card& c : s.current_hand) {
+      if (c.card_id == CardId::Bash) found = true;
+    }
+    EXPECT_TRUE(found) << "seed " << seed << ": the bottled card was not dealt";
+  }
+}
+
+// More Innate and bottled cards than the hand holds: StS's initializeDeck puts
+// all of them on top and draws the excess, so all six arrive and nothing else
+// does. The old loop stopped at five.
+TEST(TurnLoop, EveryInnateAndBottledCardArrivesPastFive) {
+  std::vector<Card> deck;
+  deck.push_back(Card{CardId::BrutalityPlus});  // Innate
+  for (int i = 0; i < 5; ++i) {
+    Card c{CardId::Strike};
+    c.bottle = Bottle::Flame;  // six placed cards in all
+    deck.push_back(c);
+  }
+  for (int i = 0; i < 5; ++i) deck.push_back(Card{CardId::Defend});
+
+  CombatState s = start_combat(0, EncounterPool::Weak, deck);
+
+  EXPECT_EQ(s.current_hand.size(), 6u);
+  for (const Card& c : s.current_hand) {
+    EXPECT_NE(c.card_id, CardId::Defend) << "an unplaced card took a slot";
+  }
+}
+
 // ============================================================================
 // Tier D / Stage 4b: the query/modifier layer.
 // Each test pins ONE query rule (effects-architecture §4.5). The invariant

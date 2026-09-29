@@ -115,12 +115,100 @@ void RunState::lose_max_hp(int amount) {
   if (hp > max_hp) hp = max_hp;
 }
 
+namespace {
+
+// Which Bottle a relic fills, and what card type it takes.
+Bottle bottle_of(RelicId id) {
+  switch (id) {
+    case RelicId::BottledFlame: return Bottle::Flame;
+    case RelicId::BottledLightning: return Bottle::Lightning;
+    case RelicId::BottledTornado: return Bottle::Tornado;
+    default: return Bottle::None;
+  }
+}
+
+CardType bottle_type(Bottle b) {
+  switch (b) {
+    case Bottle::Flame: return CardType::Attack;
+    case Bottle::Lightning: return CardType::Skill;
+    default: return CardType::Power;
+  }
+}
+
+// May the front choice pick this copy? The Bottles take any card of their
+// type, starters included, from getPurgeableCards — which drops only
+// Necronomicurse, Curse of the Bell and Ascender's Bane, none of them an
+// Attack, Skill or Power. A copy already in another Bottle is excluded for
+// clarity; its type rules it out anyway.
+bool bottle_can_take(const Card& card, Bottle b) {
+  return card.bottle == Bottle::None &&
+         CARD_DATABASE.at(card.card_id).type == bottle_type(b);
+}
+
+}  // namespace
+
+std::vector<CardId> RunState::deck_choice_candidates() const {
+  std::vector<CardId> ids;
+  if (pending_deck_choices.empty()) return ids;
+  const Bottle b = bottle_of(pending_deck_choices.front().relic);
+  for (const Card& card : master_deck) {
+    if (!bottle_can_take(card, b)) continue;
+    if (std::find(ids.begin(), ids.end(), card.card_id) == ids.end()) {
+      ids.push_back(card.card_id);
+    }
+  }
+  std::sort(ids.begin(), ids.end());
+  return ids;
+}
+
+bool RunState::resolve_deck_choice(CardId id) {
+  if (pending_deck_choices.empty()) return false;
+  const Bottle b = bottle_of(pending_deck_choices.front().relic);
+  // The FIRST eligible copy. Copies of one CardId are interchangeable (v2-spec
+  // §6.2), so which one is bottled cannot matter.
+  for (Card& card : master_deck) {
+    if (card.card_id != id || !bottle_can_take(card, b)) continue;
+    card.bottle = b;
+    pending_deck_choices.erase(pending_deck_choices.begin());
+    if (pending_deck_choices.empty() && leave_room_after_deck_choice) {
+      leave_room_after_deck_choice = false;
+      leave_room();
+    }
+    return true;
+  }
+  return false;
+}
+
+bool RunState::relic_can_spawn(RelicId id) const {
+  // Decompiled canSpawn. Flame and Lightning want a NON-basic card of their
+  // type, so no Bottle can spawn on a starter deck; Tornado wants any Power
+  // (CardHelper.hasCardType). The floor gates on these three all clear Act 1.
+  const auto deck_has = [&](CardType type, bool non_basic) {
+    for (const Card& card : master_deck) {
+      if (CARD_DATABASE.at(card.card_id).type != type) continue;
+      if (non_basic && is_basic_card(card.card_id)) continue;
+      return true;
+    }
+    return false;
+  };
+  switch (id) {
+    case RelicId::BottledFlame: return deck_has(CardType::Attack, true);
+    case RelicId::BottledLightning: return deck_has(CardType::Skill, true);
+    case RelicId::BottledTornado: return deck_has(CardType::Power, false);
+    default: return true;
+  }
+}
+
 bool RunState::remove_card_from_deck(int index) {
   if (index < 0 || index >= static_cast<int>(master_deck.size())) return false;
   const CardData& data = CARD_DATABASE.at(master_deck[index].card_id);
   // Curse of the Bell: "cannot be removed from your deck", and per the wiki it
   // cannot be transformed either — the same gate, since a transform removes.
   if (data.cannot_be_removed) return false;
+  // A bottled card cannot be removed either (wiki.gg). StS's removal screens —
+  // the shop's and Peace Pipe's Toke — list getGroupWithoutBottledCards, so
+  // the copy is never offered; refusing it here covers both.
+  if (master_deck[index].bottle != Bottle::None) return false;
 
   // Parasite: 3 Max HP when it leaves the MASTER DECK (decompiled
   // Parasite.onRemoveFromMasterDeck -> decreaseMaxHealth(3)). Not on exhaust,
@@ -219,6 +307,28 @@ bool RunState::obtain_relic(RelicId id) {
       held_relic(id)->counter = kMatryoshkaCharges;
       break;
 
+    // The Bottles open a forced choice over the deck (§6.23). StS opens it only
+    // when a candidate exists; with none, the relic is simply held. Spawn
+    // gating makes that unreachable for a DRAWN Bottle, but the check keeps an
+    // empty choice from ever being queued.
+    //
+    // Checked against THIS relic, not via deck_choice_candidates(), which
+    // answers for the front of the queue — a second Bottle from the same chest
+    // would otherwise be judged by the first one's card type.
+    case RelicId::BottledFlame:
+    case RelicId::BottledLightning:
+    case RelicId::BottledTornado: {
+      const Bottle b = bottle_of(id);
+      const bool any = std::any_of(
+          master_deck.begin(), master_deck.end(),
+          [b](const Card& card) { return bottle_can_take(card, b); });
+      if (any) {
+        pending_deck_choices.push_back(
+            PendingDeckChoice{DeckChoicePurpose::Bottle, id});
+      }
+      break;
+    }
+
     // Straight through gain_gold, so Ectoplasm refuses it exactly as it refuses
     // every other gain. StS routes this through player.gainGold for the same
     // reason.
@@ -280,6 +390,7 @@ bool RunState::obtain_potion(PotionId id) {
 }
 
 void RunState::discard_potion(int index) {
+  if (has_pending_deck_choice()) return;
   if (index < 0 || index >= static_cast<int>(potions.size())) return;
   potions.erase(potions.begin() + index);
 }
@@ -304,6 +415,10 @@ std::optional<RelicId> RunState::random_relic(
   for (RelicId id : pool) {
     if (has_relic(id)) continue;
     if (std::find(exclude.begin(), exclude.end(), id) != exclude.end()) continue;
+    // A relic that cannot spawn now stays in the pool for later, as in StS,
+    // where returnRandomRelicKey falls back to the pool's end without removing
+    // it.
+    if (!relic_can_spawn(id)) continue;
     candidates.push_back(id);
   }
   // A tier CAN be exhausted late in a long run. Signalling it is the point:
@@ -532,6 +647,7 @@ int RunState::girya_uses() const {
 }
 
 void RunState::rest_heal() {
+  if (has_pending_deck_choice()) return;
   if (phase != Phase::Rest) return;
   if (has_relic(RelicId::CoffeeDripper)) return;  // not an option at all
 
@@ -554,6 +670,7 @@ void RunState::rest_heal() {
 }
 
 void RunState::rest_smith(int index) {
+  if (has_pending_deck_choice()) return;
   if (phase != Phase::Rest) return;
   if (has_relic(RelicId::FusionHammer)) return;
   if (index < 0 || index >= static_cast<int>(master_deck.size())) return;
@@ -564,6 +681,7 @@ void RunState::rest_smith(int index) {
 }
 
 void RunState::rest_lift() {
+  if (has_pending_deck_choice()) return;
   if (phase != Phase::Rest) return;
   if (!has_relic(RelicId::Girya) || girya_uses() >= kGiryaMaxUses) return;
 
@@ -577,6 +695,7 @@ void RunState::rest_lift() {
 }
 
 void RunState::rest_toke(int index) {
+  if (has_pending_deck_choice()) return;
   if (phase != Phase::Rest) return;
   if (!has_relic(RelicId::PeacePipe)) return;
   // A refused removal does not consume the rest site: in StS the card simply
@@ -586,6 +705,7 @@ void RunState::rest_toke(int index) {
 }
 
 void RunState::rest_dig() {
+  if (has_pending_deck_choice()) return;
   if (phase != Phase::Rest) return;
   if (!has_relic(RelicId::Shovel)) return;
 
@@ -862,6 +982,7 @@ int RunState::removal_price() const {
 }
 
 void RunState::buy_relic(int index) {
+  if (has_pending_deck_choice()) return;
   if (phase != Phase::Shop) return;
   if (index < 0 || index >= static_cast<int>(shop_relics.size())) return;
   ShopRelic& offer = shop_relics[index];
@@ -876,6 +997,7 @@ void RunState::buy_relic(int index) {
 }
 
 void RunState::buy_potion(int index) {
+  if (has_pending_deck_choice()) return;
   if (phase != Phase::Shop) return;
   if (index < 0 || index >= static_cast<int>(shop_potions.size())) return;
   ShopPotion& offer = shop_potions[index];
@@ -890,6 +1012,7 @@ void RunState::buy_potion(int index) {
 }
 
 void RunState::buy_card(int index) {
+  if (has_pending_deck_choice()) return;
   if (phase != Phase::Shop) return;
   if (index < 0 || index >= static_cast<int>(shop_cards.size())) return;
   ShopItem& item = shop_cards[index];
@@ -903,6 +1026,7 @@ void RunState::buy_card(int index) {
 }
 
 void RunState::buy_card_removal(int deck_index) {
+  if (has_pending_deck_choice()) return;
   if (phase != Phase::Shop) return;
   if (shop_remove_price < 0 || gold < shop_remove_price) return;
 
@@ -918,6 +1042,7 @@ void RunState::buy_card_removal(int deck_index) {
 }
 
 void RunState::leave_shop() {
+  if (has_pending_deck_choice()) return;
   if (phase != Phase::Shop) return;
   // All three shelves, not just the cards: the header documents the whole block
   // as empty outside Phase::Shop, and anything reading it later — the v2
@@ -1097,6 +1222,7 @@ void RunState::enter_room(RoomType room) {
 
 void RunState::choose_path(int chosen_column) {
   if (is_terminal()) return;
+  if (has_pending_deck_choice()) return;
 
   const std::vector<int> options = available_paths();
   if (std::find(options.begin(), options.end(), chosen_column) == options.end()) {
@@ -1353,6 +1479,7 @@ void RunState::generate_card_reward(RewardSource source) {
 }
 
 void RunState::take_card_reward(int index) {
+  if (has_pending_deck_choice()) return;
   if (index < 0 || index >= static_cast<int>(card_reward.size())) return;
   // add_card is what mints the uid — the card acquires identity at the moment
   // it becomes the player's, not when it was offered.
@@ -1361,6 +1488,7 @@ void RunState::take_card_reward(int index) {
 }
 
 void RunState::skip_card_reward() {
+  if (has_pending_deck_choice()) return;
   card_reward.clear();
 
   // Prayer Wheel's extra reward is a SECOND SCREEN, not more cards on the first
@@ -1377,6 +1505,15 @@ void RunState::skip_card_reward() {
 
 void RunState::leave_room() {
   if (is_terminal()) return;
+
+  // A room that pays a Bottled relic — a chest, a Dig — does not exit while
+  // the choice is open: in StS the grid select sits over the room. The exit is
+  // recorded and taken when resolve_deck_choice answers the last choice. One
+  // rule here rather than a check at every caller.
+  if (has_pending_deck_choice()) {
+    leave_room_after_deck_choice = true;
+    return;
+  }
 
   if (floor >= final_floor) {
     // Stands in for killing the Act 1 boss. Replaced in Phase 7 by the boss

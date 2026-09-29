@@ -482,6 +482,10 @@ enum class CostDuration : uint8_t {
 // cannot be 0.
 inline constexpr int kNoCostOverride = -1;
 
+// Which Bottled relic a card is in. One field rather than StS's three flags:
+// each relic bottles a different card type, so a card is in at most one.
+enum class Bottle : uint8_t { None, Flame, Lightning, Tornado };
+
 // How a card's base damage is computed (Stage 4b). Most cards just use
 // CardData::damage; a few derive it from state, which is a QUERY (pulled at
 // resolution), not a stored value. Resolved by base_card_damage in query.cc.
@@ -543,6 +547,13 @@ struct Card {
   int cost_override = kNoCostOverride;
   CostDuration cost_duration = CostDuration::None;
 
+  // Which Bottled relic holds this copy, if any (relic-effects.md §6.23). StS
+  // keeps the same flags on the card instance (inBottleFlame, …): the marker
+  // survives an upgrade, rides into a fight on the deck copy, where it puts the
+  // card in the opening hand, and makes the copy unremovable. Run-scoped — it
+  // is set in the master deck and only read in combat.
+  Bottle bottle = Bottle::None;
+
   // Do these two instances play identically? Used to decide whether they
   // collapse into one option in a choice.
   //
@@ -552,6 +563,9 @@ struct Card {
   //
   // The cost override IS compared: a free Strike and a printed Strike do not
   // play the same, and a human sees the difference on the card.
+  //
+  // `bottle` is NOT compared: it acts before the opening hand exists, and a
+  // bottled Strike in hand plays exactly as any other.
   bool same_as(const Card& other) const {
     return card_id == other.card_id && bonus_damage == other.bonus_damage &&
            upgrades == other.upgrades &&
@@ -1108,6 +1122,23 @@ inline bool is_upgraded(CardId id) {
     return ids;
   }();
   return kUpgradedIds.count(id) > 0;
+}
+
+// StS's CardRarity.BASIC: the Ironclad starter cards, upgraded or not. Our
+// CardRarity only models what a reward can roll, so BASIC is enumerated here.
+// Read by the Bottled relics' spawn rule, which wants a NON-basic card.
+inline bool is_basic_card(CardId id) {
+  switch (id) {
+    case CardId::Strike:
+    case CardId::StrikePlus:
+    case CardId::Defend:
+    case CardId::DefendPlus:
+    case CardId::Bash:
+    case CardId::BashPlus:
+      return true;
+    default:
+      return false;
+  }
 }
 
 // Upper bound on simultaneous options. Set to kNumCardTypes so a pile choice
