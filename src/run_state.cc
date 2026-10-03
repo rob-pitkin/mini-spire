@@ -528,6 +528,37 @@ void RunState::roll_potion_drop(int rewards_already_on_screen) {
   obtain_potion(drop);
 }
 
+ChestSize chest_size_for_roll(int size_roll) {
+  if (size_roll < kChestSizeChances[0]) return ChestSize::Small;
+  if (size_roll < kChestSizeChances[0] + kChestSizeChances[1]) {
+    return ChestSize::Medium;
+  }
+  return ChestSize::Large;
+}
+
+RelicTier chest_tier_for_roll(ChestSize size, int roll) {
+  const int s = static_cast<int>(size);
+  const int common_chance = kChestTierChances[s][0];
+  const int uncommon_chance = kChestTierChances[s][1];
+  if (roll < common_chance) return RelicTier::Common;
+  if (roll < common_chance + uncommon_chance) return RelicTier::Uncommon;
+  return RelicTier::Rare;
+}
+
+int chest_gold_for_roll(ChestSize size, int roll) {
+  // The wiki states the rule directly: a chest gives gold only if it also rolled
+  // the LOWEST rarity available to that chest size. Reading gold off the SAME
+  // roll as the tier reproduces that exactly, because each size's gold band sits
+  // inside its lowest-tier band — small 50 within common 75, medium 35 within
+  // common 35, large 50 within uncommon 75 (a large chest has no common).
+  //
+  // So for a large chest this is a hard exclusion, not a tendency: a rare from a
+  // large chest can never come with gold. Two independent rolls would leave both
+  // marginals looking correct and silently break that.
+  const int s = static_cast<int>(size);
+  return roll < kChestGoldChances[s] ? kChestGoldAmounts[s] : 0;
+}
+
 void RunState::open_chest() {
   // The RELIC stream, not the treasure stream — §4 and RngStream's own comment
   // both assign a chest's relic here, and it is the stream the elite reward
@@ -538,35 +569,22 @@ void RunState::open_chest() {
       make_stream(run_seed, RngStream::Relic, static_cast<uint32_t>(floor));
 
   const int size_roll = std::uniform_int_distribution<int>(0, 99)(rng);
-  const ChestSize size =
-      size_roll < kChestSizeChances[0]
-          ? ChestSize::Small
-          : size_roll < kChestSizeChances[0] + kChestSizeChances[1]
-                ? ChestSize::Medium
-                : ChestSize::Large;
-  const int s = static_cast<int>(size);
+  const ChestSize size = chest_size_for_roll(size_roll);
 
   // ONE roll decides both whether there is gold and which tier the relic is,
-  // and the correlation that creates is the mechanic rather than a side effect.
-  // The wiki states the rule directly: a chest gives gold only if it also rolled
-  // the LOWEST rarity available to that chest size. A single roll reproduces
-  // that exactly, because each size's gold band sits inside its lowest-tier
-  // band — small 50 within common 75, medium 35 within common 35, large 50
-  // within uncommon 75 (a large chest has no common).
-  //
-  // So for a large chest this is a hard exclusion, not a tendency: a rare from a
-  // large chest can never come with gold. Two independent rolls would leave both
-  // marginals looking correct and silently break that.
+  // and the correlation that creates is the mechanic rather than a side effect
+  // (see chest_gold_for_roll).
   const int roll = std::uniform_int_distribution<int>(0, 99)(rng);
 
-  if (roll < kChestGoldChances[s]) gold += kChestGoldAmounts[s];
+  // Through gain_gold: a chest's gold is a reward item StS claims with
+  // player.gainGold, so Ectoplasm refuses it. This was a bare `gold +=` that
+  // Ectoplasm could not see. (No Golden Idol bonus — RewardItem skips it in a
+  // TreasureRoom — and gain_gold applies none.)
+  if (const int paid = chest_gold_for_roll(size, roll); paid > 0) {
+    gain_gold(paid);
+  }
 
-  const int common_chance = kChestTierChances[s][0];
-  const int uncommon_chance = kChestTierChances[s][1];
-  const RelicTier tier = roll < common_chance ? RelicTier::Common
-                         : roll < common_chance + uncommon_chance
-                             ? RelicTier::Uncommon
-                             : RelicTier::Rare;
+  const RelicTier tier = chest_tier_for_roll(size, roll);
 
   // Drawn now, obtained last: Matryoshka's relic is collected first (below).
   const std::optional<RelicId> chest_relic = random_relic(tier, rng);

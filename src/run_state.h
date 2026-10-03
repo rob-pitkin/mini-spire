@@ -125,6 +125,14 @@ inline constexpr int kChestTierChances[3][2] = {{75, 25}, {35, 50}, {0, 75}};
 inline constexpr int kChestGoldChances[] = {50, 35, 50};
 inline constexpr int kChestGoldAmounts[] = {25, 50, 75};
 
+// A chest's outcome as pure functions of its two rolls (each 0..99). open_chest
+// draws the rolls and calls these; they are exposed so the size, tier and gold
+// rules can be tested over every roll instead of sampled across seeds.
+ChestSize chest_size_for_roll(int size_roll);
+RelicTier chest_tier_for_roll(ChestSize size, int roll);
+// 0 when this roll pays no gold.
+int chest_gold_for_roll(ChestSize size, int roll);
+
 // --- shops (§4.3) ---
 
 // Base prices by card rarity: common, uncommon, rare.

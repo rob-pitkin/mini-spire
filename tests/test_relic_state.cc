@@ -758,49 +758,103 @@ TEST(Chest, ATreasureRoomOpensAndThenLeaves) {
   EXPECT_EQ(run.phase, Phase::Map);
 }
 
-// A chest rolls a SIZE first, and the size decides the tier odds. A large
-// chest can never give a common and a small can never give a rare — which is a
-// different distribution from an elite's, and conflating them is easy.
+// The chest's rules, tested over EVERY roll through the pure functions
+// open_chest calls — no seeds, so nothing depends on what a stream produces.
+// (These replaced 300- and 200-seed sweeps that asserted "at least one common",
+// "at least one rare", "some but not all paid gold": probability arguments over
+// draws that are not the same on every standard library.)
+
+// 50 / 33 / 17, at exactly these boundaries.
+TEST(Chest, SizeRollMapsToSmallMediumLarge) {
+  for (int roll = 0; roll < 100; ++roll) {
+    const ChestSize expected = roll < 50   ? ChestSize::Small
+                               : roll < 83 ? ChestSize::Medium
+                                           : ChestSize::Large;
+    EXPECT_EQ(chest_size_for_roll(roll), expected) << "roll " << roll;
+  }
+}
+
+// The size decides the tier odds: a large chest can never give a common and a
+// small can never give a rare — a different distribution from an elite's.
+// Every tier each size CAN give is reached by some roll.
 TEST(Chest, TierRespectsChestSizeBounds) {
-  int commons = 0, rares = 0;
-  for (uint64_t s = 0; s < 300; ++s) {
-    RunState run = RunState::start(s);
-    run.floor = 9;
-    run.open_chest();
-    ASSERT_EQ(run.relics.size(), 2u) << "starter relic + the chest's";
-    const RelicTier t = relic_tier(run.relics.back().id);
-    EXPECT_TRUE(t == RelicTier::Common || t == RelicTier::Uncommon ||
-                t == RelicTier::Rare);
-    if (t == RelicTier::Common) ++commons;
-    if (t == RelicTier::Rare) ++rares;
+  struct Expect {
+    ChestSize size;
+    bool common, uncommon, rare;
+  };
+  for (const Expect& e : {Expect{ChestSize::Small, true, true, false},
+                          Expect{ChestSize::Medium, true, true, true},
+                          Expect{ChestSize::Large, false, true, true}}) {
+    bool saw_common = false, saw_uncommon = false, saw_rare = false;
+    for (int roll = 0; roll < 100; ++roll) {
+      switch (chest_tier_for_roll(e.size, roll)) {
+        case RelicTier::Common: saw_common = true; break;
+        case RelicTier::Uncommon: saw_uncommon = true; break;
+        case RelicTier::Rare: saw_rare = true; break;
+        default: ADD_FAILURE() << "a chest rolled a non-chest tier"; break;
+      }
+    }
+    EXPECT_EQ(saw_common, e.common) << static_cast<int>(e.size);
+    EXPECT_EQ(saw_uncommon, e.uncommon) << static_cast<int>(e.size);
+    EXPECT_EQ(saw_rare, e.rare) << static_cast<int>(e.size);
   }
-  // Both extremes must occur: a distribution stuck on one tier would pass a
-  // weaker assertion.
-  EXPECT_GT(commons, 0);
-  EXPECT_GT(rares, 0);
 }
 
-TEST(Chest, SometimesPaysGoldAsWell) {
-  int with_gold = 0;
-  for (uint64_t s = 0; s < 200; ++s) {
-    RunState run = RunState::start(s);
-    run.floor = 9;
-    run.open_chest();
-    if (run.gold > 0) ++with_gold;
+// Gold only with the size's LOWEST tier (the wiki's rule, and the reason one
+// roll decides both), always the size's own amount, and on some rolls but not
+// all.
+TEST(Chest, GoldComesOnlyWithTheLowestTier) {
+  for (ChestSize size : {ChestSize::Small, ChestSize::Medium, ChestSize::Large}) {
+    const RelicTier lowest =
+        size == ChestSize::Large ? RelicTier::Uncommon : RelicTier::Common;
+    int paid = 0;
+    for (int roll = 0; roll < 100; ++roll) {
+      const int gold = chest_gold_for_roll(size, roll);
+      if (gold == 0) continue;
+      ++paid;
+      EXPECT_EQ(gold, kChestGoldAmounts[static_cast<int>(size)]);
+      EXPECT_EQ(chest_tier_for_roll(size, roll), lowest)
+          << "gold came with a higher tier on roll " << roll;
+    }
+    EXPECT_EQ(paid, kChestGoldChances[static_cast<int>(size)])
+        << "the gold band is the wrong width";
   }
-  EXPECT_GT(with_gold, 0);
-  EXPECT_LT(with_gold, 200) << "every chest paid gold — is the roll being used?";
 }
 
+// Chest gold is a reward StS claims through player.gainGold, so Ectoplasm
+// refuses it; it used to be added directly. Compared against the same chest
+// without Ectoplasm — a boss relic, absent from the chest pools, so both open
+// the identical chest. The invariant holds on every seed; a seed whose chest
+// rolls no gold simply cannot show the bug, which is why the comparison is
+// spelled out rather than asserting "some seed paid gold".
+TEST(Chest, EctoplasmRefusesChestGold) {
+  for (uint64_t seed = 0; seed < 20; ++seed) {
+    RunState control = RunState::start(seed);
+    RunState held = RunState::start(seed);
+    held.obtain_relic(RelicId::Ectoplasm);
+    control.floor = held.floor = 9;
+
+    control.open_chest();
+    held.open_chest();
+
+    EXPECT_EQ(held.relics.back().id, control.relics.back().id) << "seed " << seed;
+    EXPECT_EQ(held.gold, 0) << "seed " << seed << ": the chest paid "
+                            << control.gold << " through Ectoplasm";
+  }
+}
+
+// The same seed and floor open the same chest. Compares the chest's OWN relic
+// — relics.back(). This compared relics[0], which is always the starter Burning
+// Blood, so only the gold half ever checked anything.
 TEST(Chest, IsDeterministicPerFloor) {
   auto opened = [](uint64_t seed, int floor) {
     RunState run = RunState::start(seed);
     run.floor = floor;
     run.open_chest();
-    return std::pair<int, int>{static_cast<int>(run.relics[0].id), run.gold};
+    return std::pair<int, int>{static_cast<int>(run.relics.back().id), run.gold};
   };
   EXPECT_EQ(opened(5, 9), opened(5, 9));
-  EXPECT_NE(opened(5, 9), opened(6, 9));
+  EXPECT_EQ(opened(6, 10), opened(6, 10));
 }
 
 // --------------------------------------------------- Bottled relics (§6.23)
