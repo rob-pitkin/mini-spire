@@ -1277,7 +1277,79 @@ std::vector<bool> valid_actions(const CombatState& state) {
   return mask;
 }
 
+namespace {
+
+// Unceasing Top (relic-effects.md §6.26): "whenever you have no cards in hand
+// during your turn, draw a card." StS checks it in CardGroup.refreshHandLayout,
+// which GameActionManager calls each time its queue drains and control returns
+// to the player — the moment apply_action returns here, with the queue empty by
+// our standing invariant. Mid-effect empties (a card that discards and draws)
+// can never trigger it, because no decision point falls inside a drain.
+//
+// The nine decompiled conditions, mapped:
+//   queue empty            — always, at this point
+//   hand empty             — the loop condition, tested FIRST
+//   turn not ended         — character_turn; apply_action(EndTurn) runs the
+//                            enemy turn and the next turn's start internally
+//   canDraw latch          — false only before the first turn starts, where the
+//                            one reachable decision point is a combat-start
+//                            choice, already refused by the open-choice test
+//   no No Draw             — can_draw
+//   no screen up           — no pending choice
+//   combat phase           — outcome in progress (also refreshHandLayout's own
+//                            early return when every monster is dead)
+//   !disabledUntilEndOfTurn— set by an end-of-turn autoplay (Burn, Doubt, …)
+//                            and cleared at the next turn's start, a window with
+//                            no decision point here; never observable
+//   something to draw      — draw or discard pile non-empty
+//
+// A LOOP, because StS re-checks after every drain: a draw that left the hand
+// empty again would draw again. No card in the pool does that today; the loop
+// ends as soon as a card stays in hand or the piles run out.
+void refresh_hand(CombatState& state) {
+  // Hand first: this runs at the end of every apply_action, and the hand is
+  // almost never empty, so the usual cost is this one comparison.
+  while (state.current_hand.empty()) {
+    if (state.outcome != Outcome::InProgress) return;
+    if (!state.character_turn) return;
+    if (state.pending_choice.active()) return;
+    if (!state.has_relic(RelicId::UnceasingTop)) return;
+    if (!can_draw(state)) return;
+    if (state.draw_pile.empty() && state.discard_pile.empty()) return;
+
+    // A real draw, through the queue, so CardDrawn listeners (Evolve, Fire
+    // Breathing) fire. Fire Breathing deals damage, hence the death and
+    // terminal checks the per-turn start also makes.
+    ActionQueue q;
+    ResolutionContext ctx;
+    Action draw;
+    draw.kind = ActionKind::DrawCards;
+    draw.amount = 1;
+    q.push_back(draw);
+    drain(state, q, ctx);
+    process_deaths(state, ctx);
+    check_character_terminal(state);
+    if (state.outcome != Outcome::InProgress) return;
+    check_enemy_terminal(state);
+  }
+}
+
+bool apply_action_inner(CombatState& state, int action);
+
+}  // namespace
+
 bool apply_action(CombatState& state, int action) {
+  // Every exit of the action — a card, the end of the turn, a resolved choice
+  // — returns control to the player here, which is where StS refreshes the
+  // hand. One call rather than one per exit.
+  if (!apply_action_inner(state, action)) return false;
+  refresh_hand(state);
+  return true;
+}
+
+namespace {
+
+bool apply_action_inner(CombatState& state, int action) {
   if (state.outcome != Outcome::InProgress) return false;
   if (action < 0 || action >= kTotalActions) return false;
 
@@ -1349,5 +1421,7 @@ bool apply_action(CombatState& state, int action) {
   }
   return false;
 }
+
+}  // namespace
 
 }  // namespace minispire

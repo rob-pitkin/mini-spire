@@ -1143,6 +1143,118 @@ TEST(RelicTriggers, DeadBranchFiresOnAnEtherealCardAtEndOfTurn) {
   EXPECT_EQ(total_cards(with), total_cards(without) + 1);
 }
 
+// ------------------------------------------------------------ Unceasing Top
+
+// A fight whose piles are exactly what the test says: `hand`, `draw` and an
+// empty discard, one durable enemy, and energy to spare.
+CombatState top_fight(bool with_top, std::vector<Card> hand,
+                      std::vector<Card> draw) {
+  CombatState s = with_top ? fight_with({RelicId::UnceasingTop}) : bare_fight();
+  one_durable_enemy(s);
+  s.character.energy = 10;
+  s.current_hand = std::move(hand);
+  s.draw_pile = std::move(draw);
+  s.discard_pile.clear();
+  return s;
+}
+
+TEST(RelicTriggers, UnceasingTopDrawsWhenTheLastCardIsPlayed) {
+  CombatState s = top_fight(true, {Card{CardId::Strike}}, {Card{CardId::Defend}});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
+
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].card_id, CardId::Defend);
+}
+
+TEST(RelicTriggers, WithoutUnceasingTopAnEmptyHandStaysEmpty) {
+  CombatState s = top_fight(false, {Card{CardId::Strike}}, {Card{CardId::Defend}});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
+
+  EXPECT_TRUE(s.current_hand.empty());
+}
+
+TEST(RelicTriggers, UnceasingTopWaitsWhileTheHandHoldsCards) {
+  CombatState s = top_fight(true, {Card{CardId::Strike}, Card{CardId::Strike}},
+                            {Card{CardId::Defend}});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
+
+  EXPECT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.draw_pile.size(), 1u) << "drew with a card still in hand";
+}
+
+// Battle Trance's No Draw blocks it.
+TEST(RelicTriggers, UnceasingTopRespectsNoDraw) {
+  CombatState s = top_fight(true, {Card{CardId::Strike}}, {Card{CardId::Defend}});
+  s.character.debuffs[Debuff::NoDraw] = 1;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
+
+  EXPECT_TRUE(s.current_hand.empty());
+}
+
+// Nothing in either pile, nothing to draw. A Power, because a played Power
+// leaves play rather than landing in the discard to be drawn back.
+TEST(RelicTriggers, UnceasingTopDrawsNothingFromEmptyPiles) {
+  CombatState s = top_fight(true, {Card{CardId::Inflame}}, {});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Inflame)));
+
+  EXPECT_TRUE(s.current_hand.empty());
+  EXPECT_TRUE(s.draw_pile.empty());
+  EXPECT_TRUE(s.discard_pile.empty());
+}
+
+// An empty draw pile with cards in the discard reshuffles and draws — here the
+// discard holds the Defend and the Strike just played, so either may come
+// back. One card in hand is true whichever it is.
+TEST(RelicTriggers, UnceasingTopReshufflesTheDiscardToDraw) {
+  CombatState s = top_fight(true, {Card{CardId::Strike}}, {});
+  s.discard_pile = {Card{CardId::Defend}};
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
+
+  EXPECT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.draw_pile.size() + s.discard_pile.size(), 1u);
+}
+
+// No draw while a choice is open — StS's "no screen up". Discovery is the last
+// card and opens a pick of three with the hand empty.
+TEST(RelicTriggers, UnceasingTopWaitsForAnOpenChoice) {
+  CombatState s = top_fight(true, {Card{CardId::Discovery}}, {Card{CardId::Defend}});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Discovery)));
+
+  ASSERT_TRUE(s.pending_choice.active());
+  EXPECT_TRUE(s.current_hand.empty());
+  EXPECT_EQ(s.draw_pile.size(), 1u) << "drew under an open choice";
+}
+
+// The last card ends the fight: refreshHandLayout returns early once every
+// monster is dead, and our outcome check is the same gate.
+TEST(RelicTriggers, UnceasingTopDrawsNothingOnceTheFightIsWon) {
+  CombatState s = top_fight(true, {Card{CardId::Strike}}, {Card{CardId::Defend}});
+  s.enemies[0].hp = 1;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
+
+  EXPECT_EQ(s.outcome, Outcome::Won);
+  EXPECT_TRUE(s.current_hand.empty());
+}
+
+// The wiki's Fiend Fire case: the whole hand exhausted, then one card drawn.
+TEST(RelicTriggers, UnceasingTopDrawsAfterFiendFireEmptiesTheHand) {
+  CombatState s = top_fight(true, {Card{CardId::FiendFire}, Card{CardId::Defend}},
+                            {Card{CardId::Strike}});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::FiendFire)));
+
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].card_id, CardId::Strike);
+}
+
 // Blood Vial heals, so it needs a fight that starts damaged to be visible.
 TEST(RelicTriggers, BloodVialHealsAtCombatStart) {
   CombatSetup setup;
