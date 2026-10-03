@@ -723,12 +723,19 @@ non-Power.
 
 **Mummified Hand shares Madness's executor** rather than duplicating it, and the
 two differ in exactly two ways, both now carried on the action instead of being
-hardcoded: Madness lasts `ThisCombat` and falls back to printed cost when every
-card is already discounted, while Mummified Hand is `UntilPlayed` with no
-fallback — StS filters it on `cost > 0 && costForTurn > 0 && !freeToPlayOnce`
-and stops there. The `UntilPlayed` duration is the wiki correcting the card's
-own text: "the description states that it lasts until the end of the turn, but
-this is not in fact the case".
+hardcoded: Madness writes the combat layer and falls back when every card is
+already discounted, while Mummified Hand writes the turn layer with no fallback
+— StS filters it on `cost > 0 && costForTurn > 0 && !freeToPlayOnce` and stops
+there.
+
+⚠️ **Corrected in §6.27: this section first shipped the duration as
+`UntilPlayed`, which was a misreading of the wiki.** The wiki says the card
+"costs 0 that turn", and its note that "the description is somewhat misleading,
+as the Energy-reduction effect will be lost once played" means the discount
+ALSO ends early when played — not that it outlives the turn. The decompiled
+`setCostForTurn(0)` says the same: the turn layer, reset at end of turn and on
+entering the discard. `UntilPlayed` let an unplayed discounted card stay free
+into later turns.
 
 ⚠️ **The near-miss worth recording.** Madness pushed a bare
 `Action{ActionKind::DiscountRandomCardInHand}`, so `card_cost_duration`
@@ -1440,3 +1447,75 @@ pile the top reshuffles and can draw the card just played — StS's order too
 **Cost on the hot path is unmeasured**, deliberately: Rob deferred benchmarking
 to one pass after relics and the other additions (task). The expected cost is
 the one hand-size comparison on every step where the hand is not empty.
+
+### 6.27 Card costs in three layers, for Snecko Eye (design — Rob, 2026-10-03)
+
+Snecko Eye's Confusion sets a drawn card's cost for the rest of combat to a roll
+of 0–3. Our `Card` had one `cost_override` slot with a `CostDuration`, which
+every effect overwrote; StS keeps three layers per instance (decompiled
+`AbstractCard`), and Snecko cannot be expressed without them. So the model was
+rebuilt to StS's, in two commits: the layers first, Snecko second.
+
+**The layers** (replacing `cost_override` / `cost_duration` on `Card`):
+
+| ours | StS | reset |
+|---|---|---|
+| `combat_cost` | `cost` | never within a fight |
+| `turn_cost` | `costForTurn` | end of turn; and on entering the draw, discard or exhaust pile (`Soul` → `clearPowers` → `resetAttributes`, and `ExhaustCardEffect`) |
+| `free_once` | `freeToPlayOnce` | when played; Confusion clears it on draw |
+
+`kNoCostOverride` on either cost layer means "follows the layer below" — an
+unset `turn_cost` is `costForTurn == cost`, an unset `combat_cost` is the
+printed cost. Effective cost, in order: X → Corruption (still a query; a Skill
+costs 0, which is what StS's draw-time `setCostForTurn(-9)` produces) →
+`free_once` → `turn_cost` → `combat_cost` → printed.
+
+**Every writer, on the layer StS uses:**
+
+| effect | StS | layer |
+|---|---|---|
+| Madness | `cost = costForTurn = 0` | combat (turn cleared) |
+| Chrysalis, Metamorphosis | `cost = costForTurn = 0` if `cost > 0` | combat |
+| Enlightenment | `costForTurn > 1 → 1`; upgraded also `cost > 1 → 1` — two independent tests | turn; + combat |
+| Infernal Blade, Discovery, Transmutation | `setCostForTurn(0)` | turn |
+| Mummified Hand | `setCostForTurn(0)` on a card with `cost > 0 && costForTurn > 0 && !freeToPlayOnce` | turn |
+| Forethought | `freeToPlayOnce = true` | once |
+| Blood for Blood | `updateCost(-1)` per HP loss, over hand, draw and discard; a copy made mid-combat starts reduced (`makeCopy`) | combat (turn shifted with it) |
+| Confusion (Snecko, commit 2) | `cost = costForTurn = roll` | combat |
+
+**Behaviour changes, all toward StS:**
+
+- ⚠️ **Mummified Hand's discount now ends with the turn** (task). It was
+  `UntilPlayed`, so an unplayed discounted card stayed free, through the
+  discard, until it was finally played.
+- A turn discount ends when its card enters the draw or discard pile mid-turn
+  — played and returned to hand the same turn, it costs its normal price.
+- Enlightenment+ caps the COMBAT cost of a card that is free this turn; the
+  old cap skipped any card already at 1 or less.
+- Madness's fallback reads the combat cost, not the printed one.
+- **Upgrading mid-combat follows `upgradeBaseCost`.** Where an upgrade changes
+  the printed cost (15 cards — Seeing Red, Dark Embrace, Body Slam, Blood for
+  Blood, Entrench, Barricade, Corruption, Exhume, Havoc, Infernal Blade, Madness,
+  Mind Blast, Apotheosis, Magnetism, Mayhem), the combat cost BECOMES the new
+  printed cost and the turn cost moves by the same gap if it was above 0. A
+  Madness'd card from that list loses its discount when upgraded, as in StS.
+  Blood for Blood's `upgrade()` is the exception StS writes out: `cost < 4 →
+  upgradeBaseCost(cost − 1)`, so an already-reduced copy drops one more.
+  `upgrade_card_in_place` does this for every caller; master-deck cards carry no
+  layers, so for them it reduces to the plain id swap.
+
+**Blood for Blood moves off the query.** Under Snecko it is rolled on draw and
+each later HP loss subtracts from the ROLL, which "printed − HP-loss events"
+cannot say. `hp_loss_events` stays: it is what a copy made mid-combat starts
+reduced by, and the observation's player block reads it.
+
+**Commit 2 — Snecko Eye itself:** `hand_size(state)` (5, or 7 with Snecko Eye)
+for the opening hand and every turn's draw; `Debuff::Confusion`, applied at
+`CombatStartPreDraw` so the opening hand is rolled (`atPreBattle` queues it
+before the opening draw); the roll on every card that reaches the hand, from
+`card_rng`, skipping X-cost and unplayable cards. **The observation's
+"free this turn" plane becomes five planes — hand copies at effective cost 0,
+1, 2, 3, 4** (Rob). Four is the highest printed cost in the pool (Blood for
+Blood, read from the database) and nothing raises a cost above its printed
+value, which a test pins. X-cost and unplayable cards appear in no cost plane:
+their cost never changes, so their CardId already says it.

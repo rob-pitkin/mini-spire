@@ -149,12 +149,10 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     assert(idx >= 0 && "mask should have rejected this action");
     played = state.current_hand[idx];
     state.current_hand.erase(state.current_hand.begin() + idx);
-    // "Costs 0 until played" (Forethought) ends here, on the copy that leaves
-    // the hand — the override rides the instance into whatever pile it lands in.
-    if (played.cost_duration == CostDuration::UntilPlayed) {
-      played.cost_override = kNoCostOverride;
-      played.cost_duration = CostDuration::None;
-    }
+    // Forethought's freeToPlayOnce is spent here, on the copy that leaves the
+    // hand. The turn layer is reset by the pile it lands in (move_to_discard /
+    // move_to_exhaust), which is StS's Soul -> clearPowers.
+    played.free_once = false;
   }
 
   // The set of enemy slots this card resolves against.
@@ -599,13 +597,13 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     q.push_back(a);
   }
   // Madness: one random card in hand costs 0 for the rest of the combat. The
-  // duration is set HERE rather than in the executor, because Mummified Hand
-  // shares that executor with UntilPlayed — a bare Action would leave this at
-  // CostDuration::None and silently discount nothing.
+  // layer is set HERE rather than in the executor, because Mummified Hand
+  // shares that executor on the turn layer — a bare Action would leave this at
+  // CostLayer::None and silently discount nothing.
   if (data.discounts_random_card_in_hand) {
     Action a;
     a.kind = ActionKind::DiscountRandomCardInHand;
-    a.card_cost_duration = CostDuration::ThisCombat;
+    a.discount_layer = CostLayer::Combat;
     q.push_back(a);
   }
   // The Bomb: light a fuse. `card` names which Bomb, since the two differ only
@@ -949,17 +947,15 @@ void handle_end_turn(CombatState& state) {
   state.character.panache_counter = kPanacheCardsPerTrigger;
   // Battle Trance's NoDraw needs no clear here — it is a Debuff now (ROB-40 B2)
   // and the end-of-turn tick already expired it.
-  // "Costs 0 this turn" ends here, wherever the card sits: a discounted card
-  // shuffled into the draw pile must not arrive still free next turn.
+  // The turn cost layer ends here, wherever the card sits — StS's endTurn runs
+  // resetAttributes over the hand, draw and discard piles, and the exhaust pile
+  // was reset on entry. This now covers Mummified Hand too, whose discount is a
+  // turn-layer write in StS and used to outlive the turn (§6.27). The combat
+  // layer and free_once survive.
   for (std::vector<Card>* pile :
        {&state.current_hand, &state.draw_pile, &state.discard_pile,
         &state.exhaust_pile}) {
-    for (Card& c : *pile) {
-      if (c.cost_duration == CostDuration::ThisTurn) {
-        c.cost_override = kNoCostOverride;
-        c.cost_duration = CostDuration::None;
-      }
-    }
+    for (Card& c : *pile) reset_turn_cost(c);
   }
   state.turn_number += 1;
   state.character_turn = true;

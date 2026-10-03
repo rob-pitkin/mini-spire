@@ -85,6 +85,16 @@ void force_one_reshuffle(CombatState& s) {
   drain(s, q, ctx);
 }
 
+// One Jaw Worm with far more HP than any test here deals, so damage counts hits
+// exactly and the fight cannot end mid-test. BUILT rather than sampled:
+// fight_with draws its encounter from the Weak pool (§6.17).
+void one_durable_enemy(CombatState& s) {
+  s.enemies.clear();
+  s.enemies.push_back(make_jaw_worm(s.rng));
+  s.enemies[0].hp = s.enemies[0].max_hp = 500;
+  s.enemies[0].current_block = 0;
+}
+
 CombatState elite_fight_with(std::vector<RelicId> ids, uint32_t seed = 1) {
   CombatSetup setup;
   setup.seed = seed;
@@ -171,7 +181,7 @@ TEST(RelicTriggers, MedicalKitDoesNotMakeCursesPlayable) {
 }
 
 // Mummified Hand: "whenever you play a Power, a random card in your hand costs
-// 0." The wiki corrects the card text — it lasts until the card is PLAYED.
+// 0." StS writes the TURN layer (setCostForTurn(0)).
 TEST(RelicTriggers, MummifiedHandDiscountsACardWhenAPowerIsPlayed) {
   CombatState s = fight_with({RelicId::MummifiedHand});
   s.character.energy = 9;
@@ -182,8 +192,47 @@ TEST(RelicTriggers, MummifiedHandDiscountsACardWhenAPowerIsPlayed) {
   ASSERT_TRUE(apply_action(s, card_action(CardId::Inflame)));
 
   ASSERT_EQ(s.current_hand.size(), 1u);
-  EXPECT_EQ(s.current_hand[0].cost_override, 0);
-  EXPECT_EQ(s.current_hand[0].cost_duration, CostDuration::UntilPlayed);
+  EXPECT_EQ(turn_layer_cost(s.current_hand[0]), 0);
+  EXPECT_EQ(s.current_hand[0].combat_cost, kNoCostOverride) << "turn, not combat";
+}
+
+// The parity fix (§6.27): the discount ends with the TURN. It was "until
+// played", so an unplayed discounted card stayed free through the discard and
+// into a later turn; StS's endTurn resets costForTurn.
+TEST(RelicTriggers, MummifiedHandsDiscountEndsWithTheTurn) {
+  CombatState s = fight_with({RelicId::MummifiedHand});
+  one_durable_enemy(s);
+  s.character.energy = 9;
+  s.current_hand.clear();
+  s.current_hand.push_back(Card{CardId::Inflame});
+  s.current_hand.push_back(Card{CardId::Bash});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Inflame)));
+  ASSERT_EQ(turn_layer_cost(s.current_hand[0]), 0);
+
+  ASSERT_TRUE(end_turn(s));
+
+  for (const std::vector<Card>* pile :
+       {&s.current_hand, &s.draw_pile, &s.discard_pile}) {
+    for (const Card& c : *pile) {
+      if (c.card_id == CardId::Bash) {
+        EXPECT_EQ(instance_effective_cost(s, c), 2)
+            << "the discount outlived the turn";
+      }
+    }
+  }
+}
+
+// ...and also when the card leaves the hand for the discard: played and
+// returned the same turn, it pays again (the wiki's rule — StS resets
+// costForTurn as the card lands in the discard).
+TEST(RelicTriggers, ATurnDiscountEndsWhenTheCardIsDiscarded) {
+  CombatState s = bare_fight();
+  Card discounted{CardId::Bash};
+  set_turn_cost(discounted, 0);
+
+  move_to_discard(s, discounted);
+
+  EXPECT_EQ(turn_layer_cost(s.discard_pile.back()), 2);
 }
 
 TEST(RelicTriggers, MummifiedHandIgnoresNonPowers) {
@@ -196,31 +245,35 @@ TEST(RelicTriggers, MummifiedHandIgnoresNonPowers) {
   ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
 
   ASSERT_EQ(s.current_hand.size(), 1u);
-  EXPECT_EQ(s.current_hand[0].cost_override, kNoCostOverride);
+  EXPECT_FALSE(s.current_hand[0].has_cost_layer());
 }
 
 // Unlike Madness, there is no fallback tier: StS filters on
-// cost > 0 && costForTurn > 0, so a hand of already-free cards gives it
-// nothing rather than re-discounting one.
+// cost > 0 && costForTurn > 0 && !freeToPlayOnce, so a hand of already-free
+// cards gives it nothing rather than re-discounting one.
 TEST(RelicTriggers, MummifiedHandSkipsCardsThatAreAlreadyFree) {
   CombatState s = fight_with({RelicId::MummifiedHand});
   s.character.energy = 9;
   s.current_hand.clear();
   s.current_hand.push_back(Card{CardId::Inflame});
-  Card already_free{CardId::Bash};
-  already_free.cost_override = 0;
-  already_free.cost_duration = CostDuration::ThisTurn;
-  s.current_hand.push_back(already_free);
+  Card free_this_turn{CardId::Bash};
+  set_turn_cost(free_this_turn, 0);
+  s.current_hand.push_back(free_this_turn);
+  Card free_once{CardId::Bash};
+  free_once.free_once = true;
+  s.current_hand.push_back(free_once);
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::Inflame)));
 
-  ASSERT_EQ(s.current_hand.size(), 1u);
-  EXPECT_EQ(s.current_hand[0].cost_duration, CostDuration::ThisTurn)
+  ASSERT_EQ(s.current_hand.size(), 2u);
+  EXPECT_TRUE(s.current_hand[0].same_as(free_this_turn))
       << "an already-free card was re-discounted";
+  EXPECT_TRUE(s.current_hand[1].same_as(free_once))
+      << "a freeToPlayOnce card was re-discounted";
 }
 
-// Madness shares that executor, and its duration now rides on the action. A
-// bare Action would leave it at CostDuration::None and discount nothing.
+// Madness shares that executor, and its layer rides on the action. A bare
+// Action would leave it at CostLayer::None and discount nothing.
 TEST(RelicTriggers, MadnessStillDiscountsForTheWholeCombat) {
   CombatState s = bare_fight();
   s.character.energy = 9;
@@ -231,8 +284,7 @@ TEST(RelicTriggers, MadnessStillDiscountsForTheWholeCombat) {
   ASSERT_TRUE(apply_action(s, card_action(CardId::Madness)));
 
   ASSERT_EQ(s.current_hand.size(), 1u);
-  EXPECT_EQ(s.current_hand[0].cost_override, 0);
-  EXPECT_EQ(s.current_hand[0].cost_duration, CostDuration::ThisCombat);
+  EXPECT_EQ(combat_layer_cost(s.current_hand[0]), 0);
 }
 
 // Strange Spoon: a card that would Exhaust when played instead discards, half
@@ -854,7 +906,7 @@ TEST(RelicTriggers, ToolboxDealsTheOpeningHandOnceTheChoiceIsAnswered) {
     ++copies;
     // Toolbox HANDS the card over; it does not discount it. Discovery's free
     // copy is the card's own text, not something the choice machinery does.
-    EXPECT_EQ(c.cost_override, kNoCostOverride)
+    EXPECT_FALSE(c.has_cost_layer())
         << card_name(chosen) << " arrived discounted";
   }
   EXPECT_EQ(copies, 1) << card_name(chosen) << " never reached the hand";
@@ -958,16 +1010,6 @@ TEST(RelicTriggers, LanternGrantsEnergy) {
 }
 
 // ------------------------------------------------ Chemical X and Pocketwatch
-
-// One Jaw Worm with far more HP than any test here deals, so damage counts hits
-// exactly and the fight cannot end mid-test. BUILT rather than sampled:
-// fight_with draws its encounter from the Weak pool (§6.17).
-void one_durable_enemy(CombatState& s) {
-  s.enemies.clear();
-  s.enemies.push_back(make_jaw_worm(s.rng));
-  s.enemies[0].hp = s.enemies[0].max_hp = 500;
-  s.enemies[0].current_block = 0;
-}
 
 // Whirlwind deals 5 per hit, X hits. Chemical X adds 2 hits and no energy.
 TEST(RelicTriggers, ChemicalXAddsTwoToAnXCostAttack) {
@@ -1096,7 +1138,9 @@ TEST(RelicTriggers, DeadBranchAddsOneClassCardWhenACardIsExhausted) {
             pool.end())
       << "Dead Branch made a card outside the class pool";
   EXPECT_FALSE(card_is_healing(s.current_hand[0].card_id));
-  EXPECT_EQ(s.current_hand[0].cost_override, kNoCostOverride)
+  // No HP has been lost this fight, so not even a Blood for Blood starts
+  // reduced: every roll arrives with no cost layer.
+  EXPECT_FALSE(s.current_hand[0].has_cost_layer())
       << "the card should cost what it normally costs";
 }
 

@@ -92,7 +92,7 @@ struct Character {
   // "This card costs 0" is NOT tracked here. It was, as a per-card-type counter
   // (`free_this_turn`), which could say "one copy of this type is free" but
   // never WHICH copy. Since colorless-effects.md D2 the discount lives on the
-  // Card INSTANCE (`cost_override` + `cost_duration`), because Madness
+  // Card INSTANCE (its cost layers, §6.27), because Madness
   // discounts one copy and Enlightenment only the cards in hand right now —
   // neither is expressible per type.
 };

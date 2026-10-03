@@ -172,10 +172,13 @@ struct Action {
   GenerationPool gen_pool = GenerationPool::None;
   GeneratedPile gen_pile = GeneratedPile::Hand;
   bool gen_upgraded = false;        // Transmutation+
-  bool gen_free_this_turn = false;  // Transmutation, Infernal Blade
-  bool gen_free_this_combat = false;  // Chrysalis, Metamorphosis
-  // CapHandCost: does the cap last the combat (Enlightenment+) or the turn?
+  bool gen_free_this_turn = false;  // Transmutation, Infernal Blade: turn layer
+  bool gen_free_this_combat = false;  // Chrysalis, Metamorphosis: combat layer
+  // CapHandCost: does the cap also reach the combat layer (Enlightenment+)?
   bool cost_cap_for_combat = false;
+  // DiscountRandomCardInHand: which cost layer the 0 goes on — Madness writes
+  // the combat layer, Mummified Hand the turn layer (§6.27).
+  CostLayer discount_layer = CostLayer::None;
   MoveName move = MoveName::None;  // RewriteIntent payload
   bool card_block = false;  // GainBlock from a played card: apply Dex/Frail
   int copies = 1;  // ApplyChoice: how many copies to add (Dual Wield+ = 2)
@@ -184,20 +187,22 @@ struct Action {
   // discard pile keeps its accumulated bonus, and an upgraded Searing Blow
   // keeps its counter. Zero for cards with no instance state.
   //
-  // The cost override belongs to the same family and for the same reason: a
+  // The cost layers belong to the same family and for the same reason: a
   // Madness-discounted card discarded at end of turn must still be free when it
-  // is drawn again. Leaving it out silently reset every this-combat discount at
+  // is drawn again. Leaving them out silently reset every combat discount at
   // the turn boundary — two tests caught it.
   int card_bonus_damage = 0;
   int card_upgrades = 0;
-  int card_cost_override = kNoCostOverride;
-  CostDuration card_cost_duration = CostDuration::None;
+  int card_combat_cost = kNoCostOverride;
+  int card_turn_cost = kNoCostOverride;
+  bool card_free_once = false;
 
   // Rebuild the card instance this action carries.
   Card as_card() const {
     Card c{card, card_bonus_damage, card_upgrades};
-    c.cost_override = card_cost_override;
-    c.cost_duration = card_cost_duration;
+    c.combat_cost = card_combat_cost;
+    c.turn_cost = card_turn_cost;
+    c.free_once = card_free_once;
     return c;
   }
 
@@ -208,8 +213,9 @@ struct Action {
     card = c.card_id;
     card_bonus_damage = c.bonus_damage;
     card_upgrades = c.upgrades;
-    card_cost_override = c.cost_override;
-    card_cost_duration = c.cost_duration;
+    card_combat_cost = c.combat_cost;
+    card_turn_cost = c.turn_cost;
+    card_free_once = c.free_once;
   }
 };
 

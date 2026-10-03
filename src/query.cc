@@ -31,24 +31,25 @@ int count_strikes_in_deck(const CombatState& state) {
 
 }  // namespace
 
+bool corruption_frees_skill(const CombatState& state, CardId card) {
+  return CARD_DATABASE.at(card).type == CardType::Skill &&
+         get_status(state.character.powers, Power::Corruption) > 0;
+}
+
 namespace {
 
-// The cost modifiers that depend only on the card TYPE — no instance state.
+// What a copy with NO instance state would cost — the answer for a CardId with
+// no copy in hand (the TUI asking about a card in a pile).
 //
-// Split out deliberately. Folding the instance override into this would make
-// the two public entry points mutually recursive in effect: asking an
-// undiscounted copy what it costs would find a DIFFERENT discounted copy in
-// hand and answer 0, so every copy would look free and the cheapest-copy search
-// below would pick an arbitrary one. A real test caught exactly that.
-int type_modified_cost(const CombatState& state, CardId card) {
+// Kept apart from the instance path deliberately. Folding the two together made
+// them mutually recursive in effect once: asking an undiscounted copy what it
+// costs found a DIFFERENT discounted copy in hand and answered 0, so every copy
+// looked free and the cheapest-copy search picked an arbitrary one.
+int fresh_copy_cost(const CombatState& state, CardId card) {
   const CardData& data = CARD_DATABASE.at(card);
-  // Corruption: Skills cost 0.
-  if (data.type == CardType::Skill &&
-      get_status(state.character.powers, Power::Corruption) > 0) {
-    return 0;
-  }
-  // Blood for Blood: 1 less per HP-loss EVENT this combat (any source —
-  // including enemy attacks, unlike Rupture). Floored at 0.
+  if (corruption_frees_skill(state, card)) return 0;
+  // Blood for Blood: a copy made now starts reduced by every HP-loss event so
+  // far (decompiled makeCopy, `updateCost(-damagedThisCombat)`).
   if (data.cost_drops_per_hp_loss) {
     const int reduced = data.cost - state.character.hp_loss_events;
     return reduced < 0 ? 0 : reduced;
@@ -61,11 +62,13 @@ int type_modified_cost(const CombatState& state, CardId card) {
 int instance_effective_cost(const CombatState& state, const Card& card) {
   const CardData& data = CARD_DATABASE.at(card.card_id);
   if (data.cost == kXCost) return kXCost;  // "spend all" — not a number
-  // A per-instance override wins outright: "this card costs 0" is a statement
-  // about THIS copy, and it is what the player reads off that card
-  // (colorless-effects.md D2). It never consults other copies.
-  if (card.cost_override != kNoCostOverride) return card.cost_override;
-  return type_modified_cost(state, card.card_id);
+  // Corruption first: a Skill costs 0 whatever its layers say, which is what
+  // StS's setCostForTurn(-9) on draw produces (§6.27).
+  if (corruption_frees_skill(state, card.card_id)) return 0;
+  // Then the copy's own layers, which are what the player reads off THAT card
+  // (colorless-effects.md D2). They never consult other copies.
+  if (card.free_once) return 0;
+  return turn_layer_cost(card);
 }
 
 int effective_cost(const CombatState& state, CardId card) {
@@ -82,7 +85,7 @@ int effective_cost(const CombatState& state, CardId card) {
     const int cost = instance_effective_cost(state, c);
     if (best < 0 || cost < best) best = cost;
   }
-  return best >= 0 ? best : type_modified_cost(state, card);
+  return best >= 0 ? best : fresh_copy_cost(state, card);
 }
 
 bool block_resets_at_turn_start(const CombatState& state) {

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <random>
 
+#include "action.h"  // make_combat_copy
 #include "card.h"
 #include "combat_state.h"
 #include "enemy.h"
@@ -2666,6 +2667,59 @@ TEST(TurnLoop, BloodForBloodCountsEnemyDamageAsAnHpLossEvent) {
   ASSERT_TRUE(apply_action(s, end_turn_action()));  // the enemy hits us
 
   EXPECT_EQ(s.character.hp_loss_events, 1);
+}
+
+// A copy IN PLAY carries the reduction itself (§6.27): updateCost(-1) on every
+// copy in the hand, draw and discard pile, per HP-loss event.
+TEST(TurnLoop, BloodForBloodInHandDropsOnEachHpLoss) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::BloodForBlood});
+  s.current_hand.push_back(Card{CardId::Bloodletting});  // lose 3 HP
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bloodletting, 0)));
+
+  for (const Card& c : s.current_hand) {
+    if (c.card_id == CardId::BloodForBlood) {
+      EXPECT_EQ(instance_effective_cost(s, c), 3);
+    }
+  }
+}
+
+// Under Snecko the reduction runs from the ROLL, not the printed cost — the
+// reason it moved off the query. The roll is stubbed by setting the combat
+// layer directly, so nothing depends on what a roll would produce.
+TEST(TurnLoop, BloodForBloodReducesFromWhateverItsCostIsNow) {
+  CombatState s = make_power_test_state();
+  s.character.energy = 3;
+  Card rolled{CardId::BloodForBlood};
+  set_combat_cost(rolled, 2);
+  s.current_hand.push_back(rolled);
+  s.current_hand.push_back(Card{CardId::Bloodletting});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bloodletting, 0)));
+
+  for (const Card& c : s.current_hand) {
+    if (c.card_id == CardId::BloodForBlood) {
+      EXPECT_EQ(instance_effective_cost(s, c), 1);
+    }
+  }
+}
+
+// makeCopy: a copy made mid-combat starts reduced by every event so far. The
+// exhaust pile is not one of updateCardsOnDamage's piles.
+TEST(TurnLoop, BloodForBloodMadeMidCombatStartsReducedAndExhaustIsSkipped) {
+  CombatState s = make_power_test_state();
+  s.exhaust_pile.push_back(Card{CardId::BloodForBlood});
+  s.current_hand.push_back(Card{CardId::Bloodletting});
+  s.character.energy = 3;
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bloodletting, 0)));
+  ASSERT_EQ(s.character.hp_loss_events, 1);
+
+  EXPECT_EQ(instance_effective_cost(s, make_combat_copy(s, CardId::BloodForBlood)),
+            3);
+  EXPECT_EQ(instance_effective_cost(s, s.exhaust_pile.front()), 4)
+      << "the exhaust pile is not reduced";
 }
 
 TEST(TurnLoop, BloodForBloodCountsSelfInflictedLossToo) {

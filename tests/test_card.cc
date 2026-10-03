@@ -281,6 +281,84 @@ TEST(CardUpgrades, KnownPairsAreCorrect) {
   EXPECT_EQ(upgraded_card(CardId::Slimed), CardId::Slimed);
 }
 
+// --- Cost layers (relic-effects.md §6.27) --------------------------------
+
+// An upgrade that changes the printed cost is upgradeBaseCost: the combat
+// layer BECOMES the new printed cost. A Madness'd Dark Embrace (2 -> 1) loses
+// its 0; a Madness'd Seeing Red (1 -> 0) keeps 0 because that is the new base.
+TEST(CostLayers, AnUpgradeThatChangesTheCostOverwritesTheCombatLayer) {
+  Card embrace{CardId::DarkEmbrace};
+  set_combat_cost(embrace, 0);
+  ASSERT_TRUE(upgrade_card_in_place(embrace));
+  EXPECT_EQ(embrace.card_id, CardId::DarkEmbracePlus);
+  EXPECT_EQ(combat_layer_cost(embrace), 1) << "the Madness discount is lost";
+
+  Card red{CardId::SeeingRed};
+  set_combat_cost(red, 0);
+  ASSERT_TRUE(upgrade_card_in_place(red));
+  EXPECT_EQ(combat_layer_cost(red), 0);
+  EXPECT_FALSE(red.has_cost_layer()) << "0 is now the printed cost";
+}
+
+// An upgrade that keeps the printed cost calls no upgradeBaseCost.
+TEST(CostLayers, AnUpgradeThatKeepsTheCostLeavesTheLayers) {
+  Card bash{CardId::Bash};
+  set_combat_cost(bash, 0);
+  ASSERT_TRUE(upgrade_card_in_place(bash));
+  EXPECT_EQ(bash.card_id, CardId::BashPlus);
+  EXPECT_EQ(combat_layer_cost(bash), 0);
+}
+
+// The turn layer keeps its gap to the combat layer, when it is above 0:
+// costForTurn = cost + diff. Dark Embrace (2) capped to 1 for the turn has
+// diff -1; upgraded to base 1, its turn cost becomes 0.
+TEST(CostLayers, AnUpgradeMovesTheTurnLayerByTheSameGap) {
+  Card embrace{CardId::DarkEmbrace};
+  set_turn_cost(embrace, 1);
+  ASSERT_TRUE(upgrade_card_in_place(embrace));
+  EXPECT_EQ(combat_layer_cost(embrace), 1);
+  EXPECT_EQ(turn_layer_cost(embrace), 0);
+
+  // A turn cost of 0 is not above 0, so it stays.
+  Card free_now{CardId::DarkEmbrace};
+  set_turn_cost(free_now, 0);
+  ASSERT_TRUE(upgrade_card_in_place(free_now));
+  EXPECT_EQ(turn_layer_cost(free_now), 0);
+}
+
+// Blood for Blood's own rule: `cost < 4 ? upgradeBaseCost(cost - 1) : 3`.
+TEST(CostLayers, BloodForBloodUpgradesFromItsReducedCost) {
+  Card fresh{CardId::BloodForBlood};
+  ASSERT_TRUE(upgrade_card_in_place(fresh));
+  EXPECT_EQ(combat_layer_cost(fresh), 3);
+  EXPECT_FALSE(fresh.has_cost_layer());
+
+  Card reduced{CardId::BloodForBlood};
+  shift_combat_cost(reduced, -2);  // two HP-loss events: 2
+  ASSERT_TRUE(upgrade_card_in_place(reduced));
+  EXPECT_EQ(reduced.card_id, CardId::BloodForBloodPlus);
+  EXPECT_EQ(combat_layer_cost(reduced), 1) << "an already-reduced copy drops one MORE";
+}
+
+// updateCost keeps the gap between the layers and floors both at 0.
+TEST(CostLayers, ShiftingTheCombatCostKeepsTheTurnGap) {
+  Card c{CardId::BloodForBlood};
+  set_turn_cost(c, 1);  // costForTurn 1, cost 4: gap 3
+  shift_combat_cost(c, -1);
+  EXPECT_EQ(combat_layer_cost(c), 3);
+  EXPECT_EQ(turn_layer_cost(c), 0);
+  shift_combat_cost(c, -10);
+  EXPECT_EQ(combat_layer_cost(c), 0);
+  EXPECT_EQ(turn_layer_cost(c), 0);
+}
+
+// setCostForTurn refuses a negative turn cost, which is how X-cost is spared.
+TEST(CostLayers, XCostRefusesATurnCost) {
+  Card w{CardId::Whirlwind};
+  set_turn_cost(w, 0);
+  EXPECT_FALSE(w.has_cost_layer());
+}
+
 // --- Card descriptions (ROB-97) -------------------------------------------
 
 TEST(Card, CardDescriptionsCoverEveryCard) {

@@ -102,6 +102,14 @@ Madness makes **one copy** cost 0. Enlightenment changes **only the cards in han
 now**, not cards drawn later. A per-card-id map (`free_this_turn`) cannot express
 either.
 
+> ⚠️ **Superseded by `relic-effects.md` §6.27 (2026-10-03).** The single
+> override-with-duration below became StS's three cost layers — `combat_cost`,
+> `turn_cost`, `free_once` — because Snecko Eye's Confusion and Blood for
+> Blood under it cannot be expressed in one slot. The mapping: "this turn" is
+> the turn layer, which ALSO resets when the card enters the draw, discard or
+> exhaust pile; "this combat" is the combat layer; "until played" is
+> `free_once`. Kept below as the record of the original ruling.
+
 **Ruling:** `Card` gains a cost override **with a duration**:
 
 | duration | cleared when | cards |

@@ -815,7 +815,7 @@ TEST(Colorless, JackOfAllTradesAddsOneColorlessCardAtFullPrice) {
   const Card& made = s.current_hand[0];
   EXPECT_TRUE(in_pool(generatable_colorless_pool(), made.card_id))
       << card_name(made.card_id) << " is not a generatable colorless card";
-  EXPECT_EQ(made.cost_override, kNoCostOverride)
+  EXPECT_FALSE(made.has_cost_layer())
       << "Jack of All Trades adds cards at full price, unlike Transmutation";
 }
 
@@ -860,8 +860,10 @@ TEST(Colorless, TransmutationAddsOneCardPerEnergyFreeForTheTurn) {
   EXPECT_EQ(s.current_hand.size(), 3u) << "X = the energy spent";
   for (const Card& c : s.current_hand) {
     EXPECT_TRUE(in_pool(generatable_colorless_pool(), c.card_id));
-    EXPECT_EQ(c.cost_override, 0);
-    EXPECT_EQ(c.cost_duration, CostDuration::ThisTurn);
+    // The TURN layer (setCostForTurn(0)), read through the layer rather than
+    // the field: on a card printed at 0 the field stays unset.
+    EXPECT_EQ(turn_layer_cost(c), 0);
+    EXPECT_EQ(c.combat_cost, kNoCostOverride) << "a turn discount, not combat";
     EXPECT_EQ(instance_effective_cost(s, c), 0);
   }
   EXPECT_EQ(s.character.energy, 0) << "X-cost spends everything";
@@ -895,8 +897,7 @@ TEST(Colorless, TransmutationsDiscountExpiresAtEndOfTurn) {
   for (const std::vector<Card>* pile :
        {&s.current_hand, &s.draw_pile, &s.discard_pile, &s.exhaust_pile}) {
     for (const Card& c : *pile) {
-      EXPECT_EQ(c.cost_override, kNoCostOverride) << card_name(c.card_id);
-      EXPECT_EQ(c.cost_duration, CostDuration::None) << card_name(c.card_id);
+      EXPECT_FALSE(c.has_cost_layer()) << card_name(c.card_id);
     }
   }
 }
@@ -914,8 +915,7 @@ TEST(Colorless, MagnetismAddsAColorlessCardEachTurnAtFullPrice) {
   for (const Card& c : s.current_hand) {
     if (in_pool(generatable_colorless_pool(), c.card_id)) {
       ++colorless_in_hand;
-      EXPECT_EQ(c.cost_override, kNoCostOverride)
-          << "Magnetism adds at full price";
+      EXPECT_FALSE(c.has_cost_layer()) << "Magnetism adds at full price";
     }
   }
   EXPECT_GE(colorless_in_hand, 1);
@@ -954,8 +954,8 @@ TEST(Colorless, DiscoveryAddsTheChosenCardFreeForTheTurn) {
   for (const Card& c : s.current_hand) {
     if (c.card_id != chosen) continue;
     found = true;
-    EXPECT_EQ(c.cost_override, 0);
-    EXPECT_EQ(c.cost_duration, CostDuration::ThisTurn);
+    EXPECT_EQ(turn_layer_cost(c), 0);
+    EXPECT_EQ(c.combat_cost, kNoCostOverride) << "a turn discount, not combat";
   }
   EXPECT_TRUE(found) << "the chosen card joins the hand";
 }
@@ -1045,10 +1045,10 @@ TEST(Colorless, MadnessDiscountsExactlyOneCardInHand) {
 
   int discounted = 0;
   for (const Card& c : s.current_hand) {
-    if (c.cost_override == kNoCostOverride) continue;
+    if (!c.has_cost_layer()) continue;
     ++discounted;
-    EXPECT_EQ(c.cost_override, 0);
-    EXPECT_EQ(c.cost_duration, CostDuration::ThisCombat);
+    EXPECT_EQ(combat_layer_cost(c), 0) << "Madness writes the combat layer";
+    EXPECT_EQ(c.turn_cost, kNoCostOverride) << "...and the turn follows it";
   }
   EXPECT_EQ(discounted, 1) << "exactly one copy, not one card TYPE";
 }
@@ -1066,10 +1066,7 @@ TEST(Colorless, MadnessDiscountSurvivesTheTurn) {
   for (const std::vector<Card>* pile :
        {&s.current_hand, &s.draw_pile, &s.discard_pile}) {
     for (const Card& c : *pile) {
-      if (c.card_id == CardId::Bash && c.cost_override == 0) {
-        found = true;
-        EXPECT_EQ(c.cost_duration, CostDuration::ThisCombat);
-      }
+      if (c.card_id == CardId::Bash && combat_layer_cost(c) == 0) found = true;
     }
   }
   EXPECT_TRUE(found) << "a this-combat discount must not expire with the turn";
@@ -1084,25 +1081,24 @@ TEST(Colorless, MadnessIgnoresXCostCards) {
   ASSERT_TRUE(apply_action(s, card_action(CardId::Madness)));
 
   for (const Card& c : s.current_hand) {
-    EXPECT_EQ(c.cost_override, kNoCostOverride) << card_name(c.card_id);
+    EXPECT_FALSE(c.has_cost_layer()) << card_name(c.card_id);
   }
 }
 
-// The second tier: when every card is already free, Madness still lands on one
-// whose PRINTED cost is above 0 — which is how it works on a card another
-// effect discounted this turn.
+// The second tier: when every card is already free this turn, Madness still
+// lands on one whose COMBAT cost is above 0 (MadnessAction's `cost > 0`) —
+// which is how it works on a card another effect discounted this turn.
 TEST(Colorless, MadnessFallsBackToCardsAlreadyDiscountedThisTurn) {
   CombatState s = fight_holding(CardId::Madness);
   s.current_hand.push_back(Card{CardId::Bash});
-  s.current_hand.back().cost_override = 0;
-  s.current_hand.back().cost_duration = CostDuration::ThisTurn;
+  set_turn_cost(s.current_hand.back(), 0);
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::Madness)));
 
   ASSERT_EQ(s.current_hand.size(), 1u);
   EXPECT_EQ(s.current_hand[0].card_id, CardId::Bash);
-  EXPECT_EQ(s.current_hand[0].cost_duration, CostDuration::ThisCombat)
-      << "the this-turn discount was upgraded to a this-combat one";
+  EXPECT_EQ(combat_layer_cost(s.current_hand[0]), 0)
+      << "the this-turn discount was made a this-combat one";
 }
 
 // ----------------------------------------------------------- Enlightenment
@@ -1117,10 +1113,10 @@ TEST(Colorless, EnlightenmentCapsHandCostsAtOne) {
 
   for (const Card& c : s.current_hand) {
     if (c.card_id == CardId::Bash) {
-      EXPECT_EQ(c.cost_override, 1) << "capped, not zeroed";
-      EXPECT_EQ(c.cost_duration, CostDuration::ThisTurn);
+      EXPECT_EQ(turn_layer_cost(c), 1) << "capped, not zeroed";
+      EXPECT_EQ(c.combat_cost, kNoCostOverride) << "plain Enlightenment: turn only";
     } else {
-      EXPECT_EQ(c.cost_override, kNoCostOverride)
+      EXPECT_FALSE(c.has_cost_layer())
           << card_name(c.card_id) << " already cost 1 or less";
     }
   }
@@ -1139,7 +1135,7 @@ TEST(Colorless, EnlightenmentLastsOnlyTheTurnAndThePlusTheCombat) {
     for (const std::vector<Card>* pile :
          {&s.current_hand, &s.draw_pile, &s.discard_pile}) {
       for (const Card& c : *pile) {
-        if (c.card_id == CardId::Bash && c.cost_override == 1) {
+        if (c.card_id == CardId::Bash && turn_layer_cost(c) == 1) {
           still_capped = true;
         }
       }
@@ -1152,14 +1148,28 @@ TEST(Colorless, EnlightenmentLastsOnlyTheTurnAndThePlusTheCombat) {
 TEST(Colorless, EnlightenmentDoesNotUndoACheaperDiscount) {
   CombatState s = fight_holding(CardId::Enlightenment);
   s.current_hand.push_back(Card{CardId::Bash});
-  s.current_hand.back().cost_override = 0;
-  s.current_hand.back().cost_duration = CostDuration::ThisCombat;
+  set_combat_cost(s.current_hand.back(), 0);
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::Enlightenment)));
 
   ASSERT_EQ(s.current_hand.size(), 1u);
-  EXPECT_EQ(s.current_hand[0].cost_override, 0);
-  EXPECT_EQ(s.current_hand[0].cost_duration, CostDuration::ThisCombat);
+  EXPECT_EQ(combat_layer_cost(s.current_hand[0]), 0);
+  EXPECT_EQ(turn_layer_cost(s.current_hand[0]), 0);
+}
+
+// Enlightenment's two tests are independent (EnlightenmentAction): a card free
+// THIS turn (turn 0) with a combat cost of 2 keeps its 0 for the turn, but the
+// upgraded card still caps its combat cost at 1 for later turns.
+TEST(Colorless, EnlightenmentPlusCapsTheCombatCostOfACardFreeThisTurn) {
+  CombatState s = fight_holding(CardId::EnlightenmentPlus);
+  s.current_hand.push_back(Card{CardId::Bash});
+  set_turn_cost(s.current_hand.back(), 0);
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::EnlightenmentPlus)));
+
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(turn_layer_cost(s.current_hand[0]), 0) << "still free this turn";
+  EXPECT_EQ(combat_layer_cost(s.current_hand[0]), 1) << "capped for the combat";
 }
 
 TEST(Colorless, EnlightenmentIgnoresXCostCards) {
@@ -1169,7 +1179,7 @@ TEST(Colorless, EnlightenmentIgnoresXCostCards) {
   ASSERT_TRUE(apply_action(s, card_action(CardId::Enlightenment)));
 
   ASSERT_EQ(s.current_hand.size(), 1u);
-  EXPECT_EQ(s.current_hand[0].cost_override, kNoCostOverride);
+  EXPECT_FALSE(s.current_hand[0].has_cost_layer());
   EXPECT_EQ(effective_cost(s, CardId::Whirlwind), kXCost);
 }
 
@@ -1187,8 +1197,8 @@ TEST(Colorless, ChrysalisShufflesThreeFreeSkillsIntoTheDrawPile) {
     EXPECT_TRUE(in_pool(generatable_class_skill_pool(), c.card_id))
         << card_name(c.card_id);
     // BEHAVIOUR, not representation. A Skill whose printed cost is already 0
-    // gets no override at all, because zeroing it would be a no-op — so
-    // cost_override stays -1 for that card and is 0 for the others.
+    // gets no cost layer at all, because zeroing it would be a no-op — so its
+    // combat_cost stays unset while the others' is 0.
     //
     // Which three Skills the RNG picks is NOT the same on every platform:
     // std::uniform_int_distribution is not specified to give identical results
@@ -1244,9 +1254,9 @@ TEST(Colorless, ShuffledInCardsAreStillFreeNextTurn) {
   for (const std::vector<Card>* pile :
        {&s.current_hand, &s.draw_pile, &s.discard_pile}) {
     for (const Card& c : *pile) {
-      // Effective cost rather than the override field, for the reason given in
+      // Effective cost rather than a layer field, for the reason given in
       // ChrysalisShufflesThreeFreeSkillsIntoTheDrawPile: an already-free Skill
-      // carries no override. No starter card costs 0, so the only cards this
+      // carries no layer. No starter card costs 0, so the only cards this
       // can count are the three Chrysalis generated.
       if (instance_effective_cost(s, c) == 0) ++free_cards;
     }
@@ -1256,7 +1266,7 @@ TEST(Colorless, ShuffledInCardsAreStillFreeNextTurn) {
 
 // Whatever is generated costs nothing to play. An invariant true of every draw,
 // so no seed and no standard library can make it flaky — which is the whole
-// point, since asserting cost_override directly is what passed on macOS and
+// point, since asserting the cost field directly is what passed on macOS and
 // failed on Linux CI (ROB-100).
 TEST(Colorless, ChrysalisMakesEveryGeneratedSkillFree) {
   for (uint32_t seed = 0; seed < 25; ++seed) {
@@ -1424,11 +1434,10 @@ TEST(Colorless, ForethoughtPutsAHandCardOnTheBottomOfTheDrawPile) {
   ASSERT_EQ(s.draw_pile.size(), 2u);
   EXPECT_EQ(s.draw_pile.front().card_id, CardId::Bash)
       << "front() is the BOTTOM — draw_one pops the back";
-  EXPECT_EQ(s.draw_pile.front().cost_override, 0);
-  EXPECT_EQ(s.draw_pile.front().cost_duration, CostDuration::UntilPlayed);
+  EXPECT_TRUE(s.draw_pile.front().free_once) << "freeToPlayOnce";
 }
 
-// "Until played" outlives the turn, unlike Transmutation's discount.
+// freeToPlayOnce outlives the turn, unlike Transmutation's turn discount.
 TEST(Colorless, ForethoughtsDiscountSurvivesTheTurn) {
   CombatState s = fight_holding(CardId::Forethought);
   s.draw_pile.clear();
@@ -1441,10 +1450,7 @@ TEST(Colorless, ForethoughtsDiscountSurvivesTheTurn) {
   for (const std::vector<Card>* pile :
        {&s.current_hand, &s.draw_pile, &s.discard_pile}) {
     for (const Card& c : *pile) {
-      if (c.card_id == CardId::Bash && c.cost_override == 0) {
-        found = true;
-        EXPECT_EQ(c.cost_duration, CostDuration::UntilPlayed);
-      }
+      if (c.card_id == CardId::Bash && c.free_once) found = true;
     }
   }
   EXPECT_TRUE(found);
@@ -1468,13 +1474,12 @@ TEST(Colorless, ForethoughtsDiscountIsSpentByPlayingTheCard) {
   EXPECT_EQ(s.character.energy, 1) << "the discounted play cost nothing";
   for (const Card& c : s.discard_pile) {
     if (c.card_id == CardId::Bash) {
-      EXPECT_EQ(c.cost_override, kNoCostOverride)
-          << "the discount is spent, not permanent";
+      EXPECT_FALSE(c.has_cost_layer()) << "the discount is spent, not permanent";
     }
   }
 }
 
-// StS only marks a card whose PRINTED cost is above 0.
+// StS only marks a card whose `cost` (the combat layer) is above 0.
 TEST(Colorless, ForethoughtDoesNotDiscountAFreeCard) {
   CombatState s = fight_holding(CardId::Forethought);
   s.draw_pile.clear();
@@ -1484,7 +1489,7 @@ TEST(Colorless, ForethoughtDoesNotDiscountAFreeCard) {
 
   ASSERT_EQ(s.draw_pile.size(), 1u);
   EXPECT_EQ(s.draw_pile.front().card_id, CardId::SwiftStrike);
-  EXPECT_EQ(s.draw_pile.front().cost_override, kNoCostOverride);
+  EXPECT_FALSE(s.draw_pile.front().has_cost_layer());
 }
 
 // The + is "any number", a multi-select, which waits for batch 6.
@@ -1860,8 +1865,8 @@ TEST(Colorless, ForethoughtPlusPutsEveryPickOnTheBottomInSelectionOrder) {
 TEST(Colorless, ForethoughtPlusMarksEveryPickFreeUntilPlayed) {
   CombatState s = fight_holding(CardId::ForethoughtPlus);
   s.draw_pile.clear();
-  // Two Bashes: the discount only marks a card whose PRINTED cost is above 0,
-  // so a 0-cost card in this hand would correctly get no override and the
+  // Two Bashes: the discount only marks a card whose cost is above 0, so a
+  // 0-cost card in this hand would correctly get no free_once and the
   // assertion below would be testing the wrong thing.
   s.current_hand.push_back(Card{CardId::Bash});
   s.current_hand.push_back(Card{CardId::Bash});
@@ -1872,8 +1877,7 @@ TEST(Colorless, ForethoughtPlusMarksEveryPickFreeUntilPlayed) {
 
   ASSERT_EQ(s.draw_pile.size(), 2u);
   for (const Card& c : s.draw_pile) {
-    EXPECT_EQ(c.cost_override, 0) << card_name(c.card_id);
-    EXPECT_EQ(c.cost_duration, CostDuration::UntilPlayed) << card_name(c.card_id);
+    EXPECT_TRUE(c.free_once) << card_name(c.card_id);
   }
 }
 

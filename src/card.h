@@ -468,17 +468,17 @@ enum class GenerationPool : uint8_t {
   ClassSkill,   // Chrysalis — class Skills only
 };
 
-// How long a per-instance cost override lasts (colorless-effects.md D2). The
-// override lives on the CARD INSTANCE, because "this card costs 0" is a fact
-// about one copy: Madness discounts one card, not every copy of its type.
-enum class CostDuration : uint8_t {
-  None,         // no override
-  ThisTurn,     // Infernal Blade, Discovery, Transmutation
-  ThisCombat,   // Madness, Chrysalis, Metamorphosis (batch 3)
-  UntilPlayed,  // Forethought (batch 4)
+// Which of a card's three cost layers an effect writes (relic-effects.md
+// §6.27). The layers live on the CARD INSTANCE, because "this card costs 0" is a
+// fact about one copy: Madness discounts one card, not every copy of its type.
+enum class CostLayer : uint8_t {
+  None,    // writes nothing
+  Turn,    // StS costForTurn — Infernal Blade, Discovery, Mummified Hand, …
+  Combat,  // StS cost — Madness, Chrysalis, Metamorphosis, Confusion
+  Once,    // StS freeToPlayOnce — Forethought
 };
 
-// "No override" — a real cost of 0 is a legal override value, so the sentinel
+// "Layer unset" — a real cost of 0 is a legal layer value, so the sentinel
 // cannot be 0.
 inline constexpr int kNoCostOverride = -1;
 
@@ -540,12 +540,21 @@ struct Card {
   // perceives, and a raw id in a float slot would assert a false ordinal.
   int uid = kCombatScopedCardUid;
 
-  // A cost this COPY pays, overriding CardData::cost for `cost_duration`
-  // (colorless-effects.md D2). kNoCostOverride means "use the printed cost".
-  // Combat-scoped: piles are discarded at the end of a fight, so an override
-  // can never reach the master deck.
-  int cost_override = kNoCostOverride;
-  CostDuration cost_duration = CostDuration::None;
+  // What this COPY costs, in StS's three layers (relic-effects.md §6.27):
+  //
+  //   combat_cost — StS `cost`, for the rest of the fight. Unset = printed.
+  //   turn_cost   — StS `costForTurn`. Unset = follows combat_cost. Cleared at
+  //                 end of turn and whenever the card enters the draw, discard
+  //                 or exhaust pile.
+  //   free_once   — StS `freeToPlayOnce`: the next play costs 0. Cleared when
+  //                 played.
+  //
+  // Read through effective cost in query.cc, never directly: Corruption and
+  // X-cost sit above all three. Combat-scoped — piles are discarded at the end
+  // of a fight, so a layer can never reach the master deck.
+  int combat_cost = kNoCostOverride;
+  int turn_cost = kNoCostOverride;
+  bool free_once = false;
 
   // Which Bottled relic holds this copy, if any (relic-effects.md §6.23). StS
   // keeps the same flags on the card instance (inBottleFlame, …): the marker
@@ -561,22 +570,25 @@ struct Card {
   // they are; including uid would make every card unique, stop duplicate options
   // collapsing, and change shipped v1.0.0 choice behaviour.
   //
-  // The cost override IS compared: a free Strike and a printed Strike do not
+  // The cost layers ARE compared: a free Strike and a printed Strike do not
   // play the same, and a human sees the difference on the card.
   //
   // `bottle` is NOT compared: it acts before the opening hand exists, and a
   // bottled Strike in hand plays exactly as any other.
   bool same_as(const Card& other) const {
     return card_id == other.card_id && bonus_damage == other.bonus_damage &&
-           upgrades == other.upgrades &&
-           cost_override == other.cost_override &&
-           cost_duration == other.cost_duration;
+           upgrades == other.upgrades && combat_cost == other.combat_cost &&
+           turn_cost == other.turn_cost && free_once == other.free_once;
   }
   // Does this instance carry any state beyond its id? Same reasoning as
   // same_as: uid is not "state" in this sense.
   bool has_instance_state() const {
-    return bonus_damage != 0 || upgrades != 0 ||
-           cost_override != kNoCostOverride;
+    return bonus_damage != 0 || upgrades != 0 || has_cost_layer();
+  }
+  // Is any cost layer set on this copy?
+  bool has_cost_layer() const {
+    return combat_cost != kNoCostOverride || turn_cost != kNoCostOverride ||
+           free_once;
   }
 };
 
@@ -1087,18 +1099,10 @@ inline bool is_instance_upgradable(CardId id) {
 // Upgrade a card IN PLACE. Normally the id swaps for the next rung (or the "+"
 // form, which is the same mechanism); past the top rung the instance counter
 // grows instead. Returns false if the card cannot be upgraded at all.
-inline bool upgrade_card_in_place(Card& card) {
-  auto it = CARD_UPGRADES.find(card.card_id);
-  if (it != CARD_UPGRADES.end()) {
-    card.card_id = it->second;
-    return true;
-  }
-  if (is_instance_upgradable(card.card_id)) {
-    ++card.upgrades;  // above the cap: keep counting internally
-    return true;
-  }
-  return false;
-}
+//
+// Defined after CARD_DATABASE, because an upgrade that changes the printed cost
+// has to move the copy's cost layers with it (StS upgradeBaseCost, §6.27).
+inline bool upgrade_card_in_place(Card& card);
 
 // Can this card be upgraded? False for already-upgraded cards and for Status
 // cards (Slimed, Dazed). Armaments' candidate filter reads this.
@@ -2246,6 +2250,107 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
        return d;
      }()},
 };
+
+inline bool upgrade_card_in_place(Card& card) {
+  const CardId before = card.card_id;
+  auto it = CARD_UPGRADES.find(before);
+  if (it == CARD_UPGRADES.end()) {
+    if (is_instance_upgradable(before)) {
+      ++card.upgrades;  // above the cap: keep counting internally
+      return true;
+    }
+    return false;
+  }
+  card.card_id = it->second;
+
+  // An upgrade that changes the printed cost is StS's upgradeBaseCost(newBase):
+  //   diff = costForTurn - cost;  cost = newBase;
+  //   if (costForTurn > 0) costForTurn = cost + diff;  clamp at 0.
+  // So the COMBAT cost becomes the new printed cost — a Madness'd card whose
+  // upgrade lowers its cost from 1 to 0 keeps 0, one lowered 2 to 1 loses its
+  // discount — and the turn cost moves by the same gap. An upgrade that keeps
+  // the printed cost calls no upgradeBaseCost and leaves the layers alone.
+  //
+  // For a master-deck card (no layers) this is the plain id swap.
+  const CardData& old_data = CARD_DATABASE.at(before);
+  const int old_printed = old_data.cost;
+  const int new_printed = CARD_DATABASE.at(card.card_id).cost;
+  if (old_printed == new_printed) return true;
+
+  const int cost =
+      card.combat_cost != kNoCostOverride ? card.combat_cost : old_printed;
+  const int cost_for_turn =
+      card.turn_cost != kNoCostOverride ? card.turn_cost : cost;
+
+  // Blood for Blood writes its own rule: `cost < 4 ? upgradeBaseCost(cost - 1)
+  // : upgradeBaseCost(3)` — an already-reduced copy drops one MORE.
+  const int new_base = old_data.cost_drops_per_hp_loss && cost < old_printed
+                           ? cost - 1
+                           : new_printed;
+
+  int new_cost_for_turn = cost_for_turn;
+  if (cost_for_turn > 0) new_cost_for_turn = new_base + (cost_for_turn - cost);
+  if (new_cost_for_turn < 0) new_cost_for_turn = 0;
+  const int new_cost = new_base < 0 ? 0 : new_base;
+
+  card.combat_cost = new_cost == new_printed ? kNoCostOverride : new_cost;
+  card.turn_cost =
+      new_cost_for_turn == new_cost ? kNoCostOverride : new_cost_for_turn;
+  return true;
+}
+
+// --- Cost layers (relic-effects.md §6.27) ------------------------------------
+//
+// StS's `cost` and `costForTurn` as read off a copy, with an unset layer
+// following the one below it. Raw layer values: Corruption, X-cost and
+// free_once are applied by instance_effective_cost (query.cc), which is what
+// every caller that wants "what does this cost to play" must use.
+
+inline int combat_layer_cost(const Card& c) {
+  return c.combat_cost != kNoCostOverride ? c.combat_cost
+                                          : CARD_DATABASE.at(c.card_id).cost;
+}
+
+inline int turn_layer_cost(const Card& c) {
+  return c.turn_cost != kNoCostOverride ? c.turn_cost : combat_layer_cost(c);
+}
+
+// StS `cost = costForTurn = value` — Madness, Chrysalis, Metamorphosis,
+// Confusion. Both layers, so the turn layer follows again.
+inline void set_combat_cost(Card& c, int value) {
+  c.combat_cost =
+      value == CARD_DATABASE.at(c.card_id).cost ? kNoCostOverride : value;
+  c.turn_cost = kNoCostOverride;
+}
+
+// StS setCostForTurn: refused on a negative turn cost (X-cost, unplayable),
+// floored at 0. Infernal Blade, Discovery, Transmutation, Mummified Hand.
+inline void set_turn_cost(Card& c, int value) {
+  if (turn_layer_cost(c) < 0) return;
+  if (value < 0) value = 0;
+  c.turn_cost = value == combat_layer_cost(c) ? kNoCostOverride : value;
+}
+
+// StS updateCost(amt): shift the combat cost, floored at 0, and keep the gap
+// between it and the turn cost. Blood for Blood, once per HP-loss event.
+inline void shift_combat_cost(Card& c, int amount) {
+  const int cost = combat_layer_cost(c);
+  if (cost < 0) return;  // X-cost: no number to shift
+  int shifted = cost + amount;
+  if (shifted < 0) shifted = 0;
+  if (shifted == cost) return;
+  const int gap = cost - turn_layer_cost(c);
+  int turn = shifted - gap;
+  if (turn < 0) turn = 0;
+  c.combat_cost =
+      shifted == CARD_DATABASE.at(c.card_id).cost ? kNoCostOverride : shifted;
+  c.turn_cost = turn == shifted ? kNoCostOverride : turn;
+}
+
+// The end-of-turn reset, and entering the draw, discard or exhaust pile: StS
+// resetAttributes, `costForTurn = cost`. free_once survives it — Forethought's
+// card sits in the draw pile and is still free when drawn.
+inline void reset_turn_cost(Card& c) { c.turn_cost = kNoCostOverride; }
 
 // Whether a card needs the player to PICK a specific enemy slot (ROB-80). Only
 // CardTarget::Enemy does — it gets a target index and is masked on that slot

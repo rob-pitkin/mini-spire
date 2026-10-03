@@ -221,6 +221,10 @@ void move_to_discard(CombatState& state, Card card);
 // pile"). Used by Dual Wield, Exhume, and Infernal Blade.
 void add_card_to_hand(CombatState& state, const Card& card);
 
+// A card made mid-combat — StS's makeCopy. Identical to `Card{id}` except for
+// Blood for Blood, which starts reduced by this combat's HP-loss events.
+Card make_combat_copy(const CombatState& state, CardId id);
+
 // Move all of discard_pile into draw_pile (if needed), shuffle, draw one card
 // to the hand. Returns the drawn card, or nullopt if nothing was drawn
 // (draw+discard empty, or hand at limit) — the CardDrawn hook needs the id.

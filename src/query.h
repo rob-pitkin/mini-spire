@@ -18,19 +18,20 @@
 
 namespace minispire {
 
-// Effective energy cost of a card right now. Corruption makes Skills cost 0;
-// Blood for Blood costs 1 less per HP-loss event this combat (floored at 0).
+// Effective energy cost of a card right now: the cheapest copy in hand, since
+// the engine plays the cheapest. With no copy in hand, what a fresh copy would
+// cost (Corruption; Blood for Blood reduced by this combat's HP-loss events).
 // Returns kXCost unchanged for X-cost cards — "spend all" isn't a number.
 int effective_cost(const CombatState& state, CardId card);
 
-// As above, for a specific card INSTANCE. A copy can carry its own cost
-// (Infernal Blade's generated attack, Discovery's pick, Madness' target), and
-// that override wins over every other modifier — colorless-effects.md D2.
-//
-// The id-based form answers "what does playing this card cost?", which is the
-// mask's question; since the engine plays the CHEAPEST copy, it reports the
-// cheapest copy's cost. Use this one whenever a specific copy is in hand.
+// As above, for a specific card INSTANCE: X-cost, then Corruption, then the
+// copy's own layers — free_once, turn_cost, combat_cost — then the printed
+// cost (relic-effects.md §6.27). Use this one whenever a specific copy is in
+// hand.
 int instance_effective_cost(const CombatState& state, const Card& card);
+
+// Corruption: a Skill costs 0 while it is up. Above every cost layer.
+bool corruption_frees_skill(const CombatState& state, CardId card);
 
 // Does the player's block clear at the start of their turn? Barricade keeps it.
 bool block_resets_at_turn_start(const CombatState& state);

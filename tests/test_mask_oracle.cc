@@ -83,27 +83,28 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
     // Cost modifiers, recomputed here rather than asked of effective_cost.
     int cost = data.cost;
     if (cost != kXCost) {
-      // A per-instance override (Infernal Blade, Discovery, Transmutation)
-      // wins, and the CHEAPEST copy in hand is the one the engine plays
-      // (colorless-effects.md D2). Re-derived from the hand rather than asked
-      // of the query layer, which is the whole point of this oracle.
-      int override_cost = -1;
-      for (const Card& c : state.current_hand) {
-        if (c.card_id != card || c.cost_override == kNoCostOverride) continue;
-        if (override_cost < 0 || c.cost_override < override_cost) {
-          override_cost = c.cost_override;
-        }
-      }
       bool corrupted = false;
       auto cp = state.character.powers.find(Power::Corruption);
       if (cp != state.character.powers.end() && cp->second > 0) corrupted = true;
-      if (override_cost >= 0) {
-        cost = override_cost;
-      } else if (data.type == CardType::Skill && corrupted) {
-        cost = 0;
-      } else if (data.cost_drops_per_hp_loss) {
-        cost = data.cost - state.character.hp_loss_events;
-        if (cost < 0) cost = 0;
+      if (data.type == CardType::Skill && corrupted) {
+        cost = 0;  // Corruption sits above every layer
+      } else {
+        // Each copy's three layers, in precedence order — free_once, then the
+        // turn cost, then the combat cost, then printed (relic-effects.md
+        // §6.27) — and the CHEAPEST copy is the one the engine plays
+        // (colorless-effects.md D2). Re-derived from the fields rather than
+        // asked of the query layer, which is the whole point of this oracle.
+        int best = -1;
+        for (const Card& c : state.current_hand) {
+          if (c.card_id != card) continue;
+          const int copy_cost =
+              c.free_once                     ? 0
+              : c.turn_cost != kNoCostOverride ? c.turn_cost
+              : c.combat_cost != kNoCostOverride ? c.combat_cost
+                                                 : data.cost;
+          if (best < 0 || copy_cost < best) best = copy_cost;
+        }
+        if (best >= 0) cost = best;
       }
     }
     const bool affordable = cost == kXCost || state.character.energy >= cost;
@@ -180,23 +181,31 @@ TEST(MaskOracle, EngineMaskMatchesAnIndependentDerivation) {
             ++saw_rung;
           }
         }
-        // Query-layer state: Corruption, Blood for Blood, Barricade.
+        // Query-layer state: Corruption, Barricade.
         if (rng() % 9 == 0) s.character.powers[Power::Corruption] = 1;
         if (rng() % 9 == 0) s.character.powers[Power::Barricade] = 1;
-        if (rng() % 6 == 0) {
-          s.character.hp_loss_events = static_cast<int>(rng() % 6);
-        }
-        // A per-instance discount (Infernal Blade, Discovery, Transmutation).
-        // Previously only reachable if a random play happened to resolve
-        // Infernal Blade, so the reference's free-cost branch was barely
-        // exercised — now driven directly. Set on ONE copy, which is what the
-        // instance override buys over the per-type counter it replaced: the
+        // Per-instance cost layers (§6.27), each on ONE copy — which is what
+        // the instance layers buy over the per-type counter they replaced: the
         // oracle and the engine must agree that a second copy still pays.
-        if (rng() % 10 == 0 && !s.current_hand.empty()) {
-          Card& victim = s.current_hand[rng() % s.current_hand.size()];
-          victim.cost_override = 0;
-          victim.cost_duration = CostDuration::ThisTurn;
-          ++saw_free;
+        // Driven directly rather than through plays, so every layer and the
+        // precedence between them is exercised, not only what a random play
+        // happens to resolve. Blood for Blood's reduction is a combat-layer
+        // write, so the combat case covers it.
+        if (!s.current_hand.empty()) {
+          if (rng() % 10 == 0) {  // turn layer: Infernal Blade, Discovery
+            Card& victim = s.current_hand[rng() % s.current_hand.size()];
+            set_turn_cost(victim, 0);
+            ++saw_free;
+          }
+          if (rng() % 10 == 0) {  // combat layer: Madness, Snecko, BfB
+            Card& victim = s.current_hand[rng() % s.current_hand.size()];
+            if (combat_layer_cost(victim) >= 0) {
+              set_combat_cost(victim, static_cast<int>(rng() % 5));
+            }
+          }
+          if (rng() % 15 == 0) {  // free_once: Forethought
+            s.current_hand[rng() % s.current_hand.size()].free_once = true;
+          }
         }
         // Choice mode, including the optional/decline variant.
         if (rng() % 8 == 0) {

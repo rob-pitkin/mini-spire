@@ -348,7 +348,9 @@ void CombatEnv::compute_obs() {
   // says. Cards discounted elsewhere (a Chrysalis card waiting in the draw
   // pile) are not visible to the player either.
   for (const Card& c : state_.current_hand) {
-    if (c.cost_override == 0) {
+    // A cost layer that has made this copy free — the same set the single
+    // override slot used to mark (§6.27). Printed-0 cards are not counted.
+    if (c.has_cost_layer() && (c.free_once || turn_layer_cost(c) == 0)) {
       o[kPileBase + 4 * kStride + static_cast<int>(c.card_id)] += 1.0f;
     }
   }

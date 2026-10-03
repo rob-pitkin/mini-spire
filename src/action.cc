@@ -148,12 +148,46 @@ void gain_max_hp(CombatState& state, int amount) {
   heal_player(state, amount);
 }
 
+// Entering the exhaust or discard pile resets the turn cost layer: StS's
+// ExhaustCardEffect calls resetAttributes, and the Soul that lands a card in
+// the discard calls clearPowers -> resetAttributes (§6.27). So a card made free
+// this turn and then played — or discarded — is back to its cost if it returns
+// to hand the same turn.
 void move_to_exhaust(CombatState& state, Card card) {
+  reset_turn_cost(card);
   state.exhaust_pile.push_back(card);
 }
 
 void move_to_discard(CombatState& state, Card card) {
+  reset_turn_cost(card);
   state.discard_pile.push_back(card);
+}
+
+// One HP-loss event, from any source. Blood for Blood counts them in two ways
+// at once, both StS's: every copy in the hand, discard and draw pile takes
+// updateCost(-1) (AbstractPlayer.updateCardsOnDamage — not the exhaust pile,
+// not a card mid-play), and the count is kept so a copy made later starts
+// reduced by all of them (makeCopy).
+void record_hp_loss_event(CombatState& state) {
+  state.character.hp_loss_events += 1;
+  for (std::vector<Card>* pile :
+       {&state.current_hand, &state.discard_pile, &state.draw_pile}) {
+    for (Card& c : *pile) {
+      if (CARD_DATABASE.at(c.card_id).cost_drops_per_hp_loss) {
+        shift_combat_cost(c, -1);
+      }
+    }
+  }
+}
+
+Card make_combat_copy(const CombatState& state, CardId id) {
+  Card made{id};
+  // Blood for Blood's makeCopy: `updateCost(-damagedThisCombat)`, so a copy
+  // made mid-fight is as cheap as the copies that took every hit so far.
+  if (CARD_DATABASE.at(id).cost_drops_per_hp_loss) {
+    shift_combat_cost(made, -state.character.hp_loss_events);
+  }
+  return made;
 }
 
 void add_card_to_hand(CombatState& state, const Card& card) {
@@ -861,18 +895,19 @@ void fire_card_played_relic(CombatState& state, HeldRelic& relic, CardType type,
       break;
 
     case RelicId::MummifiedHand:
-      // "Whenever you play a Power, a random card in your hand costs 0." The
-      // wiki corrects the card's own text: the discount lasts UNTIL THE CARD IS
-      // PLAYED, not until end of turn — "if you play the card, then return it
-      // to your hand, it no longer benefits". That is CostDuration::UntilPlayed,
-      // the duration Forethought already uses.
+      // "Whenever you play a Power, a random card in your hand costs 0." StS
+      // writes the TURN layer (setCostForTurn(0)), which resets at end of turn
+      // and when the card enters the draw or discard pile — so playing it and
+      // returning it to hand ends the discount, the wiki's rule, and so does
+      // the turn ending. It was modelled as "until played" and outlived the
+      // turn (§6.27).
       //
       // Pushed as an action rather than reaching into the hand here: relic
-      // hooks push and never mutate. Madness shares the executor; the duration
+      // hooks push and never mutate. Madness shares the executor; the layer
       // on the action is what separates them.
       if (type == CardType::Power) {
         Action a = make_action(ActionKind::DiscountRandomCardInHand);
-        a.card_cost_duration = CostDuration::UntilPlayed;
+        a.discount_layer = CostLayer::Turn;
         q.push_back(a);
       }
       break;
@@ -1576,7 +1611,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         // Blood for Blood counts HP-loss events from ANY source, so unblocked
         // enemy damage counts too (Rupture, by contrast, does not fire here).
         if (damage_player(state, dmg, /*from_attack=*/true)) {
-          state.character.hp_loss_events += 1;
+          record_hp_loss_event(state);
           // Centennial Puzzle, Runic Cube and Self-Forming Clay key on losing
           // HP from ANY source, so unlike Rupture they do fire here.
           fire_relic_hooks(state, Hook::PlayerHpLostAny, q);
@@ -1606,7 +1641,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         // Fixed damage TO the player (Burn's end-of-turn tick). Blockable,
         // and it is damage rather than HP loss, so Rupture does not fire.
         if (damage_player(state, a.amount, /*from_attack=*/false)) {
-          state.character.hp_loss_events += 1;  // Blood for Blood counts it
+          record_hp_loss_event(state);  // Blood for Blood counts it
           fire_relic_hooks(state, Hook::PlayerHpLostAny, q);
         }
         break;
@@ -1639,7 +1674,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       if (a.amount > 0) {
         lose_player_hp(state, a.amount);
         // Blood for Blood counts HP-loss EVENTS from any source (Stage 4b).
-        state.character.hp_loss_events += 1;
+        record_hp_loss_event(state);
         // Rupture: HP lost from a card or power (never from enemy damage).
         fire_player_power_hooks(state, Hook::HpLostPlayer, q);
         fire_relic_hooks(state, Hook::PlayerHpLostAny, q);
@@ -1818,49 +1853,62 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // the same distribution with a fixed number of draws, which is what keeps
       // the stream stable (the same ruling as Discovery's three).
       //
-      // Eligibility is two-tier, and the tiers are not interchangeable:
-      // normally a card whose CURRENT cost is above 0, but if every card is
-      // already discounted to 0, one whose PRINTED cost is above 0 — which is
-      // how Madness still works on a card another effect made free this turn.
-      // X-cost cards are never eligible (their cost is a sentinel, not a
-      // number).
+      // The two users read different layers (decompiled MadnessAction,
+      // MummifiedHand.onUseCard; §6.27):
       //
-      // Mummified Hand shares this executor but NOT the fallback tier: StS
-      // filters it on cost > 0 && costForTurn > 0 && !freeToPlayOnce, with no
-      // second pass, so a hand of already-free cards gives it nothing. The
-      // duration differs too, and rides on the action rather than being
-      // hardcoded — Madness is ThisCombat, Mummified Hand is UntilPlayed.
-      std::vector<int> current_cost, printed_cost;
+      //   Madness — `costForTurn > 0`, and if no card qualifies, `cost > 0`
+      //   (the combat layer). freeToPlayOnce is NOT checked, so a Forethought'd
+      //   card can still be picked. Writes `cost = costForTurn = 0`.
+      //
+      //   Mummified Hand — `cost > 0 && costForTurn > 0 && !freeToPlayOnce`,
+      //   with no fallback, so a hand of already-free cards gives it nothing.
+      //   Writes setCostForTurn(0).
+      //
+      // `costForTurn` here is the turn layer under Corruption (a Skill's is 0
+      // once drawn), not the full effective cost, which would also fold in
+      // free_once. X-cost cards are never eligible: their layers are negative.
+      const bool madness = a.discount_layer == CostLayer::Combat;
+      const auto cost_for_turn = [&](const Card& c) {
+        return corruption_frees_skill(state, c.card_id) ? 0 : turn_layer_cost(c);
+      };
+      std::vector<int> better, fallback;
       for (int i = 0; i < static_cast<int>(state.current_hand.size()); ++i) {
         const Card& c = state.current_hand[i];
-        const CardData& d = CARD_DATABASE.at(c.card_id);
-        if (d.cost == kXCost) continue;
-        if (instance_effective_cost(state, c) > 0) current_cost.push_back(i);
-        if (d.cost > 0) printed_cost.push_back(i);
+        if (madness) {
+          if (cost_for_turn(c) > 0) better.push_back(i);
+          if (combat_layer_cost(c) > 0) fallback.push_back(i);
+        } else if (combat_layer_cost(c) > 0 && cost_for_turn(c) > 0 &&
+                   !c.free_once) {
+          better.push_back(i);
+        }
       }
-      const bool allow_fallback =
-          a.card_cost_duration == CostDuration::ThisCombat;
       const std::vector<int>& eligible =
-          (!current_cost.empty() || !allow_fallback) ? current_cost
-                                                     : printed_cost;
+          (!better.empty() || !madness) ? better : fallback;
       if (eligible.empty()) break;
       std::uniform_int_distribution<std::size_t> pick(0, eligible.size() - 1);
       Card& victim = state.current_hand[eligible[pick(state.card_rng)]];
-      victim.cost_override = 0;
-      victim.cost_duration = a.card_cost_duration;
+      if (madness) {
+        set_combat_cost(victim, 0);
+      } else {
+        set_turn_cost(victim, 0);
+      }
       break;
     }
     case ActionKind::CapHandCost:
-      // Enlightenment: every card in hand costing MORE than 1 drops to 1. A
-      // cap, so a 0-cost card stays 0 and a Madness-discounted copy is not
-      // raised. X-cost cards are untouched — their cost is a sentinel.
+      // Enlightenment (decompiled EnlightenmentAction): two INDEPENDENT tests
+      // per card. `costForTurn > 1` drops the turn layer to 1; upgraded, a
+      // `cost > 1` also drops the combat layer to 1. So a card free this turn
+      // (turn 0, combat 2) still has its combat cost capped by Enlightenment+.
+      // X-cost cards are untouched — their layers are negative.
       for (Card& c : state.current_hand) {
-        const CardData& d = CARD_DATABASE.at(c.card_id);
-        if (d.cost == kXCost) continue;
-        if (instance_effective_cost(state, c) <= 1) continue;
-        c.cost_override = 1;
-        c.cost_duration = a.cost_cap_for_combat ? CostDuration::ThisCombat
-                                                : CostDuration::ThisTurn;
+        if (turn_layer_cost(c) > 1) set_turn_cost(c, 1);
+        if (a.cost_cap_for_combat && combat_layer_cost(c) > 1) {
+          // `cost = 1` alone: the turn layer keeps whatever it now holds, so a
+          // card free this turn stays free this turn.
+          const int turn = turn_layer_cost(c);
+          set_combat_cost(c, 1);
+          set_turn_cost(c, turn);
+        }
       }
       break;
     case ActionKind::RemoveAllDebuffs:
@@ -1901,14 +1949,17 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // selection order therefore come back in that order, which is what StS
       // describes — the card chosen first is drawn first.
       //
-      // The discount only marks a card whose PRINTED cost is above 0, exactly
-      // as StS guards it: a card that already costs 0 gains nothing and must
-      // not come back marked as discounted.
+      // Forethought's discount is freeToPlayOnce, set only on a card whose
+      // `cost` (the combat layer) is above 0, exactly as ForethoughtAction
+      // guards it: a card that already costs 0 gains nothing and must not come
+      // back marked as discounted.
+      //
+      // Entering the draw pile resets the turn layer (StS's Soul ->
+      // clearPowers -> resetAttributes); free_once survives that, which is
+      // why the card is still free when drawn.
       Card moved = a.as_card();
-      if (CARD_DATABASE.at(moved.card_id).cost > 0) {
-        moved.cost_override = 0;
-        moved.cost_duration = CostDuration::UntilPlayed;
-      }
+      if (combat_layer_cost(moved) > 0) moved.free_once = true;
+      reset_turn_cost(moved);
       state.draw_pile.insert(state.draw_pile.begin(), moved);
       break;
     }
@@ -1965,25 +2016,24 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       for (int i = 0; i < a.amount; ++i) {
         // Each card is an INDEPENDENT roll — Jack of All Trades+ can hand you
         // the same card twice, and in StS it does.
-        Card made{pool[pick(state.card_rng)]};
-        if (a.gen_upgraded) made.card_id = upgraded_card(made.card_id);
+        // makeCopy, then upgrade — StS's order, so an upgraded Blood for Blood
+        // takes its upgrade rule from its already-reduced cost.
+        Card made = make_combat_copy(state, pool[pick(state.card_rng)]);
+        if (a.gen_upgraded) upgrade_card_in_place(made);
         if (a.gen_free_this_turn) {
-          made.cost_override = 0;
-          made.cost_duration = CostDuration::ThisTurn;
+          // Infernal Blade, Transmutation: setCostForTurn(0).
+          set_turn_cost(made, 0);
         } else if (a.gen_free_this_combat) {
-          // Chrysalis / Metamorphosis. StS only zeroes a card whose cost is
-          // above 0, keeping the override off cards that were already free.
+          // Chrysalis / Metamorphosis: `if (cost > 0) cost = costForTurn = 0`,
+          // keeping the layer off cards that were already free.
           //
           // This is reachable, despite an earlier comment here claiming it
           // "matters for nothing today": the class Skill pool contains 0-cost
           // Skills, and whether one is picked depends on the platform's
-          // std::uniform_int_distribution. Two tests asserted cost_override
+          // std::uniform_int_distribution. Two tests asserted the layer
           // directly and so passed on macOS while failing on Linux CI. Assert
           // effective cost, not the field.
-          if (CARD_DATABASE.at(made.card_id).cost > 0) {
-            made.cost_override = 0;
-            made.cost_duration = CostDuration::ThisCombat;
-          }
+          if (combat_layer_cost(made) > 0) set_combat_cost(made, 0);
         }
         switch (a.gen_pile) {
           case GeneratedPile::Hand:
@@ -2213,7 +2263,8 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
           std::uniform_int_distribution<std::size_t> pick(
               0, candidates.size() - 1);
           const std::size_t idx = pick(state.card_rng);
-          pc.options[pc.num_options++] = Card{candidates[idx]};
+          // makeCopy: a Blood for Blood offered here is already reduced.
+          pc.options[pc.num_options++] = make_combat_copy(state, candidates[idx]);
           candidates.erase(candidates.begin() + static_cast<long>(idx));
         }
         if (pc.num_options == 0) break;
@@ -2268,9 +2319,12 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
           break;
         case ChoiceKind::HandToTopOfDraw:
           // Warcry: hand -> top of draw. `back()` is the top (draw_one pops
-          // it).
+          // it). Entering the draw pile resets the turn cost layer (StS's
+          // Soul -> clearPowers), as entering the discard does.
           if (take_from_pile(state.current_hand, chosen)) {
-            state.draw_pile.push_back(chosen);
+            Card moved = chosen;
+            reset_turn_cost(moved);
+            state.draw_pile.push_back(moved);
           }
           break;
         case ChoiceKind::DiscardToTopOfDraw:
@@ -2323,8 +2377,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
           // Discovery: the chosen card is a fresh copy that costs 0 this turn.
           // It is generated, so it comes from no pile and nothing is removed.
           Card made = chosen;
-          made.cost_override = 0;
-          made.cost_duration = CostDuration::ThisTurn;
+          set_turn_cost(made, 0);  // DiscoveryAction: setCostForTurn(0)
           add_card_to_hand(state, made);
           break;
         }
