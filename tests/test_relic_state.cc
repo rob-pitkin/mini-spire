@@ -577,6 +577,57 @@ TEST(RewardRelics, WithoutPrayerWheelThereIsOneScreen) {
 
 // Explicitly not on elites — the wiki says so, and this is the kind of
 // condition that is easy to implement as "always".
+// ------------------------------------------------------------ Singing Bowl
+
+// A reward screen open on floor 0, so leaving it goes back to the map rather
+// than ending the run.
+RunState at_a_card_reward(bool with_bowl) {
+  RunState run = RunState::start(1);
+  if (with_bowl) run.obtain_relic(RelicId::SingingBowl);
+  run.phase = Phase::Reward;
+  run.card_reward = {Card{CardId::Anger}, Card{CardId::Inflame}};
+  run.hp = run.max_hp - 10;
+  return run;
+}
+
+// +2 Max HP, and +2 HP with it; no card; the screen closes as a skip does.
+TEST(RewardRelics, SingingBowlTradesTheCardForTwoMaxHp) {
+  RunState run = at_a_card_reward(true);
+  const int max_before = run.max_hp;
+  const int hp_before = run.hp;
+  const size_t deck_before = run.master_deck.size();
+
+  run.take_max_hp_instead();
+
+  EXPECT_EQ(run.max_hp, max_before + kSingingBowlMaxHp);
+  EXPECT_EQ(run.hp, hp_before + kSingingBowlMaxHp) << "gaining Max HP heals";
+  EXPECT_EQ(run.master_deck.size(), deck_before);
+  EXPECT_TRUE(run.card_reward.empty());
+  EXPECT_EQ(run.phase, Phase::Map);
+}
+
+// It closes ONE screen. A Prayer Wheel's second reward still follows.
+TEST(RewardRelics, SingingBowlLeavesPrayerWheelsSecondScreen) {
+  RunState run = at_a_card_reward(true);
+  run.combat_source = RewardSource::Monster;
+  run.pending_extra_card_rewards = 1;
+
+  run.take_max_hp_instead();
+
+  EXPECT_FALSE(run.card_reward.empty()) << "the second screen did not open";
+  EXPECT_EQ(run.pending_extra_card_rewards, 0);
+}
+
+TEST(RewardRelics, WithoutSingingBowlThereIsNoMaxHpOption) {
+  RunState run = at_a_card_reward(false);
+  const int max_before = run.max_hp;
+
+  run.take_max_hp_instead();
+
+  EXPECT_EQ(run.max_hp, max_before);
+  EXPECT_EQ(run.card_reward.size(), 2u) << "the screen closed anyway";
+}
+
 TEST(RewardRelics, PrayerWheelDoesNotFireOnElites) {
   RunState run = fight_and_win({RelicId::PrayerWheel}, EncounterPool::Elite);
   EXPECT_EQ(run.pending_extra_card_rewards, 0);

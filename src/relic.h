@@ -185,6 +185,16 @@ inline constexpr int kMatryoshkaUsedUp = -2;
 // gains 2 Energy and disarms it. It does not stack. StS encodes armed as -2 and
 // idle as -1, neither of which is displayed (the relic glows instead); here the
 // counter is a plain flag, 1 armed and 0 idle, so the default is idle.
+// Singing Bowl: skip a card reward for this much Max HP instead, which also
+// heals it (SingingBowlButton, `increaseMaxHp(2, true)`).
+inline constexpr int kSingingBowlMaxHp = 2;
+
+// Wing Boots: this many moves to ANY room on the next row. A charge is spent
+// only by a move no edge allows; at zero the counter becomes -2, the used-up
+// value StS's setCounter recognises (WingBoots, MapRoomNode).
+inline constexpr int kWingBootsCharges = 3;
+inline constexpr int kWingBootsUsedUp = -2;
+
 // Girya, Peace Pipe and Shovel stop spawning once this many of the three are
 // held (decompiled canSpawn, `campfireRelicCount < 2`).
 inline constexpr int kMaxCampfireRelics = 2;

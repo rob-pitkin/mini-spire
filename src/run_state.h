@@ -330,8 +330,14 @@ struct RunState {
 
   // Columns the player may move to from where they stand. From floor 0 this is
   // every room on the map's first row; otherwise it is the current node's
-  // out-edges. Empty once there is nowhere left to go.
+  // out-edges, plus every room on the next row while Wing Boots has a charge.
+  // Empty once there is nowhere left to go.
   std::vector<int> available_paths() const;
+
+  // The columns reachable along the map's edges alone — available_paths
+  // without Wing Boots. choose_path compares against it to decide whether a
+  // move spent a charge.
+  std::vector<int> edge_paths() const;
 
   // Moves to `column` on the next floor and enters whatever is there. A `?` is
   // resolved here, on entry (§4.1) — which is the only moment its contents are
@@ -359,6 +365,12 @@ struct RunState {
 
   // Closes the reward screen without taking anything.
   void skip_card_reward();
+
+  // Singing Bowl: +2 Max HP (and +2 HP) in place of the card, then closes the
+  // screen as a skip does. Refused without the relic, without an open card
+  // reward, or while a deck choice is pending. The v2 action space reserves a
+  // block for it (v2-spec §6, "take Max HP instead").
+  void take_max_hp_instead();
 
   // Pays out a fight's gold (§4.2): 10–20 normal, 25–35 elite, 100±5 boss.
   void award_combat_gold(RewardSource source);

@@ -245,7 +245,7 @@ per §1.
 
 ---
 
-## 7. Status: 112 of 140 wired
+## 7. Status: 114 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -264,7 +264,7 @@ tree appears only on a comment line, so the discrepancy is not comment noise.
 One of the two counts used a different rule and neither recorded which, which is
 the whole argument for pinning the command here.
 
-The 28 remaining are not one backlog. **Most are blocked on engine pieces that
+The 26 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
@@ -278,7 +278,7 @@ have nothing to do with relics**, and those blockers are shared:
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed). **A run-layer deck choice now exists** (§6.23, `pending_deck_choices`) — Empty Cage (remove 2) and Astrolabe (transform 3) need a new purpose on it, not a new mechanism |
-| **Nothing blocking — but each needs a design first** | **4** — an exact count of the list that follows, not an estimate. The `~` this row carried for several batches was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. Juzu Bracelet and Tiny Chest shipped in §6.18, the three Eggs in §6.19, Matryoshka and Ancient Tea Set in §6.20, Chemical X and Pocketwatch in §6.21, Dead Branch in §6.22, the three Bottled relics in §6.23. **None of the 4 is a drop-in:** Unceasing Top (a post-drain check in `apply_action`, the hot path M2 measures), Snecko Eye (§6.22 — hand size and a Confusion cost roll the single `cost_override` slot cannot hold), Singing Bowl (a new option on the card reward screen), and Wing Boots (off-path moves in `available_paths` and the path mask) | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics did need a card-selection screen at pickup, which §6.23 built; the Eggs did not (§6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
+| **Nothing blocking — but each needs a design first** | **2** — an exact count of the list that follows, not an estimate. The `~` this row carried for several batches was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. Juzu Bracelet and Tiny Chest shipped in §6.18, the three Eggs in §6.19, Matryoshka and Ancient Tea Set in §6.20, Chemical X and Pocketwatch in §6.21, Dead Branch in §6.22, the three Bottled relics in §6.23, Singing Bowl and Wing Boots in §6.25. **Neither is a drop-in:** Unceasing Top (a post-drain check in `apply_action`, the hot path M2 measures) and Snecko Eye (§6.22 — hand size and a Confusion cost roll the single `cost_override` slot cannot hold) | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics did need a card-selection screen at pickup, which §6.23 built; the Eggs did not (§6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
 | **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
@@ -1367,3 +1367,30 @@ disabling the exclusion: 8 of its 60 seeds then fail.
 
 A sibling, `returnRandomScreenlessRelic`, re-draws past the three Bottles and
 Whetstone. Only Calling Bell and events call it; apply it when they land.
+
+### 6.25 Singing Bowl and Wing Boots
+
+Two run-layer relics whose effects live outside their own classes (decompiled;
+wiki.gg agrees on both).
+
+**Singing Bowl.** The relic class is empty. `CardRewardScreen.reopen` shows
+`SingingBowlButton` on every normal card reward while the relic is held —
+not on draft, Codex, Discovery or choose-one screens — and the button calls
+`increaseMaxHp(2, true)` and removes the card reward. `take_max_hp_instead()`
+does the same: `gain_max_hp(2)`, which heals 2 as the `true` does, then closes
+the screen exactly as `skip_card_reward` does, so a Prayer Wheel's second
+screen still follows and the room exits after the last one. Only
+`generate_card_reward` fills `card_reward`, and every caller is a normal
+reward — combat, elite, Prayer Wheel, Dream Catcher — so every screen offers
+it, which is the wiki's list. v2-spec §6 already reserves the action block.
+
+**Wing Boots.** Three charges, set in `obtain_relic` (the constructor sets
+them in StS; our counter defaults to 0). While a charge remains,
+`MapRoomNode.wingedIsConnectedTo` makes every node on the next row reachable,
+so `available_paths()` adds every room on that row. The charge is spent ONLY
+by a move no edge allows — the click handler tests
+`!normalConnection && wingedConnection` — which is why the edge-only list is
+now its own function, `edge_paths()`, for `choose_path` to compare against. At
+zero the counter becomes -2, the used-up value. The tests run on a hand-built
+map (rooms in three columns, each with one edge straight up), since which nodes
+a generated map connects depends on the map RNG.

@@ -61,7 +61,7 @@ RunState RunState::start(uint64_t run_seed) {
   return run;
 }
 
-std::vector<int> RunState::available_paths() const {
+std::vector<int> RunState::edge_paths() const {
   std::vector<int> columns;
   if (is_terminal()) return columns;
 
@@ -78,6 +78,33 @@ std::vector<int> RunState::available_paths() const {
   for (const MapEdge& edge : map[row][column].edges) {
     columns.push_back(edge.dst_x);
   }
+  return columns;
+}
+
+std::vector<int> RunState::available_paths() const {
+  std::vector<int> columns = edge_paths();
+
+  // Wing Boots: with a charge left, every room on the next row is reachable,
+  // connected or not (MapRoomNode.wingedIsConnectedTo — "node.y == edge.dstY",
+  // i.e. the row the current node's edges lead to). From floor 0 every
+  // first-row room is already open, and the top row has no next row, so
+  // flight only ever adds rooms between those.
+  const HeldRelic* boots = nullptr;
+  for (const HeldRelic& r : relics) {
+    if (r.id == RelicId::WingBoots) boots = &r;
+  }
+  if (is_terminal() || floor == 0 || !boots || boots->counter <= 0) {
+    return columns;
+  }
+  const int next_row = floor;  // map row of the floor after this one
+  if (next_row >= kMapHeight) return columns;
+  for (int x = 0; x < kMapWidth; ++x) {
+    if (!map[next_row][x].is_room()) continue;
+    if (std::find(columns.begin(), columns.end(), x) == columns.end()) {
+      columns.push_back(x);
+    }
+  }
+  std::sort(columns.begin(), columns.end());
   return columns;
 }
 
@@ -329,6 +356,11 @@ bool RunState::obtain_relic(RelicId id) {
     // defaults to 0, which would read as already spent.
     case RelicId::Matryoshka:
       held_relic(id)->counter = kMatryoshkaCharges;
+      break;
+
+    // The same, at 3 (WingBoots' constructor).
+    case RelicId::WingBoots:
+      held_relic(id)->counter = kWingBootsCharges;
       break;
 
     // The Bottles open a forced choice over the deck (§6.23). StS opens it only
@@ -1253,6 +1285,16 @@ void RunState::choose_path(int chosen_column) {
     return;
   }
 
+  // A Wing Boots charge goes only on a move no edge allows: the click handler
+  // spends it when `!normalConnection && wingedConnection`, so taking a
+  // connected room with charges left costs nothing.
+  const std::vector<int> by_edge = edge_paths();
+  if (std::find(by_edge.begin(), by_edge.end(), chosen_column) == by_edge.end()) {
+    if (HeldRelic* boots = held_relic(RelicId::WingBoots)) {
+      if (--boots->counter <= 0) boots->counter = kWingBootsUsedUp;
+    }
+  }
+
   ++floor;
   column = chosen_column;
 
@@ -1517,6 +1559,18 @@ void RunState::take_card_reward(int index) {
   // add_card is what mints the uid — the card acquires identity at the moment
   // it becomes the player's, not when it was offered.
   add_card(card_reward[index]);
+  skip_card_reward();
+}
+
+void RunState::take_max_hp_instead() {
+  if (has_pending_deck_choice()) return;
+  if (!has_relic(RelicId::SingingBowl)) return;
+  if (card_reward.empty()) return;
+  // gain_max_hp heals by the same amount, which is the `true` in StS's
+  // increaseMaxHp(2, true). Outside combat, so Magic Flower does not apply.
+  gain_max_hp(kSingingBowlMaxHp);
+  // Then the reward closes exactly as a skip does — the button removes the card
+  // reward from the screen — so a Prayer Wheel's second screen still follows.
   skip_card_reward();
 }
 

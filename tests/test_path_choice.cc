@@ -87,6 +87,31 @@ int walk_to_the_top(RunState& run) {
   return floors;
 }
 
+// A hand-built map: rest sites in columns 1, 3 and 5 on every row, each with a
+// single edge straight up. From any room the only CONNECTED move is straight
+// ahead, so a sideways move can only be a Wing Boots flight. Built rather than
+// generated: which nodes a generated map connects depends on the map RNG.
+// Rest sites, so entering a room starts no fight.
+void use_ladder_map(RunState& run) {
+  for (auto& row : run.map) {
+    for (MapNode& node : row) {
+      node.room = RoomType::None;
+      node.edges.clear();
+      node.parents.clear();
+    }
+  }
+  for (int y = 0; y < kMapHeight; ++y) {
+    for (int x : {1, 3, 5}) {
+      MapNode& node = run.map[y][x];
+      node.room = RoomType::Rest;
+      if (y + 1 < kMapHeight) {
+        node.edges.insert(MapEdge{x, y, x, y + 1});
+        run.map[y + 1][x].parents.push_back(Point{x, y});
+      }
+    }
+  }
+}
+
 // ------------------------------------------------------------ available paths
 
 TEST(PathChoice, FromNeowEveryFirstRowRoomIsAnOpening) {
@@ -236,6 +261,68 @@ TEST(UnknownRooms, AShopCannotFollowAShop) {
     EXPECT_NE(run.resolve_unknown_room(), RoomType::Shop)
         << "a shop followed a shop";
   }
+}
+
+// ------------------------------------------------------------- Wing Boots
+
+int wing_boots_charges(const RunState& run) {
+  for (const HeldRelic& r : run.relics) {
+    if (r.id == RelicId::WingBoots) return r.counter;
+  }
+  return 0;
+}
+
+// Standing on row 0, column 1 of the ladder: only column 1 is connected.
+RunState on_the_ladder(bool with_boots) {
+  RunState run = RunState::start(1);
+  use_ladder_map(run);
+  if (with_boots) run.obtain_relic(RelicId::WingBoots);
+  run.floor = 1;
+  run.column = 1;
+  run.phase = Phase::Map;
+  return run;
+}
+
+TEST(WingBoots, StartsWithThreeCharges) {
+  EXPECT_EQ(wing_boots_charges(on_the_ladder(true)), kWingBootsCharges);
+}
+
+TEST(WingBoots, OpensEveryRoomOnTheNextRow) {
+  EXPECT_EQ(on_the_ladder(false).available_paths(), std::vector<int>{1});
+  EXPECT_EQ(on_the_ladder(true).available_paths(), (std::vector<int>{1, 3, 5}));
+}
+
+// A connected move costs nothing, even with charges to spare.
+TEST(WingBoots, AConnectedMoveSpendsNoCharge) {
+  RunState run = on_the_ladder(true);
+  run.choose_path(1);
+  EXPECT_EQ(run.column, 1);
+  EXPECT_EQ(wing_boots_charges(run), kWingBootsCharges);
+}
+
+TEST(WingBoots, AFlightSpendsOneCharge) {
+  RunState run = on_the_ladder(true);
+  run.choose_path(3);
+  EXPECT_EQ(run.floor, 2);
+  EXPECT_EQ(run.column, 3);
+  EXPECT_EQ(wing_boots_charges(run), kWingBootsCharges - 1);
+}
+
+// After three flights the boots are spent: -2, and only edges remain.
+TEST(WingBoots, ThreeFlightsUseThemUp) {
+  RunState run = on_the_ladder(true);
+  for (int target : {3, 5, 3}) run.choose_path(target);
+  EXPECT_EQ(run.column, 3);
+  EXPECT_EQ(wing_boots_charges(run), kWingBootsUsedUp);
+  EXPECT_EQ(run.available_paths(), std::vector<int>{3});
+}
+
+// From floor 0 every first-row room is already open; nothing is spent there.
+TEST(WingBoots, TheFirstRowSpendsNothing) {
+  RunState run = on_the_ladder(true);
+  run.floor = 0;
+  run.choose_path(5);
+  EXPECT_EQ(wing_boots_charges(run), kWingBootsCharges);
 }
 
 // Event is the FALLBACK: a roll that lands in no band is an event. Every band
