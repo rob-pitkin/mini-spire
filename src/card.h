@@ -399,6 +399,12 @@ enum class CardTarget {
 // current energy; X = the energy spent. Stored in CardData::cost.
 inline constexpr int kXCost = -2;
 
+// The highest cost any card can show: Blood for Blood's printed 4, read from
+// the database (Card.MaxPrintedCostIsBloodForBloods pins it). Nothing in StS
+// raises a cost above its printed value — Confusion rolls at most 3, every
+// other effect lowers — so this bounds the observation's cost planes.
+inline constexpr int kMaxCardCost = 4;
+
 // ---------------------------------------------------------------------------
 // Mid-resolution player choices (Stage 4c; docs/design/decision-points.md).
 //

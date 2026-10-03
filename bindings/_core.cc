@@ -423,7 +423,8 @@ PYBIND11_MODULE(_core, m) {
       .value("Frail", Debuff::Frail)
       .value("Entangle", Debuff::Entangle)
       .value("NoDraw", Debuff::NoDraw)
-      .value("NoBlock", Debuff::NoBlock);
+      .value("NoBlock", Debuff::NoBlock)
+      .value("Confusion", Debuff::Confusion);
   py::enum_<Power>(m, "Power")
       .value("Strength", Power::Strength)
       .value("Dexterity", Power::Dexterity)
@@ -641,6 +642,7 @@ PYBIND11_MODULE(_core, m) {
       .def_readonly_static("NUM_ENEMY_POWERS", &kNumEnemyPowers)
       .def_readonly_static("NUM_PLAYER_POWERS", &kNumPlayerPowers)
       .def_readonly_static("NUM_CARD_TYPES", &kNumCardTypes)
+      .def_readonly_static("NUM_COST_PLANES", &CombatEnv::kNumCostPlanes)
       // Action-layout landmarks — the v2 layout (v2-spec.md §6). Every block's
       // first index is published so Python never re-derives one. END_TURN_ACTION
       // is the last index of the COMBAT block, not of the action space; never

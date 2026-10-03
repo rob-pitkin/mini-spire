@@ -237,6 +237,15 @@ Independent of family A; some subset is needed under *any* hand decision.
 - **B3 — free-this-turn plane**: a fifth 154-wide count plane ("free copies of
   type T this turn"), consistent with the pile-plane architecture. +154 floats,
   almost always all-zero. (#3)
+
+  > ⚠️ **Superseded 2026-10-03 (`relic-effects.md` §6.28, Rob).** The single
+  > free plane became **five cost planes**: hand copies of type T at effective
+  > cost 0, 1, 2, 3, 4. Snecko Eye's Confusion gives each copy its own cost of
+  > 0–3, which "free or not" cannot show, and Enlightenment's 1s never fit
+  > either — both were §1 defects. Four is the highest printed cost in the pool
+  > (Blood for Blood), pinned by a test; X-cost and unplayable cards appear in
+  > no cost plane, since their cost never changes and their type carries it.
+  > The counts in §9.4 below are the historical before/after of this section.
 - **B4 — defer #3**: the discount is turn-scoped and self-inflicted (the agent
   just played Infernal Blade); accept as a recorded gap. Cheaper, but it is the
   exact "predicted cost 1, paid 0" mismatch the parity principle calls a defect.

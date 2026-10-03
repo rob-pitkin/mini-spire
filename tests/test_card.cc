@@ -281,6 +281,22 @@ TEST(CardUpgrades, KnownPairsAreCorrect) {
   EXPECT_EQ(upgraded_card(CardId::Slimed), CardId::Slimed);
 }
 
+// The observation has one cost plane per value up to kMaxCardCost. A card
+// printed higher would fall off the planes silently, so the bound is pinned to
+// the database rather than trusted.
+TEST(Card, MaxPrintedCostIsBloodForBloods) {
+  int highest = 0;
+  CardId which = CardId::Strike;
+  for (const auto& [id, data] : CARD_DATABASE) {
+    if (data.cost > highest) {
+      highest = data.cost;
+      which = id;
+    }
+  }
+  EXPECT_EQ(highest, kMaxCardCost);
+  EXPECT_EQ(which, CardId::BloodForBlood);
+}
+
 // --- Cost layers (relic-effects.md §6.27) --------------------------------
 
 // An upgrade that changes the printed cost is upgradeBaseCost: the combat

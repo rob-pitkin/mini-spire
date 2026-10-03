@@ -103,7 +103,8 @@ def test_obs_size_matches_its_component_blocks():
     # Recomputes OBS_SIZE from its parts, so a block that grows without the total
     # being updated (or vice versa) cannot pass quietly.
     env_cls = _core.CombatEnv
-    piles = 5 * env_cls.NUM_CARD_TYPES  # 4 piles + the free-this-turn plane
+    # 4 piles + one hand plane per effective cost (relic-effects.md §6.28)
+    piles = (4 + env_cls.NUM_COST_PLANES) * env_cls.NUM_CARD_TYPES
     choice = 5 + env_cls.NUM_CARD_TYPES * 3
     expected = (
         env_cls.PLAYER_OBS_SIZE

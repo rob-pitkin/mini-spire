@@ -245,7 +245,7 @@ per §1.
 
 ---
 
-## 7. Status: 115 of 140 wired
+## 7. Status: 116 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -264,7 +264,7 @@ tree appears only on a comment line, so the discrepancy is not comment noise.
 One of the two counts used a different rule and neither recorded which, which is
 the whole argument for pinning the command here.
 
-The 25 remaining are not one backlog. **Most are blocked on engine pieces that
+The 24 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
@@ -278,7 +278,7 @@ have nothing to do with relics**, and those blockers are shared:
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed). **A run-layer deck choice now exists** (§6.23, `pending_deck_choices`) — Empty Cage (remove 2) and Astrolabe (transform 3) need a new purpose on it, not a new mechanism |
-| **Nothing blocking — but it needs a design first** | **1** — an exact count of the list that follows, not an estimate. The `~` this row carried for several batches was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. Juzu Bracelet and Tiny Chest shipped in §6.18, the three Eggs in §6.19, Matryoshka and Ancient Tea Set in §6.20, Chemical X and Pocketwatch in §6.21, Dead Branch in §6.22, the three Bottled relics in §6.23, Singing Bowl and Wing Boots in §6.25, Unceasing Top in §6.26. **Not a drop-in:** Snecko Eye (§6.22 — hand size and a Confusion cost roll the single `cost_override` slot cannot hold) | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics did need a card-selection screen at pickup, which §6.23 built; the Eggs did not (§6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
+| ~~**Nothing blocking**~~ | **0** — ✅ **cleared.** The `~` this row once carried was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. All 17 shipped: Juzu Bracelet and Tiny Chest in §6.18, the three Eggs in §6.19, Matryoshka and Ancient Tea Set in §6.20, Chemical X and Pocketwatch in §6.21, Dead Branch in §6.22, the three Bottled relics in §6.23, Singing Bowl and Wing Boots in §6.25, Unceasing Top in §6.26, Snecko Eye in §6.28 (on the cost layers of §6.27). Every remaining relic waits on another row | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics did need a card-selection screen at pickup, which §6.23 built; the Eggs did not (§6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
 | **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
@@ -1519,3 +1519,44 @@ before the opening draw); the roll on every card that reaches the hand, from
 Blood, read from the database) and nothing raises a cost above its printed
 value, which a test pins. X-cost and unplayable cards appear in no cost plane:
 their cost never changes, so their CardId already says it.
+
+### 6.28 Snecko Eye
+
+Built on §6.27's layers (decompiled `SneckoEye`, `ConfusionPower`,
+`AbstractPlayer.preBattlePrep`; wiki.gg agrees). With it, every relic §7 once
+listed as "nothing blocking" has shipped.
+
+**Hand size.** `onEquip` raises `masterHandSize` by 2, so every turn's draw and
+the opening hand deal 7. `hand_size(state)` replaces the `STARTING_HAND_SIZE`
+constant at both sites.
+
+**Confusion is a Debuff that does not tick** (Rob, 2026-10-03). StS types it
+`DEBUFF`, so Orange Pellets removes it and Artifact would negate it — a real
+combo: after Pellets, later draws keep their cost, and cards already rolled keep
+their roll. But `ConfusionPower` has no end-of-round decrement, so it is the one
+named exception in `tick_debuffs`, the mirror of Intangible among powers. Being a
+Debuff also puts it in the observation's debuff block, as a human sees its icon.
+The alternative, a Power, would have needed no exception but broken Pellets.
+
+**When it lands.** `preBattlePrep` ends in `applyPreCombatLogic`, the relics'
+`atPreBattle`, which queues Confusion before the room queues the opening draw —
+so the opening hand is rolled too. It is applied at `CombatStartPreDraw`,
+through `ApplyDebuff`; no Artifact can exist that early.
+
+**The roll** (`confuse_drawn_card`) is `ConfusionPower.onCardDraw`: for a card
+whose cost is not negative — X-cost and unplayable skipped; ours prints
+unplayables at 0, so the flag is what excludes them — roll 0–3 from `card_rng`
+(StS's `cardRandomRng.random(3)`); if it differs from the combat cost, set
+`cost = costForTurn = roll`; and in every case clear `freeToPlayOnce`, so a
+Forethought'd card loses its freebie when drawn. It runs wherever a card is
+DRAWN — `draw_one`, and the opening hand's Innate/bottled pull, which StS also
+draws — and nowhere a card is merely moved into the hand.
+
+**Tests.** The roll assertion is an invariant over every draw (0 ≤ cost ≤ 3), on
+a deck of Blood for Blood: printed at 4, so a card that was not rolled fails. On
+a starter deck the same assertion would pass with no roll at all, since every
+starter costs 3 or less. Disabling the roll in the opening pull makes it fail.
+
+**Display, not engine:** the TUI prints `effective_cost(card_id)` — the cheapest
+copy — on every copy in hand, so two Snecko-rolled Strikes show the same cost
+(task). The engine and the observation's cost planes are per copy.

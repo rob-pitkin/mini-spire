@@ -33,6 +33,10 @@ int instance_effective_cost(const CombatState& state, const Card& card);
 // Corruption: a Skill costs 0 while it is up. Above every cost layer.
 bool corruption_frees_skill(const CombatState& state, CardId card);
 
+// How many cards a turn's draw deals, the opening hand included: StS's
+// masterHandSize. 5, or 7 with Snecko Eye.
+int hand_size(const CombatState& state);
+
 // Does the player's block clear at the start of their turn? Barricade keeps it.
 bool block_resets_at_turn_start(const CombatState& state);
 

@@ -28,6 +28,12 @@ enum class Debuff {
                // because StS types it as one — so it ticks down (2 turns,
                // counting the turn it is played) and the player's Artifact
                // negates it.
+  Confusion,   // player: every card drawn costs a random 0-3 for the rest of
+               // the combat (Snecko Eye). A Debuff because StS types it
+               // DEBUFF — Orange Pellets removes it, Artifact would negate it —
+               // but it does NOT tick: StS's ConfusionPower has no end-of-round
+               // decrement. The one named exception in tick_debuffs, the mirror
+               // of Intangible among powers (relic-effects.md §6.28).
   None,        // sentinel: "no debuff" (default for unused fields)
 };
 
@@ -143,7 +149,7 @@ enum class Power {
 // Entangle and NoDraw are player-only; they occupy always-zero floats in the
 // enemy blocks. Kept in one shared order (rather than split per entity like the
 // powers) because two of five is not worth a second table.
-inline constexpr int kNumDebuffs = 6;
+inline constexpr int kNumDebuffs = 7;
 inline constexpr int kNumEnemyPowers = 7;
 inline constexpr int kNumPlayerPowers = 34;
 

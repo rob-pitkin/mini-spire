@@ -195,6 +195,12 @@ inline constexpr int kSingingBowlMaxHp = 2;
 inline constexpr int kWingBootsCharges = 3;
 inline constexpr int kWingBootsUsedUp = -2;
 
+// Snecko Eye: draw this many more cards every turn, the opening hand included
+// (onEquip, `masterHandSize += 2`) — and Confusion, whose roll on each drawn
+// card is 0 to kConfusionMaxCost inclusive (`cardRandomRng.random(3)`).
+inline constexpr int kSneckoEyeExtraDraw = 2;
+inline constexpr int kConfusionMaxCost = 3;
+
 // Girya, Peace Pipe and Shovel stop spawning once this many of the three are
 // held (decompiled canSpawn, `campfireRelicCount < 2`).
 inline constexpr int kMaxCampfireRelics = 2;

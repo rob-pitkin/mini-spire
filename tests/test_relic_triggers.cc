@@ -1288,6 +1288,103 @@ TEST(RelicTriggers, UnceasingTopDrawsNothingOnceTheFightIsWon) {
   EXPECT_TRUE(s.current_hand.empty());
 }
 
+// ------------------------------------------------------------- Snecko Eye
+
+// Two more cards per draw, the opening hand included, and Confused before it.
+TEST(RelicTriggers, SneckoEyeDealsSevenAndConfuses) {
+  CombatState s = fight_with({RelicId::SneckoEye});
+  EXPECT_EQ(s.current_hand.size(),
+            static_cast<size_t>(STARTING_HAND_SIZE + kSneckoEyeExtraDraw));
+  EXPECT_GT(get_status(s.character.debuffs, Debuff::Confusion), 0);
+}
+
+TEST(RelicTriggers, SneckoEyeDrawsSevenEveryTurnAndConfusionLasts) {
+  CombatState s = fight_with({RelicId::SneckoEye});
+  one_durable_enemy(s);
+
+  ASSERT_TRUE(end_turn(s));
+
+  EXPECT_EQ(s.current_hand.size(),
+            static_cast<size_t>(STARTING_HAND_SIZE + kSneckoEyeExtraDraw));
+  EXPECT_GT(get_status(s.character.debuffs, Debuff::Confusion), 0)
+      << "Confusion ticked away; it should last the combat";
+}
+
+// What each card rolls depends on the stream, so the assertion is what holds
+// for every roll: every drawn card costs 0 to 3. The deck is all Blood for
+// Blood, printed at 4, so a card that was NOT rolled fails the assertion — a
+// starter deck would pass with no roll at all, every starter costing 3 or
+// less. One copy is bottled, so the opening hand's Innate/bottled pull, which
+// is a draw in StS, is covered too.
+TEST(RelicTriggers, ConfusionRollsEveryDrawnCardToZeroThroughThree) {
+  for (uint32_t seed = 0; seed < 10; ++seed) {
+    CombatSetup setup;
+    setup.seed = seed;
+    setup.relics = {HeldRelic{RelicId::SneckoEye, 0}};
+    setup.deck.assign(10, Card{CardId::BloodForBlood});
+    setup.deck[0].bottle = Bottle::Flame;
+    const CombatState s = start_combat(setup);
+
+    ASSERT_EQ(s.current_hand.size(),
+              static_cast<size_t>(STARTING_HAND_SIZE + kSneckoEyeExtraDraw));
+    for (const Card& c : s.current_hand) {
+      const int cost = instance_effective_cost(s, c);
+      EXPECT_GE(cost, 0) << "seed " << seed;
+      EXPECT_LE(cost, kConfusionMaxCost) << "seed " << seed << ": not rolled";
+    }
+  }
+}
+
+// X-cost and unplayable cards are left alone (`if (card.cost >= 0)`); a
+// Forethought'd card loses its freeToPlayOnce on the draw.
+TEST(RelicTriggers, ConfusionSkipsXAndUnplayableAndClearsFreeToPlayOnce) {
+  CombatState s = bare_fight();
+  s.character.debuffs[Debuff::Confusion] = 1;
+  Card foreseen{CardId::Bash};
+  foreseen.free_once = true;
+  s.current_hand.clear();
+  s.discard_pile.clear();
+  s.draw_pile = {foreseen, Card{CardId::Dazed}, Card{CardId::Whirlwind}};
+  ActionQueue q;
+
+  for (int i = 0; i < 3; ++i) draw_one(s, q);
+
+  ASSERT_EQ(s.current_hand.size(), 3u);
+  for (const Card& c : s.current_hand) {
+    if (c.card_id == CardId::Whirlwind || c.card_id == CardId::Dazed) {
+      EXPECT_FALSE(c.has_cost_layer()) << card_name(c.card_id);
+    } else {
+      EXPECT_FALSE(c.free_once) << "the draw should spend freeToPlayOnce";
+    }
+  }
+}
+
+// Orange Pellets removes every debuff, Confusion included — a real StS
+// combo: later draws keep their printed cost.
+TEST(RelicTriggers, RemovingConfusionStopsTheRolls) {
+  CombatState s = bare_fight();
+  s.character.debuffs[Debuff::Confusion] = 1;
+  ActionQueue q;
+  ResolutionContext ctx;
+  q.push_back(Action{ActionKind::RemoveAllDebuffs});
+  drain(s, q, ctx);
+  ASSERT_EQ(get_status(s.character.debuffs, Debuff::Confusion), 0);
+
+  s.current_hand.clear();
+  s.draw_pile = {Card{CardId::Bash}};
+  draw_one(s, q);
+
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_FALSE(s.current_hand[0].has_cost_layer());
+}
+
+// Without the relic, nothing is rolled and the hand is five.
+TEST(RelicTriggers, WithoutSneckoEyeNothingIsRolled) {
+  const CombatState s = bare_fight();
+  EXPECT_EQ(s.current_hand.size(), static_cast<size_t>(STARTING_HAND_SIZE));
+  for (const Card& c : s.current_hand) EXPECT_FALSE(c.has_cost_layer());
+}
+
 // The wiki's Fiend Fire case: the whole hand exhausted, then one card drawn.
 TEST(RelicTriggers, UnceasingTopDrawsAfterFiendFireEmptiesTheHand) {
   CombatState s = top_fight(true, {Card{CardId::FiendFire}, Card{CardId::Defend}},

@@ -50,6 +50,7 @@ constexpr std::array<Debuff, kNumDebuffs> kObsDebuffOrder = {
     Debuff::Entangle,
     Debuff::NoDraw,
     Debuff::NoBlock,
+    Debuff::Confusion,
 };
 static_assert(kObsDebuffOrder.size() == kNumDebuffs,
               "kObsDebuffOrder must list every debuff");
@@ -341,18 +342,18 @@ void CombatEnv::compute_obs() {
   count_pile(state_.draw_pile, 1);
   count_pile(state_.discard_pile, 2);
   count_pile(state_.exhaust_pile, 3);
-  // Plane 5 is not a pile: it holds how many copies of each type cost 0 for the
-  // rest of this turn (ROB-40 B3). Read off the HAND's instances since
-  // colorless-effects.md D2 moved the discount onto the card itself — the
-  // player sees a 0 printed on that specific card, which is what this plane
-  // says. Cards discounted elsewhere (a Chrysalis card waiting in the draw
-  // pile) are not visible to the player either.
+  // The cost planes are not piles: plane 4 + k counts the hand's copies of each
+  // type whose EFFECTIVE cost is k — the number the player reads off that
+  // card, Corruption, Confusion and every cost layer included (§6.28). Read off
+  // the HAND only: a card waiting in the draw pile shows no cost to the player.
+  // X-cost and unplayable cards are skipped — their cost never changes, so the
+  // card type already carries it.
   for (const Card& c : state_.current_hand) {
-    // A cost layer that has made this copy free — the same set the single
-    // override slot used to mark (§6.27). Printed-0 cards are not counted.
-    if (c.has_cost_layer() && (c.free_once || turn_layer_cost(c) == 0)) {
-      o[kPileBase + 4 * kStride + static_cast<int>(c.card_id)] += 1.0f;
-    }
+    const CardData& data = CARD_DATABASE.at(c.card_id);
+    if (data.unplayable || data.cost == kXCost) continue;
+    const int cost = instance_effective_cost(state_, c);
+    if (cost < 0 || cost > kMaxCardCost) continue;  // unreachable; pinned by test
+    o[kPileBase + (4 + cost) * kStride + static_cast<int>(c.card_id)] += 1.0f;
   }
 
   // --- Turn number ---

@@ -319,6 +319,44 @@ TEST(CombatEnv, ObsHandCountsMatchDeckDraw) {
   }
 }
 
+// The cost planes count the HAND's copies at each effective cost — what the
+// player reads off every card (relic-effects.md §6.28). Built by hand, one copy
+// per cost, so each plane's count is known exactly.
+TEST(CombatEnv, CostPlanesCountHandCopiesAtEachEffectiveCost) {
+  CombatState s = start_v1_combat(0);
+  Card free_for_combat{CardId::Bash};
+  set_combat_cost(free_for_combat, 0);
+  Card capped_this_turn{CardId::Bash};
+  set_turn_cost(capped_this_turn, 1);
+  s.current_hand = {free_for_combat,          capped_this_turn,
+                    Card{CardId::Bash},        // printed 2
+                    Card{CardId::BloodForBlood},  // printed 4
+                    Card{CardId::Whirlwind},      // X: no plane
+                    Card{CardId::Dazed}};         // unplayable: no plane
+  CombatEnv env(s);
+
+  const int cost_base = CombatEnv::kPlayerObsSize +
+                        minispire::kMaxEnemies * CombatEnv::kEnemyObsStride +
+                        4 * kNumCardTypes;
+  auto at = [&](int cost, CardId id) {
+    return env.obs()[cost_base + cost * kNumCardTypes + static_cast<int>(id)];
+  };
+  EXPECT_FLOAT_EQ(at(0, CardId::Bash), 1.0f);
+  EXPECT_FLOAT_EQ(at(1, CardId::Bash), 1.0f);
+  EXPECT_FLOAT_EQ(at(2, CardId::Bash), 1.0f);
+  EXPECT_FLOAT_EQ(at(4, CardId::BloodForBlood), 1.0f);
+
+  float total = 0.0f;
+  for (int cost = 0; cost < CombatEnv::kNumCostPlanes; ++cost) {
+    EXPECT_FLOAT_EQ(at(cost, CardId::Whirlwind), 0.0f) << "X-cost has no plane";
+    EXPECT_FLOAT_EQ(at(cost, CardId::Dazed), 0.0f) << "unplayable has no plane";
+    for (int id = 0; id < kNumCardTypes; ++id) {
+      total += env.obs()[cost_base + cost * kNumCardTypes + id];
+    }
+  }
+  EXPECT_FLOAT_EQ(total, 4.0f) << "only the four costed copies are counted";
+}
+
 TEST(CombatEnv, ObsTurnNumberAfterReset) {
   CombatEnv env;
   env.reset(0);

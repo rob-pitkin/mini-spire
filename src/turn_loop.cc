@@ -30,6 +30,13 @@ void tick_intangible(std::unordered_map<Power, int>& powers) {
 
 void tick_debuffs(std::unordered_map<Debuff, int>& debuffs) {
   for (auto it = debuffs.begin(); it != debuffs.end();) {
+    // Confusion is a debuff that never wears off (StS's ConfusionPower has no
+    // end-of-round decrement) — the one named exception to "debuffs tick", as
+    // Intangible is among powers (Rob, 2026-10-03; §6.28).
+    if (it->first == Debuff::Confusion) {
+      ++it;
+      continue;
+    }
     it->second -= 1;
     if (it->second <= 0) {
       it = debuffs.erase(it);
@@ -976,7 +983,7 @@ void handle_end_turn(CombatState& state) {
     state.character.played_power_this_turn = false;
     Action draw;
     draw.kind = ActionKind::DrawCards;
-    draw.amount = STARTING_HAND_SIZE;
+    draw.amount = hand_size(state);  // 7 with Snecko Eye
     q.push_back(draw);
     // Queued, not called: a hook fired here would run before the draw above
     // resolves. Riding behind it in the queue is what makes it POST-draw.
@@ -996,22 +1003,27 @@ void handle_end_turn(CombatState& state) {
 // Combat-start powers don't exist yet, so this needs no queue — the CardDrawn
 // hook can't have a listener on turn 1.
 //
-// ALL of them arrive, even past STARTING_HAND_SIZE. StS's initializeDeck puts
-// every Innate and bottled card on top, draws the hand, and queues an extra
-// draw for however many did not fit (§6.23). This loop used to stop at 5, which
-// three Bottles plus Innate cards could reach.
+// ALL of them arrive, even past the hand size. StS's initializeDeck puts every
+// Innate and bottled card on top, draws the hand, and queues an extra draw for
+// however many did not fit (§6.23). This loop used to stop at 5, which three
+// Bottles plus Innate cards could reach.
+//
+// The hand size is hand_size(state) — 7 with Snecko Eye — and every card here
+// is DRAWN in StS, so Confusion rolls the pulled ones as well as the rest
+// (§6.28).
 void draw_opening_hand(CombatState& state, ActionQueue& q) {
   int drawn = 0;
   for (auto it = state.draw_pile.begin(); it != state.draw_pile.end();) {
     if (CARD_DATABASE.at(it->card_id).innate || it->bottle != Bottle::None) {
       state.current_hand.push_back(*it);
+      confuse_drawn_card(state, state.current_hand.back());
       it = state.draw_pile.erase(it);
       ++drawn;
     } else {
       ++it;
     }
   }
-  for (; drawn < STARTING_HAND_SIZE; ++drawn) {
+  for (const int size = hand_size(state); drawn < size; ++drawn) {
     draw_one(state, q);
   }
 }

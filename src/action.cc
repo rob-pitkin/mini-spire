@@ -224,7 +224,25 @@ std::optional<CardId> draw_one(CombatState& state, ActionQueue& q) {
   }
   state.current_hand.push_back(state.draw_pile.back());
   state.draw_pile.pop_back();
+  confuse_drawn_card(state, state.current_hand.back());
   return state.current_hand.back().card_id;
+}
+
+void confuse_drawn_card(CombatState& state, Card& card) {
+  if (get_status(state.character.debuffs, Debuff::Confusion) == 0) return;
+  // ConfusionPower.onCardDraw: `if (card.cost >= 0)` — X-cost and unplayable
+  // cards (StS cost -1 and -2) are left alone. Ours prints unplayables at 0,
+  // so the flag is what excludes them.
+  const CardData& data = CARD_DATABASE.at(card.card_id);
+  if (data.unplayable || combat_layer_cost(card) < 0) return;
+  const int roll =
+      std::uniform_int_distribution<int>(0, kConfusionMaxCost)(state.card_rng);
+  // `if (card.cost != newCost) cost = costForTurn = newCost` — an equal roll
+  // leaves a turn discount in place.
+  if (roll != combat_layer_cost(card)) set_combat_cost(card, roll);
+  // And always, inside that `cost >= 0` block: a Forethought'd card loses its
+  // freeToPlayOnce the moment it is drawn.
+  card.free_once = false;
 }
 
 namespace {
@@ -950,6 +968,17 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
           // because Action::card defaults to Strike, and the RequestChoice
           // executor copies it straight into PendingChoice::source_card.
           a.card = CardId::None;
+          q.push_back(a);
+        }
+        // Snecko Eye: Confused before the opening hand is drawn. StS queues the
+        // power in atPreBattle, ahead of the battle-start draw, so the opening
+        // hand is rolled too (§6.28). Through ApplyDebuff, so Artifact would
+        // negate it — none can exist this early.
+        if (relic.id == RelicId::SneckoEye) {
+          Action a = make_action(ActionKind::ApplyDebuff);
+          a.target = kPlayerSlot;
+          a.debuff = Debuff::Confusion;
+          a.amount = 1;
           q.push_back(a);
         }
         break;

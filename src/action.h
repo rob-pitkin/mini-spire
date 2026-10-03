@@ -234,6 +234,13 @@ Card make_combat_copy(const CombatState& state, CardId id);
 // shuffle() inline.
 std::optional<CardId> draw_one(CombatState& state, ActionQueue& q);
 
+// Snecko Eye's Confusion, on one card that was just DRAWN (ConfusionPower
+// .onCardDraw): a random 0-3 from card_rng becomes its cost for the rest of the
+// combat, and a freeToPlayOnce is lost. X-cost and unplayable cards are left
+// alone. No-op without the debuff. Called by draw_one and the opening hand —
+// the two places a card is drawn rather than moved into the hand.
+void confuse_drawn_card(CombatState& state, Card& card);
+
 // Apply one debuff/power application to its target ('enemy_target' = decoded
 // enemy slot; ignored for Target::Character). Artifact negates a whole debuff
 // application; Entangle is SET, not accumulated (non-stacking, ROB-75).

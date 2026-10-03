@@ -2,7 +2,8 @@
 
 #include <cstring>
 
-#include "action.h"  // get_status
+#include "action.h"     // get_status
+#include "turn_loop.h"  // STARTING_HAND_SIZE
 
 namespace minispire {
 
@@ -34,6 +35,11 @@ int count_strikes_in_deck(const CombatState& state) {
 bool corruption_frees_skill(const CombatState& state, CardId card) {
   return CARD_DATABASE.at(card).type == CardType::Skill &&
          get_status(state.character.powers, Power::Corruption) > 0;
+}
+
+int hand_size(const CombatState& state) {
+  return STARTING_HAND_SIZE +
+         (state.has_relic(RelicId::SneckoEye) ? kSneckoEyeExtraDraw : 0);
 }
 
 namespace {
