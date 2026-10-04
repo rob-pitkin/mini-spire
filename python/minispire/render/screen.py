@@ -6,6 +6,7 @@ state_piles to render the fight. Pure rendering — no input handling.
 from __future__ import annotations
 
 import functools
+import itertools
 
 import numpy as np
 from rich.console import Console, Group
@@ -454,23 +455,25 @@ def build_hand(env, *, focus: int | None = None) -> tuple[Panel, list]:
     you are holding and cannot afford is part of planning the turn.
     """
     mask = env.action_masks()
-    hand = env.state_piles().hand
+    piles = env.state_piles()
+    hand = piles.hand
 
     action_map: list = []  # local index -> CardId
     boxes: list = []
-    for card_id in hand:
+    # Each copy's own cost, not CardData.cost and not env.effective_cost(id).
+    # The base cost is a number the engine would not charge once Infernal Blade
+    # or Blood for Blood has acted; the per-type cost is the CHEAPEST copy, so
+    # one Madness'd Strike showed every Strike in hand as free.
+    for card_id, cost in zip(hand, piles.hand_costs):
         playable = card_playable(mask, card_id)
         index = None
         if playable:
             index = len(action_map)
             action_map.append(card_id)
-        # effective_cost, not CardData.cost: Infernal Blade makes a card free
-        # for the turn and Blood for Blood drops a point per HP loss. Showing
-        # the base cost told the player a number the engine would not charge.
         boxes.append(
             build_card_box(
                 card_id,
-                env.effective_cost(card_id),
+                cost,
                 index=index,
                 focused=(index is not None and index == focus),
                 dim=not playable,
@@ -546,9 +549,8 @@ def build_choice(env, *, focus: int | None = None) -> tuple[Panel, int]:
     # stopped to decide, and choosing which card to Exhume or upgrade is not
     # answerable from a name once the pool is 154 cards deep.
     table = _card_grid([
-        build_card_box(card_id, env.effective_cost(card_id), index=i,
-                       focused=(i == focus))
-        for i, card_id in enumerate(view.options)
+        build_card_box(card_id, cost, index=i, focused=(i == focus))
+        for i, (card_id, cost) in enumerate(zip(view.options, view.option_costs))
     ])
 
     body: list = [header, Text(""), table]
@@ -579,52 +581,57 @@ def build_piles(env, *, focus: int | None = None) -> tuple[Panel, int]:
     piles = env.state_piles()
     boxed = 0  # running count, so focus indexes match render order
 
-    def fmt_list(cards) -> Text | Table:
+    # Discard and exhaust are lists of copies, so each copy shows its own cost.
+    def fmt_list(cards, costs) -> Text | Table:
         nonlocal boxed
         if not cards:
             return Text("    (empty)", style="dim")
         if len(cards) <= PILE_BOX_LIMIT:
             grid = _card_grid([
-                build_card_box(c, env.effective_cost(c),
-                               focused=(focus == boxed + i))
-                for i, c in enumerate(cards)
+                build_card_box(c, cost, focused=(focus == boxed + i))
+                for i, (c, cost) in enumerate(zip(cards, costs))
             ])
             boxed += len(cards)
             return grid
         out = Text()
-        for c in cards:
+        for c, cost in zip(cards, costs):
             out.append(f"    {_core.card_name(c):<20}", style="white")
-            out.append(f"{{{cost_str(env.effective_cost(c))}}}\n", style="yellow")
+            out.append(f"{{{cost_str(cost)}}}\n", style="yellow")
         return out
 
-    def fmt_counts(count_map) -> Text | Table:
+    def fmt_counts(cost_map) -> Text | Table:
         nonlocal boxed
-        if not count_map:
+        if not cost_map:
             return Text("    (empty)", style="dim")
-        # Sort by CardId value for stable display (does not reveal draw order —
-        # the draw pile is a count map precisely so order stays hidden).
-        types = sorted(count_map, key=lambda x: int(x))
-        if len(types) <= PILE_BOX_LIMIT:
+        # One entry per (type, cost), sorted by CardId and then cost. Copies of
+        # a type can differ in cost (Madness, a Snecko roll), and StS's
+        # draw-pile screen shows each copy's own; sorting, rather than pile
+        # order, is what keeps the draw order hidden.
+        entries = [
+            (c, cost, len(list(group)))
+            for c in sorted(cost_map, key=lambda x: int(x))
+            for cost, group in itertools.groupby(cost_map[c])
+        ]
+        if len(entries) <= PILE_BOX_LIMIT:
             grid = _card_grid([
-                build_card_box(c, env.effective_cost(c),
-                               focused=(focus == boxed + i))
-                for i, c in enumerate(types)
+                build_card_box(c, cost, focused=(focus == boxed + i))
+                for i, (c, cost, _) in enumerate(entries)
             ])
-            boxed += len(types)
+            boxed += len(entries)
             return grid
         out = Text()
-        for c in types:
+        for c, cost, count in entries:
             out.append(f"    {_core.card_name(c):<20}", style="white")
-            out.append(f"x{count_map[c]}  ", style="bright_white")
-            out.append(f"{{{cost_str(env.effective_cost(c))}}}\n", style="yellow")
+            out.append(f"x{count}  ", style="bright_white")
+            out.append(f"{{{cost_str(cost)}}}\n", style="yellow")
         return out
 
     draw_total = sum(piles.draw.values())
     # Built in render order on purpose: `boxed` accumulates as each section is
     # laid out, so a focus index means the same card the player is looking at.
-    draw_section = fmt_counts(piles.draw)
-    discard_section = fmt_list(piles.discard)
-    exhaust_section = fmt_list(piles.exhaust)
+    draw_section = fmt_counts(piles.draw_costs)
+    discard_section = fmt_list(piles.discard, piles.discard_costs)
+    exhaust_section = fmt_list(piles.exhaust, piles.exhaust_costs)
     body = Group(
         Text(f"DRAW ({draw_total}, shuffled — order hidden):", style="bold"),
         draw_section,

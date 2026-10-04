@@ -388,7 +388,11 @@ PYBIND11_MODULE(_core, m) {
       .def_readonly("hand", &StatePiles::hand)
       .def_readonly("draw", &StatePiles::draw)
       .def_readonly("discard", &StatePiles::discard)
-      .def_readonly("exhaust", &StatePiles::exhaust);
+      .def_readonly("exhaust", &StatePiles::exhaust)
+      .def_readonly("hand_costs", &StatePiles::hand_costs)
+      .def_readonly("discard_costs", &StatePiles::discard_costs)
+      .def_readonly("exhaust_costs", &StatePiles::exhaust_costs)
+      .def_readonly("draw_costs", &StatePiles::draw_costs);
 
   // Mid-card choices (Stage 4c).
   py::enum_<ChoiceKind>(m, "ChoiceKind")
@@ -414,7 +418,8 @@ PYBIND11_MODULE(_core, m) {
       .def_readonly("is_optional", &ChoiceView::is_optional)
       .def_readonly("copies", &ChoiceView::copies)
       .def_readonly("options", &ChoiceView::options)
-      .def_readonly("option_damage", &ChoiceView::option_damage);
+      .def_readonly("option_damage", &ChoiceView::option_damage)
+      .def_readonly("option_costs", &ChoiceView::option_costs);
 
   // Card data model (ROB-49 -> ROB-78) — lets the TUI render what each card does.
   py::enum_<Debuff>(m, "Debuff")

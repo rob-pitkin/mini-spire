@@ -408,11 +408,28 @@ StatePiles CombatEnv::state_piles() const {
   out.hand.reserve(state_.current_hand.size());
   out.discard.reserve(state_.discard_pile.size());
   out.exhaust.reserve(state_.exhaust_pile.size());
-  for (const Card& c : state_.current_hand) out.hand.push_back(c.card_id);
-  for (const Card& c : state_.discard_pile) out.discard.push_back(c.card_id);
-  for (const Card& c : state_.exhaust_pile) out.exhaust.push_back(c.card_id);
-  // Draw pile: tally per CardId. Order is not exposed (see StatePiles doc).
-  for (const Card& c : state_.draw_pile) ++out.draw[c.card_id];
+  out.hand_costs.reserve(state_.current_hand.size());
+  out.discard_costs.reserve(state_.discard_pile.size());
+  out.exhaust_costs.reserve(state_.exhaust_pile.size());
+  for (const Card& c : state_.current_hand) {
+    out.hand.push_back(c.card_id);
+    out.hand_costs.push_back(instance_effective_cost(state_, c));
+  }
+  for (const Card& c : state_.discard_pile) {
+    out.discard.push_back(c.card_id);
+    out.discard_costs.push_back(instance_effective_cost(state_, c));
+  }
+  for (const Card& c : state_.exhaust_pile) {
+    out.exhaust.push_back(c.card_id);
+    out.exhaust_costs.push_back(instance_effective_cost(state_, c));
+  }
+  // Draw pile: tally per CardId. Order is not exposed (see StatePiles doc), so
+  // each type's costs are sorted rather than left in pile order.
+  for (const Card& c : state_.draw_pile) {
+    ++out.draw[c.card_id];
+    out.draw_costs[c.card_id].push_back(instance_effective_cost(state_, c));
+  }
+  for (auto& [id, costs] : out.draw_costs) std::sort(costs.begin(), costs.end());
   return out;
 }
 
@@ -427,9 +444,11 @@ ChoiceView CombatEnv::choice_view() const {
   out.copies = pc.copies;
   out.options.reserve(pc.num_options);
   out.option_damage.reserve(pc.num_options);
+  out.option_costs.reserve(pc.num_options);
   for (int i = 0; i < pc.num_options; ++i) {
     out.options.push_back(pc.options[i].card_id);
     out.option_damage.push_back(instance_card_damage(state_, pc.options[i]));
+    out.option_costs.push_back(instance_effective_cost(state_, pc.options[i]));
   }
   return out;
 }

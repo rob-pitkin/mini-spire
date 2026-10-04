@@ -1557,6 +1557,8 @@ a deck of Blood for Blood: printed at 4, so a card that was not rolled fails. On
 a starter deck the same assertion would pass with no roll at all, since every
 starter costs 3 or less. Disabling the roll in the opening pull makes it fail.
 
-**Display, not engine:** the TUI prints `effective_cost(card_id)` — the cheapest
-copy — on every copy in hand, so two Snecko-rolled Strikes show the same cost
-(task). The engine and the observation's cost planes are per copy.
+**Display.** The TUI first printed `effective_cost(card_id)` — the cheapest copy
+in hand — on every copy, so two Snecko-rolled Strikes showed the same cost. It
+now prints each copy's own cost in the hand, the choice menu, and the discard
+and exhaust piles, from per-copy lists on `StatePiles` and `ChoiceView`
+(2026-10-04).

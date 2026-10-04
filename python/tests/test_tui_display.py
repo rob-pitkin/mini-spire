@@ -90,8 +90,19 @@ def test_effective_cost_reflects_a_free_this_turn_grant():
 
 
 class _StubPiles:
-    def __init__(self, hand):
-        self.hand = hand
+    """StatePiles with per-copy costs, each list parallel to its pile."""
+
+    def __init__(self, hand=(), hand_costs=(), discard=(), discard_costs=(),
+                 draw_costs=None):
+        self.hand = list(hand)
+        self.hand_costs = list(hand_costs)
+        # The engine's shape: CardId -> count, and CardId -> sorted costs.
+        self.draw_costs = {c: sorted(v) for c, v in (draw_costs or {}).items()}
+        self.draw = {c: len(v) for c, v in self.draw_costs.items()}
+        self.discard = list(discard)
+        self.discard_costs = list(discard_costs)
+        self.exhaust = []
+        self.exhaust_costs = []
 
 
 class _StubMask(dict):
@@ -102,7 +113,7 @@ class _StubMask(dict):
 
 
 class _StubHandEnv:
-    """The three calls build_hand makes, answered with fixed values.
+    """The two calls build_hand makes, answered with fixed values.
 
     A real fight cannot test this render. Catching a base-vs-effective mix-up
     needs a card whose PRINTED cost differs from what it costs right now, and
@@ -111,11 +122,13 @@ class _StubHandEnv:
     {0} whether or not build_hand was ever fixed. Stating both numbers here
     makes the gap exact and the same on every platform. This is the reasoning
     the choice stubs below already use.
+
+    There is deliberately no effective_cost(card_id): it answers per TYPE, and
+    a panel that calls it is showing one copy's cost on every copy.
     """
 
     def __init__(self, hand, costs):
-        self._piles = _StubPiles(hand)
-        self._costs = costs
+        self._piles = _StubPiles(hand, costs)
 
     def action_masks(self):
         return _StubMask({
@@ -127,9 +140,6 @@ class _StubHandEnv:
     def state_piles(self):
         return self._piles
 
-    def effective_cost(self, card_id):
-        return self._costs[card_id]
-
 
 def test_hand_panel_prints_the_effective_cost():
     # The panel is what the player reads, so the fix has to reach the render,
@@ -137,10 +147,22 @@ def test_hand_panel_prints_the_effective_cost():
     bash = _core.CardId.Bash
     assert _core.card_data(bash).cost == 2, "fixture needs a nonzero base cost"
 
-    text = _render(screen.build_hand(_StubHandEnv([bash], {bash: 0}))[0])
+    text = _render(screen.build_hand(_StubHandEnv([bash], [0]))[0])
     line = next(ln for ln in text.splitlines() if _core.card_name(bash) in ln)
     assert "{0}" in line, f"expected the effective cost in {line!r}"
     assert "{2}" not in line, "the panel printed CardData.cost, not effective_cost"
+
+
+def test_hand_panel_prints_each_copys_own_cost():
+    # Madness on one Bash made every Bash in hand read {0}: the panel asked
+    # for the type's cost, which is the cheapest copy's. Each box has to show
+    # what THAT copy costs, in hand order.
+    bash = _core.CardId.Bash
+    name = _core.card_name(bash)
+
+    text = _render(screen.build_hand(_StubHandEnv([bash, bash], [0, 2]))[0])
+    assert f"(0) {name}  {{0}}" in text, text
+    assert f"(1) {name}  {{2}}" in text, "the second copy took the first's cost"
 
 
 # --------------------------------------------------------------------------
@@ -154,7 +176,7 @@ def test_hand_panel_prints_the_effective_cost():
 
 
 class _StubView:
-    def __init__(self, source_card, kind, options):
+    def __init__(self, source_card, kind, options, option_costs=None):
         self.active = True
         self.kind = kind
         self.source_card = source_card
@@ -162,6 +184,10 @@ class _StubView:
         self.copies = 1
         self.options = options
         self.option_damage = [0] * len(options)
+        self.option_costs = (
+            option_costs if option_costs is not None
+            else [_core.card_data(c).cost for c in options]
+        )
 
 
 class _StubChoiceEnv:
@@ -170,9 +196,6 @@ class _StubChoiceEnv:
 
     def choice_view(self):
         return self._view
-
-    def effective_cost(self, card_id):
-        return _core.card_data(card_id).cost
 
 
 def _render(panel) -> str:
@@ -211,3 +234,70 @@ def test_a_card_opened_choice_still_names_its_card():
     )
     text = _render(screen.build_choice(_StubChoiceEnv(view))[0])
     assert "Armaments:" in text
+
+
+def test_choice_panel_prints_each_options_own_cost():
+    # Exhume over an exhaust pile holding a Madness'd Bash and a plain one:
+    # they are different picks, and the menu has to say so.
+    bash = _core.CardId.Bash
+    name = _core.card_name(bash)
+    view = _StubView(
+        _core.CardId.Exhume,
+        _core.ChoiceKind.ExhaustToHand,
+        [bash, bash],
+        option_costs=[0, 2],
+    )
+    text = _render(screen.build_choice(_StubChoiceEnv(view))[0])
+    assert f"(0) {name}  {{0}}" in text, text
+    assert f"(1) {name}  {{2}}" in text, "the second option took the first's cost"
+
+
+class _StubPilesEnv:
+    def __init__(self, piles):
+        self._piles = piles
+
+    def state_piles(self):
+        return self._piles
+
+
+def test_pile_panel_prints_each_discarded_copys_own_cost():
+    # Both render paths: boxes for a small pile, the name list past
+    # PILE_BOX_LIMIT. The list path formats the cost on its own, so it can
+    # regress separately from the boxes.
+    bash = _core.CardId.Bash
+    name = _core.card_name(bash)
+
+    small = _StubPiles(discard=[bash, bash], discard_costs=[0, 2])
+    text = _render(screen.build_piles(_StubPilesEnv(small))[0])
+    assert f"{name}  {{0}}" in text, text
+    assert f"{name}  {{2}}" in text, "the second copy took the first's cost"
+
+    n = screen.PILE_BOX_LIMIT + 1
+    big = _StubPiles(discard=[bash] * n, discard_costs=[0] + [2] * (n - 1))
+    lines = [ln for ln in _render(screen.build_piles(_StubPilesEnv(big))[0])
+             .splitlines() if name in ln]
+    assert len(lines) == n, "expected the name-list rendering"
+    assert "{0}" in lines[0] and "{2}" in lines[1], lines[:2]
+
+
+def test_pile_panel_prints_each_draw_pile_cost():
+    # A Madness'd Bash shuffled back into the draw pile keeps its 0; the panel
+    # asked effective_cost(Bash), which answers from the HAND, so it showed
+    # the printed 2 — or 0 on every Bash while a free copy sat in hand.
+    bash = _core.CardId.Bash
+    name = _core.card_name(bash)
+
+    small = _StubPiles(draw_costs={bash: [2, 0, 2]})
+    text = _render(screen.build_piles(_StubPilesEnv(small))[0])
+    assert f"{name}  {{0}}" in text, text
+    assert f"{name}  {{2}}" in text, "the full-price copies lost their cost"
+
+    # Past PILE_BOX_LIMIT the pile is a name list with one line per
+    # (type, cost) and its count.
+    fillers = [c for c in _core.CardId.__members__.values()
+               if c not in (bash, screen.NO_SOURCE_CARD)][:screen.PILE_BOX_LIMIT]
+    big = _StubPiles(draw_costs={bash: [2, 0, 2], **{c: [1] for c in fillers}})
+    lines = [ln for ln in _render(screen.build_piles(_StubPilesEnv(big))[0])
+             .splitlines() if f"{name} " in ln]
+    assert any("x1" in ln and "{0}" in ln for ln in lines), lines
+    assert any("x2" in ln and "{2}" in ln for ln in lines), lines

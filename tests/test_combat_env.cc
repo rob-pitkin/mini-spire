@@ -2,6 +2,7 @@
 
 #include <random>
 
+#include "action.h"
 #include "card.h"
 #include "combat_env.h"
 #include "combat_state.h"
@@ -560,6 +561,64 @@ TEST(CombatEnv, StatePilesUpdatesAfterPlayingCard) {
   EXPECT_EQ(after.hand.size(), hand_before - 1);
   EXPECT_EQ(after.discard.size(), 1u);
   EXPECT_EQ(after.discard[0], CardId::Strike);
+}
+
+// Each copy reports its OWN cost, in pile order. effective_cost(CardId) answers
+// for the cheapest copy in hand, so a panel built from it showed one Madness'd
+// Bash's 0 on every Bash (task #25).
+TEST(CombatEnv, StatePilesReportEachCopysOwnCost) {
+  CombatState s = start_v1_combat(0);
+  Card free_bash{CardId::Bash};
+  set_combat_cost(free_bash, 0);
+  s.current_hand = {free_bash, Card{CardId::Bash}};
+  s.discard_pile = {Card{CardId::Bash}, free_bash};
+  s.exhaust_pile = {free_bash, Card{CardId::Bash}};
+  s.draw_pile = {free_bash, Card{CardId::Strike}, Card{CardId::Bash}};
+  CombatEnv env(s);
+
+  const StatePiles piles = env.state_piles();
+  EXPECT_EQ(piles.hand_costs, (std::vector<int>{0, 2}));
+  EXPECT_EQ(piles.discard_costs, (std::vector<int>{2, 0}));
+  EXPECT_EQ(piles.exhaust_costs, (std::vector<int>{0, 2}));
+  // Grouped by type; DrawCostsDoNotRevealDrawOrder covers the sorting.
+  ASSERT_EQ(piles.draw_costs.size(), 2u);
+  EXPECT_EQ(piles.draw_costs.at(CardId::Bash), (std::vector<int>{0, 2}));
+  EXPECT_EQ(piles.draw_costs.at(CardId::Strike), (std::vector<int>{1}));
+}
+
+TEST(CombatEnv, DrawCostsDoNotRevealDrawOrder) {
+  Card free_bash{CardId::Bash};
+  set_combat_cost(free_bash, 0);
+  CombatState top_free = start_v1_combat(0);
+  top_free.draw_pile = {Card{CardId::Bash}, free_bash};
+  CombatState top_full = start_v1_combat(0);
+  top_full.draw_pile = {free_bash, Card{CardId::Bash}};
+
+  EXPECT_EQ(CombatEnv(top_free).state_piles().draw_costs,
+            CombatEnv(top_full).state_piles().draw_costs);
+}
+
+TEST(CombatEnv, ChoiceViewReportsEachOptionsOwnCost) {
+  CombatState s = start_v1_combat(0);
+  Card free_bash{CardId::Bash};
+  set_combat_cost(free_bash, 0);
+  Card capped_bfb{CardId::BloodForBlood};
+  set_turn_cost(capped_bfb, 1);
+  s.exhaust_pile = {free_bash, capped_bfb, Card{CardId::Strike}};
+  s.pending_choice = build_choice(s, ChoiceKind::ExhaustToHand, CardId::Exhume);
+  CombatEnv env(s);
+
+  const ChoiceView view = env.choice_view();
+  ASSERT_EQ(view.options.size(), 3u);
+  ASSERT_EQ(view.option_costs.size(), view.options.size());
+  // Options are sorted by CardId, so look each one up rather than assume a slot.
+  for (std::size_t i = 0; i < view.options.size(); ++i) {
+    const CardId id = view.options[i];
+    const int expected = id == CardId::Bash            ? 0
+                         : id == CardId::BloodForBlood ? 1
+                                                       : 1;  // Strike, printed
+    EXPECT_EQ(view.option_costs[i], expected) << card_name(id);
+  }
 }
 
 // ============================================================================

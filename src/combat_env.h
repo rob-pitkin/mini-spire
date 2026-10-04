@@ -24,11 +24,25 @@ namespace minispire {
 // peek — the player can see *what* is in the draw pile but never the order.
 // Exposing the engine's ordered draw_pile vector would leak the secret
 // shuffle order to any consumer.
+//
+// The `*_costs` lists run parallel to hand / discard / exhaust: what THAT copy
+// costs to play (instance_effective_cost). Copies of one CardId can differ —
+// Snecko-rolled, Madness'd, made free this turn — and the player reads each
+// card's own number, so a per-type cost would show the cheapest on all of them.
+//
+// `draw_costs` does the same for the draw pile without giving up its order:
+// each CardId maps to its copies' costs sorted ascending. StS's draw-pile screen
+// shows every copy with its own cost, sorted by type and name rather than by
+// draw order (decompiled DrawPileViewScreen.open).
 struct StatePiles {
   std::vector<CardId> hand;
   std::unordered_map<CardId, int> draw;
   std::vector<CardId> discard;
   std::vector<CardId> exhaust;
+  std::vector<int> hand_costs;
+  std::vector<int> discard_costs;
+  std::vector<int> exhaust_costs;
+  std::unordered_map<CardId, std::vector<int>> draw_costs;
 };
 
 // Pending-choice accessor for the TUI (Stage 4c). The obs already encodes this
@@ -47,6 +61,9 @@ struct ChoiceView {
   // Per-option effective damage, parallel to `options`. Lets the TUI show two
   // Rampages apart ("Rampage (8)" vs "Rampage (13)"); 0 for non-attacks.
   std::vector<int> option_damage;
+  // Per-option cost, parallel to `options`: what THAT copy costs to play — an
+  // Exhume target, an Armaments pick — rather than the cheapest copy in hand.
+  std::vector<int> option_costs;
 };
 
 // CombatEnv wraps CombatState + TurnLoop into a Gym-shaped env that owns its
