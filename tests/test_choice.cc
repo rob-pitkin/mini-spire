@@ -1,6 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <array>
 #include <random>
+#include <tuple>
+#include <vector>
 
 #include "action.h"
 #include "card.h"
@@ -128,6 +132,47 @@ TEST(Choice, ChoicesReadTheCorrectSourcePile) {
   EXPECT_EQ(discard.options[0].card_id, CardId::Bash);
   ASSERT_EQ(exhaust.num_options, 1);
   EXPECT_EQ(exhaust.options[0].card_id, CardId::Defend);
+}
+
+// Copies that differ only in a cost layer are distinct options (same_as), so
+// the sort has to order them too. When it did not, their relative order was
+// whatever std::sort left — which follows the pile's order here and is not
+// specified to agree between libc++ and libstdc++ — and a CardSelect action
+// takes the first option with its CardId. Every ordering of the same four
+// copies must give the same option sequence.
+TEST(Choice, OptionOrderDoesNotDependOnPileOrder) {
+  Card combat{CardId::Bash};
+  set_combat_cost(combat, 0);
+  Card turn{CardId::Bash};
+  set_turn_cost(turn, 1);
+  Card once{CardId::Bash};
+  once.free_once = true;
+  const std::array<Card, 4> copies = {combat, turn, once, Card{CardId::Bash}};
+
+  auto layers = [](const PendingChoice& pc) {
+    std::vector<std::tuple<int, int, bool>> out;
+    for (int i = 0; i < pc.num_options; ++i) {
+      const Card& c = pc.options[i];
+      out.emplace_back(c.combat_cost, c.turn_cost, c.free_once);
+    }
+    return out;
+  };
+
+  std::array<int, 4> order = {0, 1, 2, 3};
+  std::vector<std::tuple<int, int, bool>> first;
+  do {
+    CombatState s = make_minimal_state(0);
+    for (int i : order) s.exhaust_pile.push_back(copies[i]);
+    const PendingChoice pc =
+        build_choice(s, ChoiceKind::ExhaustToHand, CardId::Exhume);
+    ASSERT_EQ(pc.num_options, 4) << "each copy is its own option";
+    if (first.empty()) {
+      first = layers(pc);
+    } else {
+      EXPECT_EQ(layers(pc), first)
+          << "pile order " << order[0] << order[1] << order[2] << order[3];
+    }
+  } while (std::next_permutation(order.begin(), order.end()));
 }
 
 TEST(Choice, RequestChoiceSuspendsTheRestOfTheQueue) {

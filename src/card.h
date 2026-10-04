@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdint>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -581,10 +582,22 @@ struct Card {
   //
   // `bottle` is NOT compared: it acts before the opening hand exists, and a
   // bottled Strike in hand plays exactly as any other.
-  bool same_as(const Card& other) const {
-    return card_id == other.card_id && bonus_damage == other.bonus_damage &&
-           upgrades == other.upgrades && combat_cost == other.combat_cost &&
-           turn_cost == other.turn_cost && free_once == other.free_once;
+  //
+  // play_key is what decides how this copy plays. same_as and sorts_before
+  // both compare it, so a field added to one is added to both. (Defined first:
+  // a deduced return type must be seen before another member body uses it.)
+  auto play_key() const {
+    return std::tie(card_id, upgrades, bonus_damage, combat_cost, turn_cost,
+                    free_once);
+  }
+  bool same_as(const Card& other) const { return play_key() == other.play_key(); }
+  // The canonical order of choice options: ascending CardId, then instance
+  // state. It orders by the key same_as compares, so two copies can never be
+  // distinct options and yet compare equal. When the sort read fewer fields
+  // than same_as, copies differing only in a cost layer kept their pile order,
+  // and std::sort does not specify that order across standard libraries.
+  bool sorts_before(const Card& other) const {
+    return play_key() < other.play_key();
   }
   // Does this instance carry any state beyond its id? Same reasoning as
   // same_as: uid is not "state" in this sense.

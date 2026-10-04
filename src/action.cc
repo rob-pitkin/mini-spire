@@ -2588,15 +2588,12 @@ PendingChoice build_choice(const CombatState& state, ChoiceKind kind,
     assert(pc.num_options < kNumOptionSlots);
     pc.options[pc.num_options++] = c;
   }
-  // Canonical ordering (public interface: slot indices are actions, so it must
-  // be deterministic and documented): ascending CardId, then ascending
-  // instance state so two copies of one card have a stable relative order.
+  // Canonical ordering: ascending CardId, then ascending instance state
+  // (Card::sorts_before). It must be deterministic on every platform because a
+  // CardSelect action takes the FIRST option with its CardId, so the order
+  // decides which of two differing copies that action means.
   std::sort(pc.options.begin(), pc.options.begin() + pc.num_options,
-            [](const Card& a, const Card& b) {
-              if (a.card_id != b.card_id) return a.card_id < b.card_id;
-              if (a.upgrades != b.upgrades) return a.upgrades < b.upgrades;
-              return a.bonus_damage < b.bonus_damage;
-            });
+            [](const Card& a, const Card& b) { return a.sorts_before(b); });
   return pc;
 }
 
