@@ -7,7 +7,7 @@ any run artifacts, so they regenerate identically.
     python -m analysis.blog_figures --out blog/figures
 
 Styling: dark background, warm-orange palette, and a monospace font — tuned to
-sit natively inside the author's Bear Blog theme (dark #222129 bg, #FFA86A
+sit natively inside the author's Bear Blog theme (dark #222128 bg, #f3ac75
 accent, Fira Code mono). All colors live in PALETTE below; edit that one dict to
 recolor every figure. Numbers (env throughput, training fps) are constants below
 so figure and prose stay in sync.
@@ -30,8 +30,8 @@ import matplotlib.pyplot as plt
 # are a small balanced set (teal/coral/amber/grey) chosen for distinctness on
 # dark and clear separation from the orange theme text.
 PALETTE = {
-    "bg": "#222129",       # page/figure background (Bear --background-color)
-    "ink": "#FFA86A",      # all outlines + text (Bear --text/heading/link color)
+    "bg": "#222128",       # page/figure background (Bear --background-color)
+    "ink": "#f3ac75",      # all outlines + text (Bear --text/heading/link color)
     # Semantic-group fills:
     "agent": "#4FA8A0",    # the character (hp/block/energy + char status) — teal
     "enemy": "#E8705A",    # everything enemy (stats, status, intent) — coral
@@ -88,7 +88,7 @@ TRAIN_FPS_CONTENDED = 1_135
 
 # Dark fills want dark text on them; light fills (gold/tan) want dark text too.
 # A single dark ink for the on-block labels keeps them readable on every fill.
-_BLOCK_TEXT = "#222129"
+_BLOCK_TEXT = "#222128"
 
 
 def _obs_blocks():
