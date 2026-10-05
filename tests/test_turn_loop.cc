@@ -13,20 +13,14 @@
 #include "turn_loop.h"
 
 using namespace minispire;
+using minispire::testing::card_action;
 using minispire::testing::make_minimal_state;
 
 namespace {
 
-// Convenience: end-turn action index (ROB-60 cross-product layout).
-int end_turn_action() {
-  return static_cast<int>(CARD_DATABASE.size()) * minispire::kMaxEnemies;
-}
-
-// Convenience: action index for playing a given CardId at an enemy slot.
-// Defaults to target 0 (the single-enemy / canonical-untargeted slot).
-int card_action(CardId id, int target = 0) {
-  return static_cast<int>(id) * minispire::kMaxEnemies + target;
-}
+// Convenience: the end-turn action. The engine's constant, never re-derived:
+// computing it from the card count broke when §6.5 added the cost dimension.
+int end_turn_action() { return kEndTurnAction; }
 
 }  // namespace
 
@@ -549,9 +543,9 @@ TEST(TurnLoop, MaskCoversCombatBlockPlusOptionSlotChannel) {
   CombatState s = make_minimal_state(0);
   auto mask = valid_actions(s);
   EXPECT_EQ(mask.size(), static_cast<std::size_t>(kTotalActions));
-  EXPECT_EQ(kEndTurnAction,
-            static_cast<int>(CARD_DATABASE.size()) * minispire::kMaxEnemies);
-  EXPECT_EQ(kTotalActions, 2135);
+  EXPECT_EQ(kEndTurnAction, static_cast<int>(CARD_DATABASE.size()) *
+                                kNumCostColumns * minispire::kMaxEnemies);
+  EXPECT_EQ(kTotalActions, 8615);
 }
 
 TEST(TurnLoop, EndTurnAlwaysLegalWhileInProgress) {
@@ -2524,11 +2518,13 @@ TEST(TurnLoop, CorruptionMakesSkillsFreeAndExhaustsThem) {
   s.character.energy = 0;  // no energy at all
   s.current_hand.push_back(Card{CardId::Defend});  // normally costs 1
 
-  // The mask must agree that a 0-energy Defend is legal under Corruption.
+  // The mask must agree that a 0-energy Defend is legal under Corruption — as
+  // "Defend at cost 0" (v2-spec.md §6.5); its printed-cost column is not.
   const auto mask = valid_actions(s);
-  ASSERT_TRUE(mask[card_action(CardId::Defend, 0)]);
+  ASSERT_TRUE(mask[card_action(CardId::Defend, 0, /*cost_column=*/0)]);
+  EXPECT_FALSE(mask[card_action(CardId::Defend, 0)]);
 
-  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend, 0)));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend, 0, 0)));
   EXPECT_EQ(s.character.energy, 0);          // cost 0, nothing spent
   EXPECT_EQ(s.character.current_block, 5);   // and it still did its job
   EXPECT_EQ(s.exhaust_pile.size(), 1u);      // Corruption exhausts Skills
@@ -2543,6 +2539,85 @@ TEST(TurnLoop, CorruptionDoesNotDiscountAttacks) {
 
   const auto mask = valid_actions(s);
   EXPECT_FALSE(mask[card_action(CardId::Strike, 0)]);
+}
+
+// ============================================================================
+// Copies are addressed by (CardId, cost) — v2-spec.md §6.5
+// ============================================================================
+
+TEST(CopyAddressing, CopiesAtDifferentCostsAreDifferentPlays) {
+  // A 0-cost and a 2-cost Bash are two actions, each legal by its OWN cost.
+  CombatState s = make_minimal_state(0);
+  Card free_bash{CardId::Bash};
+  set_combat_cost(free_bash, 0);
+  s.current_hand = {Card{CardId::Bash}, free_bash};
+  s.character.energy = 1;
+
+  const auto mask = valid_actions(s);
+  EXPECT_TRUE(mask[card_action(CardId::Bash, 0, /*cost_column=*/0)]);
+  EXPECT_FALSE(mask[card_action(CardId::Bash, 0, /*cost_column=*/2)])
+      << "the full-price copy is not affordable with 1 energy";
+  for (int column : {1, 3, 4}) {
+    EXPECT_FALSE(mask[card_action(CardId::Bash, 0, column)])
+        << "no Bash costs " << column;
+  }
+}
+
+TEST(CopyAddressing, PayingFullPriceKeepsTheDiscountedCopy) {
+  // The point of naming the cost: a human can SAVE a combat-long discount for
+  // a later turn by playing the full-price copy now. Under the retired
+  // cheapest-copy rule (colorless-effects.md D2) the engine spent the discount.
+  CombatState s = make_minimal_state(0);
+  Card free_bash{CardId::Bash};
+  set_combat_cost(free_bash, 0);
+  s.current_hand = {Card{CardId::Bash}, free_bash};
+  s.character.energy = 3;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bash, 0, /*cost_column=*/2)));
+  EXPECT_EQ(s.character.energy, 1) << "the 2-cost copy paid 2";
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(combat_layer_cost(s.current_hand[0]), 0)
+      << "the discounted copy is still in hand";
+}
+
+TEST(CopyAddressing, OnePlayCoversCopiesThatDifferOnlyInDiscountLayer) {
+  // Turn-layer 0, combat-layer 0 and free-once Bashes all cost 0: one action.
+  // The least durable discount is spent first (v2-spec.md §6.5) — the turn
+  // layer expires at end of turn anyway, the combat layer survives the play,
+  // and free-once is spent by it.
+  Card turn{CardId::Bash};
+  set_turn_cost(turn, 0);
+  Card combat{CardId::Bash};
+  set_combat_cost(combat, 0);
+  Card once{CardId::Bash};
+  once.free_once = true;
+
+  CombatState s = make_minimal_state(0);
+  s.current_hand = {once, combat, turn};
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bash, 0, /*cost_column=*/0)));
+  ASSERT_EQ(s.current_hand.size(), 2u);
+  for (const Card& c : s.current_hand) {
+    EXPECT_FALSE(c.same_as(turn)) << "the turn-layer copy should have gone";
+  }
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bash, 0, 0)));
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_TRUE(s.current_hand[0].free_once)
+      << "the combat copy goes before the free-once one";
+}
+
+TEST(CopyAddressing, XCostCardsUseColumnZero) {
+  // An X-cost card's cost is "all of it", not a number; its column is fixed at
+  // 0 so it has one action per target.
+  CombatState s = make_minimal_state(0);
+  s.current_hand = {Card{CardId::Whirlwind}};
+  s.character.energy = 2;
+
+  const auto mask = valid_actions(s);
+  EXPECT_TRUE(mask[card_action(CardId::Whirlwind, 0, 0)]);
+  for (int column = 1; column < kNumCostColumns; ++column) {
+    EXPECT_FALSE(mask[card_action(CardId::Whirlwind, 0, column)]);
+  }
 }
 
 TEST(TurnLoop, BarricadeKeepsBlockAcrossTheTurnBoundary) {

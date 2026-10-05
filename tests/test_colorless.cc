@@ -18,14 +18,13 @@
 #include "action.h"
 #include "card.h"
 #include "query.h"
+#include "test_helpers.h"
 #include "turn_loop.h"
 
 namespace minispire {
 namespace {
 
-int card_action(CardId id, int target = 0) {
-  return encode_action(ActionBlock::Combat, static_cast<int>(id), target);
-}
+using testing::card_action;
 
 // A fight with `card` in hand and energy to spare.
 CombatState fight_holding(CardId card, uint32_t seed = 1) {
@@ -1469,7 +1468,10 @@ TEST(Colorless, ForethoughtsDiscountIsSpentByPlayingTheCard) {
   s.draw_pile.clear();
   s.character.energy = 1;  // not enough for Bash's printed cost
 
-  ASSERT_TRUE(apply_action(s, card_action(CardId::Bash, 0)));
+  // The free copy is "Bash at cost 0" (v2-spec.md §6.5); the printed-cost
+  // action would name a Bash at 2, which is not in hand.
+  ASSERT_FALSE(apply_action(s, card_action(CardId::Bash, 0)));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bash, 0, /*cost_column=*/0)));
 
   EXPECT_EQ(s.character.energy, 1) << "the discounted play cost nothing";
   for (const Card& c : s.discard_pile) {

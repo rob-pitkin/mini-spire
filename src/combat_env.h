@@ -131,15 +131,15 @@ class CombatEnv {
   static constexpr int kPileObsSize = kNumPilePlanes * kNumCardTypes;
 
   // Choice block (Stage 4c; docs/design/decision-points.md §5.2). A 5-float
-  // header plus one 3-float descriptor per option slot. Appended last so every
+  // header plus one 4-float descriptor per option slot. Appended last so every
   // existing feature index keeps its position.
   //   header: pending, kind, source_pile, source_card, is_optional
-  //   slot:   occupied, payload_id, cost
-  // The payload fields are reserved NOW and always written (zero for card
-  // choices) so v2.0.0's map/shop/event decisions are pure data — new
-  // ChoiceKind values, no obs shape change.
+  //   slot:   occupied, card id, instance damage, cost column
+  // The cost column is the one the option's CardSelect action names (v2-spec.md
+  // §6.5). Without it a pile choice — Exhume, Headbutt — offers actions whose
+  // costs the agent cannot see: the mask is not an observation.
   static constexpr int kChoiceHeaderSize = 5;
-  static constexpr int kChoiceSlotStride = 3;
+  static constexpr int kChoiceSlotStride = 4;
   static constexpr int kChoiceObsSize =
       kChoiceHeaderSize + kNumOptionSlots * kChoiceSlotStride;
 
@@ -228,6 +228,14 @@ class CombatEnv {
   // number a player reads is the number the engine will charge — the TUI used
   // to print the base cost and was simply wrong for both cases.
   int effective_cost(CardId card) const;
+
+  // The action that plays the copy at hand position `hand_index` at enemy slot
+  // `target`, and the action that picks option `option_index` of the pending
+  // choice. Both name the copy by (CardId, cost column) — v2-spec.md §6.5 — and
+  // exist so Python never derives a cost column itself. Neither checks
+  // legality; the mask does. The TUI's, not the training loop's.
+  int play_action(int hand_index, int target) const;
+  int choice_action(int option_index) const;
 
  private:
   CombatState state_;

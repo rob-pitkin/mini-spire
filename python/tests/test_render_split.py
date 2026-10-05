@@ -64,5 +64,5 @@ def test_hand_map_only_contains_playable_cards():
     env, _ = _env()
     _, action_map = screen.build_hand(env)
     mask = env.action_masks()
-    for card_id in action_map:
-        assert screen.card_playable(mask, card_id)
+    for position in action_map:
+        assert screen.copy_playable(env, mask, position)

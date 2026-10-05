@@ -1164,10 +1164,14 @@ inline bool is_basic_card(CardId id) {
   }
 }
 
-// Upper bound on simultaneous options. Set to kNumCardTypes so a pile choice
-// can NEVER overflow: a pile cannot hold more distinct card types than exist.
-// This makes truncation — which would be a parity violation, since a human can
-// pick any card — structurally impossible rather than merely unlikely.
+// Upper bound on simultaneous options. Options are one per (card, cost column)
+// in the source pile (v2-spec.md §6.5), so a choice holds at most as many
+// options as the pile holds cards: overflowing 270 needs a pile of more than
+// 270 cards, which an Act 1 deck plus its generated cards does not reach.
+// build_choice asserts it. (Until §6.5 options were one per card type, and the
+// bound was the card-type count itself. Sizing it for every (card, cost) pair
+// — 1,350 — would quintuple both PendingChoice in clone() and the choice
+// block of the observation, for piles that cannot occur.)
 inline constexpr int kNumOptionSlots = kNumCardTypes;
 
 // The suspended-choice record. POD with a fixed array (no heap) so

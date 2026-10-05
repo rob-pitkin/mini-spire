@@ -347,15 +347,16 @@ def render_fight(
     console.print(build_fight(obs, env, ascii_only=ascii_only))
 
 
-def card_playable(mask, card_id) -> bool:
-    """True if any (card_id, target) action is legal in the mask.
+def copy_playable(env, mask, hand_index: int) -> bool:
+    """True if the copy at `hand_index` can be played at any target.
 
-    The combat block is a (card x target) cross-product (ROB-60); a card is
-    playable iff at least one of its target slots is unmasked.
+    A play names its copy — (card, cost, target), v2-spec.md §6.5 — so this
+    asks about THAT copy: a full-price Bash can be unaffordable while a free
+    one beside it is not. The env builds each action; nothing here knows the
+    layout.
     """
-    return any(
-        bool(mask[_core.encode_action(_core.ActionBlock.Combat, int(card_id), t)])
-        for t in range(MAX_ENEMIES))
+    return any(bool(mask[env.play_action(hand_index, t)])
+               for t in range(MAX_ENEMIES))
 
 
 #: Marker on the focused entry. A style alone is not enough — reverse video is
@@ -434,7 +435,12 @@ def _card_grid(boxes: list[Panel], columns: int = CARD_COLUMNS) -> Table:
 
 
 def build_hand(env, *, focus: int | None = None) -> tuple[Panel, list]:
-    """Build the hand panel and the local-index -> CardId map together.
+    """Build the hand panel and the local-index -> hand-position map together.
+
+    The map holds hand POSITIONS, not CardIds: two Bashes at different costs
+    are different plays (v2-spec.md §6.5), and a keypress must play the copy
+    whose box the player pressed. ``env.play_action(position, target)`` turns
+    a position into the action.
 
     Returned as a pair on purpose (ROB-83). The map is what a keypress indexes
     into, and the panel is what the player read before pressing — deriving them
@@ -458,18 +464,18 @@ def build_hand(env, *, focus: int | None = None) -> tuple[Panel, list]:
     piles = env.state_piles()
     hand = piles.hand
 
-    action_map: list = []  # local index -> CardId
+    action_map: list = []  # local index -> hand position
     boxes: list = []
     # Each copy's own cost, not CardData.cost and not env.effective_cost(id).
     # The base cost is a number the engine would not charge once Infernal Blade
     # or Blood for Blood has acted; the per-type cost is the CHEAPEST copy, so
     # one Madness'd Strike showed every Strike in hand as free.
-    for card_id, cost in zip(hand, piles.hand_costs):
-        playable = card_playable(mask, card_id)
+    for position, (card_id, cost) in enumerate(zip(hand, piles.hand_costs)):
+        playable = copy_playable(env, mask, position)
         index = None
         if playable:
             index = len(action_map)
-            action_map.append(card_id)
+            action_map.append(position)
         boxes.append(
             build_card_box(
                 card_id,

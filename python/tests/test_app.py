@@ -15,15 +15,25 @@ import pytest
 
 from minispire import _core
 from minispire.render import screen
-from minispire.render.app import EXIT_QUIT, MinispireApp, card_action
+from minispire.render.app import EXIT_QUIT, MinispireApp
 from minispire.render.keys import Mode
 
 
-def test_card_action_is_the_cross_product_index():
-    # The action space is (card x target); slot 0 is canonical for untargeted.
-    n = _core.CombatEnv.MAX_ENEMIES
-    assert card_action(_core.CardId.Strike, 0) == int(_core.CardId.Strike) * n
-    assert card_action(_core.CardId.Strike, 3) == int(_core.CardId.Strike) * n + 3
+@pytest.mark.asyncio
+async def test_the_hand_map_holds_positions_that_name_each_copy():
+    # The map holds hand POSITIONS, and each resolves to the action for THAT
+    # copy: its card, at its own cost (v2-spec.md §6.5). An invariant over the
+    # whole hand, so it holds whatever the seed deals.
+    app = MinispireApp(log=False, seed=1)
+    async with app.run_test():
+        piles = app.env.state_piles()
+        assert app._action_map, "a fresh hand should have a playable card"
+        for position in app._action_map:
+            decoded = _core.decode_action(app.env.play_action(position, 0))
+            assert decoded.block == _core.ActionBlock.Combat
+            assert decoded.card() == piles.hand[position]
+            cost = piles.hand_costs[position]
+            assert decoded.cost == (cost if cost >= 0 else 0), position
 
 
 @pytest.mark.asyncio
@@ -110,9 +120,10 @@ async def test_targeting_is_two_phase_and_cancellable():
         async with app.run_test() as pilot:
             if len(screen.living_enemy_slots(app.obs)) < 2:
                 continue
+            hand = app.env.state_piles().hand
             targeted = [
-                i for i, cid in enumerate(app._action_map)
-                if _core.card_targets_enemy(cid)
+                i for i, position in enumerate(app._action_map)
+                if _core.card_targets_enemy(hand[position])
             ]
             if not targeted:
                 continue

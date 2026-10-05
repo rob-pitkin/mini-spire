@@ -272,6 +272,9 @@ Toolbox, and update `relic-effects.md` §7.
 - **"Add a card" is not "add it for free."** Jack of All Trades and Magnetism add
   at full price; only Transmutation, Discovery and Infernal Blade discount what
   they make. Easy to get wrong from the card text alone.
+- ⚠️ **The cheapest-copy rule (D2 option A) is retired** by `v2-spec.md` §6.5
+  (Rob, 2026-10-04): plays and choices now name (`CardId`, cost), so the agent
+  picks the copy by its cost. The note below is the record of the old rule.
 - **The cheapest-copy rule (D2 option A) has a failure case, and a test found it.**
   `instance_effective_cost` initially fell back to the id-based `effective_cost`,
   which scans the hand for a discounted copy — so an *undiscounted* Strike

@@ -45,8 +45,9 @@ def _play_infernal_blade(seed: int):
     """Open a fight of nothing but Infernal Blades, play one, return the grant.
 
     Returns (env, granted), granted being the card ids the blade put in hand.
-    Targets are built with encode_action rather than by dividing an index by
-    MAX_ENEMIES, which CLAUDE.md reserves to the encoder.
+    Actions come from env.play_action — the copy at a hand position, at each
+    target — rather than from index arithmetic, which CLAUDE.md reserves to
+    the encoder.
     """
     blade = _core.CardId.InfernalBlade
     env = MinispireEnv(deck=[blade] * 5)
@@ -55,8 +56,7 @@ def _play_infernal_blade(seed: int):
     mask = env.action_masks()
     legal = [
         a for a in (
-            _core.encode_action(_core.ActionBlock.Combat, int(blade), t)
-            for t in range(_core.CombatEnv.MAX_ENEMIES)
+            env.play_action(0, t) for t in range(_core.CombatEnv.MAX_ENEMIES)
         )
         if mask[a]
     ]
@@ -113,7 +113,8 @@ class _StubMask(dict):
 
 
 class _StubHandEnv:
-    """The two calls build_hand makes, answered with fixed values.
+    """The three calls build_hand makes, answered with fixed values. Every copy
+    is playable; play_action's "action" is just a key the stub mask knows.
 
     A real fight cannot test this render. Catching a base-vs-effective mix-up
     needs a card whose PRINTED cost differs from what it costs right now, and
@@ -132,10 +133,13 @@ class _StubHandEnv:
 
     def action_masks(self):
         return _StubMask({
-            _core.encode_action(_core.ActionBlock.Combat, int(card_id), t): True
-            for card_id in self._piles.hand
+            self.play_action(position, t): True
+            for position in range(len(self._piles.hand))
             for t in range(_core.CombatEnv.MAX_ENEMIES)
         })
+
+    def play_action(self, hand_index, target):
+        return ("play", hand_index, target)
 
     def state_piles(self):
         return self._piles

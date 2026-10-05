@@ -212,13 +212,21 @@ header (kChoiceHeaderSize = 5 floats)
                               shop or event screen will
   [4] choice_is_optional      0 / 1          ← is option_skip legal
 
-slots (kNumOptionSlots × kChoiceSlotStride = 3 floats)
+slots (kNumOptionSlots × kChoiceSlotStride = 4 floats)
   [0] occupied                0 / 1
   [1] payload_id              CardId now; node/item/event id in v2
   [2] payload_value           instance damage now; gold cost in v2
+  [3] cost_column             the cost column the option's action names
+                              (v2-spec.md §6.5, added 2026-10-04)
 
-obs: 523 → 523 + 5 + 306 = 834   [102-card pool; read kObsSize for current]
+obs: 523 → 523 + 5 + 306 = 834   [102-card pool, 3-float slots; read kObsSize for current]
 ```
+
+> **Slot stride 3 → 4 (Rob, 2026-10-04).** Card selection is indexed by
+> (`CardId`, cost) since `v2-spec.md` §6.5, so two options can share a
+> `payload_id` and differ only in cost. The fourth float is that cost, so the
+> agent can see which (card, cost) actions are on offer — the mask is not an
+> observation.
 
 > **As-built divergence — values are written RAW, not normalized.** This block
 > originally specified `source_card / 102`, `payload_id / 255`, `cost / 200`.

@@ -16,6 +16,7 @@
 #include "turn_loop.h"
 
 using namespace minispire;
+using minispire::testing::card_action;
 using minispire::testing::make_minimal_state;
 
 // These tests drive the choice MECHANISM directly (build_choice /
@@ -27,16 +28,18 @@ constexpr CardId kSourceStandIn = CardId::Strike;
 // The action that selects the i-th OFFERED option.
 //
 // Choices are ENTITY-INDEXED now (v2-spec.md §6.2): the action index is the
-// chosen card's CardId, not its rank in the offer list. These tests still think
-// in terms of "the second option", which is the right thing for them to express
-// — this resolves that intent against the new space rather than rewriting every
-// assertion to name a card.
+// chosen card's (CardId, cost column) (§6.5), not its rank in the offer list.
+// These tests still think in terms of "the second option", which is the right
+// thing for them to express — this resolves that intent against the new space
+// rather than rewriting every assertion to name a card.
 //
 // It also documents the change: anywhere this helper is called, v1.0.0 used
 // `kFirstOptionSlot + i` and the index meant something different in every state.
 inline int option_action(const CombatState& s, int i) {
+  const Card& option = s.pending_choice.options[i];
   return encode_action(ActionBlock::CardSelect,
-                       static_cast<int>(s.pending_choice.options[i].card_id));
+                       static_cast<int>(option.card_id), 0,
+                       cost_column(s, option));
 }
 
 // ============================================================================
@@ -134,12 +137,14 @@ TEST(Choice, ChoicesReadTheCorrectSourcePile) {
   EXPECT_EQ(exhaust.options[0].card_id, CardId::Defend);
 }
 
-// Copies that differ only in a cost layer are distinct options (same_as), so
-// the sort has to order them too. When it did not, their relative order was
-// whatever std::sort left — which follows the pile's order here and is not
-// specified to agree between libc++ and libstdc++ — and a CardSelect action
-// takes the first option with its CardId. Every ordering of the same four
-// copies must give the same option sequence.
+// The offer must not depend on the pile's order: neither which options exist,
+// their order, nor which copy represents a (card, cost column) pair that two
+// copies share. An earlier comparator left copies differing only in a cost
+// layer unordered, so std::sort kept pile order — not specified to agree
+// between libc++ and libstdc++. Four Bashes: the combat-0 and free-once copies
+// share column 0 (one option; the combat copy represents it, v2-spec.md §6.5),
+// the turn-1 copy is column 1, the plain one column 2. Every ordering must give
+// the same option sequence.
 TEST(Choice, OptionOrderDoesNotDependOnPileOrder) {
   Card combat{CardId::Bash};
   set_combat_cost(combat, 0);
@@ -165,7 +170,7 @@ TEST(Choice, OptionOrderDoesNotDependOnPileOrder) {
     for (int i : order) s.exhaust_pile.push_back(copies[i]);
     const PendingChoice pc =
         build_choice(s, ChoiceKind::ExhaustToHand, CardId::Exhume);
-    ASSERT_EQ(pc.num_options, 4) << "each copy is its own option";
+    ASSERT_EQ(pc.num_options, 3) << "one option per (card, cost column)";
     if (first.empty()) {
       first = layers(pc);
     } else {
@@ -418,12 +423,13 @@ TEST(ChoiceEncoding, TheV2LayoutIsTheSpecdOne) {
   // The combat block still starts at 0 and end-turn still closes it, so a
   // policy's learned card-playing mapping survives the v2 layout landing.
   EXPECT_EQ(kCombatBlock, 0);
-  EXPECT_EQ(kEndTurnAction, kNumCardTypes * kMaxEnemies);
+  EXPECT_EQ(kNumCostColumns, 5);  // effective costs 0..4 (§6.5)
+  EXPECT_EQ(kEndTurnAction, kNumCardTypes * kNumCostColumns * kMaxEnemies);
 
   // Every block sits where v2-spec.md §6 says, in order and without gaps.
   EXPECT_EQ(kMapBlock, kEndTurnAction + 1);
   EXPECT_EQ(kCardSelectBlock, kMapBlock + kNumMapNodes);
-  EXPECT_EQ(kRelicSelectBlock, kCardSelectBlock + kNumCardTypes);
+  EXPECT_EQ(kRelicSelectBlock, kCardSelectBlock + kNumCardTypes * kNumCostColumns);
   EXPECT_EQ(kPotionUseBlock, kRelicSelectBlock + kNumRelics);
   EXPECT_EQ(kPotionDiscardBlock, kPotionUseBlock + kNumPotions * kMaxEnemies);
   EXPECT_EQ(kEventOptionBlock, kPotionDiscardBlock + kNumPotions);
@@ -433,18 +439,20 @@ TEST(ChoiceEncoding, TheV2LayoutIsTheSpecdOne) {
   EXPECT_EQ(kDeclineAction, kTakeMaxHpAction + 1);
 
   // The published total. §6's table sums to this.
-  EXPECT_EQ(kTotalActions, 2135);
+  EXPECT_EQ(kTotalActions, 8615);
 }
 
-// The guard that makes the layout non-brittle. Every one of the 2,135 indices
-// decodes to a block and entity that encode back to exactly that index, and
-// blocks appear in layout order with no backtracking. A table row whose size or
-// stride drifts from its constant fails here at every index it touches.
+// The guard that makes the layout non-brittle. Every one of the 8,615 indices
+// decodes to a block, entity, target and cost column that encode back to
+// exactly that index, and blocks appear in layout order with no backtracking. A
+// table row whose size or stride drifts from its constant fails here at every
+// index it touches.
 TEST(ChoiceEncoding, EveryActionRoundTripsThroughEncodeAndDecode) {
   ActionBlock previous = ActionBlock::Combat;
   for (int a = 0; a < kTotalActions; ++a) {
     const DecodedAction d = decode_action(a);
-    EXPECT_EQ(encode_action(d.block, d.entity, d.target), a) << "action " << a;
+    EXPECT_EQ(encode_action(d.block, d.entity, d.target, d.cost), a)
+        << "action " << a;
     EXPECT_GE(static_cast<int>(d.block), static_cast<int>(previous))
         << "blocks went backwards at action " << a;
     previous = d.block;
@@ -454,7 +462,7 @@ TEST(ChoiceEncoding, EveryActionRoundTripsThroughEncodeAndDecode) {
 }
 
 // The published landmarks decode to the blocks their names claim, and a card
-// play decodes back to its card and target.
+// play decodes back to its card, target and cost column.
 TEST(ChoiceEncoding, LandmarksDecodeToTheirBlocks) {
   EXPECT_EQ(decode_action(kEndTurnAction).block, ActionBlock::EndTurn);
   EXPECT_EQ(decode_action(kMapBlock).block, ActionBlock::Map);
@@ -462,11 +470,18 @@ TEST(ChoiceEncoding, LandmarksDecodeToTheirBlocks) {
   EXPECT_EQ(decode_action(kPotionUseBlock).block, ActionBlock::PotionUse);
   EXPECT_EQ(decode_action(kDeclineAction).block, ActionBlock::Decline);
 
-  const DecodedAction strike_at_2 = decode_action(
-      encode_action(ActionBlock::Combat, static_cast<int>(CardId::Strike), 2));
+  const DecodedAction strike_at_2 = decode_action(encode_action(
+      ActionBlock::Combat, static_cast<int>(CardId::Strike), 2, /*cost=*/3));
   EXPECT_EQ(strike_at_2.block, ActionBlock::Combat);
   EXPECT_EQ(strike_at_2.card(), CardId::Strike);
   EXPECT_EQ(strike_at_2.target, 2);
+  EXPECT_EQ(strike_at_2.cost, 3);
+
+  const DecodedAction pick = decode_action(encode_action(
+      ActionBlock::CardSelect, static_cast<int>(CardId::Bash), 0, /*cost=*/4));
+  EXPECT_EQ(pick.block, ActionBlock::CardSelect);
+  EXPECT_EQ(pick.card(), CardId::Bash);
+  EXPECT_EQ(pick.cost, 4);
 }
 
 // Non-combat blocks are rejected by BLOCK, not by index position — so a
@@ -510,17 +525,23 @@ TEST(ChoiceEncoding, CombatIsMaskedOffDuringAPendingChoice) {
   for (int i = 0; i <= kEndTurnAction; ++i) {
     EXPECT_FALSE(mask[i]) << "combat action " << i << " legal during a choice";
   }
-  // Exactly the OFFERED CARDS are legal in the card-selection block, indexed by
-  // CardId — and nothing else in the block is.
+  // Exactly the OFFERED (card, cost column) pairs are legal in the
+  // card-selection block — and nothing else in the block is.
   for (int c = 0; c < kNumCardTypes; ++c) {
-    bool offered = false;
-    for (int i = 0; i < s.pending_choice.num_options; ++i) {
-      if (static_cast<int>(s.pending_choice.options[i].card_id) == c) {
-        offered = true;
+    for (int column = 0; column < kNumCostColumns; ++column) {
+      bool offered = false;
+      for (int i = 0; i < s.pending_choice.num_options; ++i) {
+        const Card& option = s.pending_choice.options[i];
+        if (static_cast<int>(option.card_id) == c &&
+            cost_column(s, option) == column) {
+          offered = true;
+        }
       }
+      EXPECT_EQ(mask[encode_action(ActionBlock::CardSelect, c, 0, column)],
+                offered)
+          << "card id " << c << " (" << card_name(static_cast<CardId>(c))
+          << ") at cost " << column;
     }
-    EXPECT_EQ(mask[kCardSelectBlock + c], offered)
-        << "card id " << c << " (" << card_name(static_cast<CardId>(c)) << ")";
   }
 }
 
@@ -555,7 +576,7 @@ TEST(ChoiceEncoding, ApplyActionRejectsCombatActionsWhilePaused) {
                                   kSourceStandIn);
 
   // Playing a card or ending the turn mid-choice must be rejected outright.
-  EXPECT_FALSE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+  EXPECT_FALSE(apply_action(s, card_action(CardId::Strike)));
   EXPECT_FALSE(apply_action(s, kEndTurnAction));
   EXPECT_TRUE(s.pending_choice.active());  // still awaiting an answer
 }
@@ -569,7 +590,8 @@ TEST(ChoiceEncoding, ApplyActionRejectsSlotActionsWhenNoChoicePends) {
   // in hand, which is what makes this a phase check rather than an "is it on
   // offer" check.
   EXPECT_FALSE(apply_action(
-      s, encode_action(ActionBlock::CardSelect, static_cast<int>(CardId::Strike))));
+      s, encode_action(ActionBlock::CardSelect, static_cast<int>(CardId::Strike),
+                       0, cost_column(s, s.current_hand[0]))));
   EXPECT_FALSE(apply_action(s, encode_action(ActionBlock::Decline)));
 }
 
@@ -580,9 +602,21 @@ TEST(ChoiceEncoding, ApplyActionRejectsUnofferedSlots) {
                                   kSourceStandIn);
   ASSERT_EQ(s.pending_choice.num_options, 1);
 
-  // Defend has a card-selection index, but only the Strike is on offer.
-  EXPECT_FALSE(apply_action(
-      s, encode_action(ActionBlock::CardSelect, static_cast<int>(CardId::Defend))));
+  // Defend has card-selection indices, but only the Strike is on offer — and
+  // the Strike only at its own cost column.
+  for (int column = 0; column < kNumCostColumns; ++column) {
+    EXPECT_FALSE(apply_action(
+        s, encode_action(ActionBlock::CardSelect,
+                         static_cast<int>(CardId::Defend), 0, column)));
+  }
+  const int strike_column = cost_column(s, s.pending_choice.options[0]);
+  for (int column = 0; column < kNumCostColumns; ++column) {
+    if (column == strike_column) continue;
+    EXPECT_FALSE(apply_action(
+        s, encode_action(ActionBlock::CardSelect,
+                         static_cast<int>(CardId::Strike), 0, column)))
+        << "a Strike at cost " << column << " is not on offer";
+  }
   EXPECT_TRUE(s.pending_choice.active());
 }
 
@@ -684,8 +718,15 @@ TEST(ChoiceEncoding, ObsAndMaskAgreeOnWhichSlotsAreOffered) {
     const bool occupied = obs[kSlotBase + i * stride + 0] > 0.5f;
     if (i < n) {
       EXPECT_TRUE(occupied) << "offered option " << i << " not shown in the obs";
-      const int action = encode_action(
-          ActionBlock::CardSelect, static_cast<int>(offered.options[i].card_id));
+      // The slot shows the cost column the option's action names (§6.5), and
+      // that (card, column) action is legal.
+      const int column = cost_column(env.state(), offered.options[i]);
+      EXPECT_FLOAT_EQ(obs[kSlotBase + i * stride + 3],
+                      static_cast<float>(column))
+          << "slot " << i << " does not show its option's cost";
+      const int action =
+          encode_action(ActionBlock::CardSelect,
+                        static_cast<int>(offered.options[i].card_id), 0, column);
       EXPECT_TRUE(mask[action] != 0)
           << "obs shows option " << i << " but its card is not legal";
     } else {
@@ -701,11 +742,14 @@ TEST(ChoiceEncoding, ObsAndMaskAgreeOnWhichSlotsAreOffered) {
 
 namespace {
 
-// Play `card` from hand via the real action path, with enough energy.
+// Play `card` from hand via the real action path, with enough energy. The play
+// names the copy just added, at its own cost column (v2-spec.md §6.5) — under
+// Corruption a Skill's column is 0, not its printed cost.
 bool play(CombatState& s, CardId card, int target = 0) {
   s.current_hand.push_back(Card{card});
   s.character.energy = 3;
-  return apply_action(s, static_cast<int>(card) * kMaxEnemies + target);
+  return apply_action(
+      s, card_action(card, target, cost_column(s, s.current_hand.back())));
 }
 
 }  // namespace
@@ -923,7 +967,7 @@ TEST(ChoiceCards, PlayingAChoiceCardMasksOffCombatUntilAnswered) {
 
   const auto mask = valid_actions(s);
   EXPECT_FALSE(mask[kEndTurnAction]);
-  EXPECT_FALSE(mask[static_cast<int>(CardId::Strike) * kMaxEnemies]);
+  EXPECT_FALSE(mask[card_action(CardId::Strike)]);
   EXPECT_TRUE(mask[option_action(s, 0)]);
 }
 
@@ -975,7 +1019,7 @@ TEST(PerInstance, RampageGrowsTheCopyThatWasPlayed) {
   s.discard_pile.clear();
   s.character.energy = 3;
   const int hp1 = s.enemies[0].hp;
-  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Rampage5) * kMaxEnemies));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Rampage5)));
   EXPECT_EQ(s.enemies[0].hp, hp1 - 13);
   EXPECT_EQ(s.discard_pile[0].card_id, CardId::Rampage10);  // grew again
 }
@@ -993,7 +1037,7 @@ TEST(PerInstance, RampageSaturatesAtTheTopRung) {
   CombatState s = make_minimal_state(0);
   s.character.energy = 5;
   s.current_hand.push_back(Card{CardId::Rampage30});  // top of the base ladder
-  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Rampage30) * kMaxEnemies));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Rampage30)));
 
   ASSERT_EQ(s.discard_pile.size(), 1u);
   EXPECT_EQ(s.discard_pile[0].card_id, CardId::Rampage30) << "id saturates";
@@ -1011,7 +1055,7 @@ TEST(PerInstance, TwoRampagesScaleSeparately) {
   s.current_hand.push_back(Card{CardId::Rampage});
   s.current_hand.push_back(Card{CardId::Rampage});
 
-  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Rampage) * kMaxEnemies));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Rampage)));
 
   // One copy grew; the one still in hand did not.
   ASSERT_EQ(s.discard_pile.size(), 1u);
@@ -1040,7 +1084,7 @@ TEST(PerInstance, SearingBlowDealsItsInstanceDamage) {
   const int hp = s.enemies[0].hp;
 
   ASSERT_TRUE(
-      apply_action(s, static_cast<int>(CardId::SearingBlow) * kMaxEnemies));
+      apply_action(s, card_action(CardId::SearingBlow)));
 
   EXPECT_EQ(s.enemies[0].hp, hp - 27);
   // The upgrade count rode back into the discard pile with the copy.
@@ -1099,22 +1143,66 @@ TEST(PerInstance, ArmamentsStillUpgradesAtTheSearingBlowCap) {
   }
 }
 
-TEST(PerInstance, ChoiceOffersDifferingCopiesSeparately) {
-  // Two Rampages at different bonuses are NOT interchangeable, so they must be
-  // two distinct options — the dedup keys on (id, instance state).
+TEST(PerInstance, ChoiceOffersCopiesAtDifferentCostsSeparately) {
+  // Two Bashes at different costs are NOT interchangeable — a human picks
+  // between them by the number on the card — so they are two options, one per
+  // (CardId, cost column) (v2-spec.md §6.5), in ascending cost order.
   CombatState s = make_minimal_state(0);
-  Card weak{CardId::Rampage};
-  Card strong{CardId::Rampage};
-  strong.bonus_damage = 10;
-  s.current_hand.push_back(weak);
-  s.current_hand.push_back(strong);
+  Card free_bash{CardId::Bash};
+  set_combat_cost(free_bash, 0);
+  s.current_hand.push_back(Card{CardId::Bash});
+  s.current_hand.push_back(free_bash);
 
   const PendingChoice pc =
       build_choice(s, ChoiceKind::HandToTopOfDraw, kSourceStandIn);
 
   ASSERT_EQ(pc.num_options, 2);
-  EXPECT_EQ(pc.options[0].bonus_damage, 0);   // ascending instance state
-  EXPECT_EQ(pc.options[1].bonus_damage, 10);
+  EXPECT_EQ(cost_column(s, pc.options[0]), 0);
+  EXPECT_EQ(cost_column(s, pc.options[1]), 2);
+}
+
+TEST(PerInstance, ChoiceCollapsesCopiesThatDifferOnlyAboveTheRungCap) {
+  // Above Rampage's top rung the bonus keeps counting in the engine, but the
+  // action space saturates there (observation-space.md A2): two such copies at
+  // one cost are one (CardId, cost) action, so one option.
+  CombatState s = make_minimal_state(0);
+  Card a{CardId::Rampage30};
+  Card b{CardId::Rampage30};
+  b.bonus_damage = 10;
+  s.current_hand.push_back(a);
+  s.current_hand.push_back(b);
+
+  const PendingChoice pc =
+      build_choice(s, ChoiceKind::HandToTopOfDraw, kSourceStandIn);
+
+  EXPECT_EQ(pc.num_options, 1);
+}
+
+TEST(PerInstance, ChoiceRepresentativeIsTheLeastDurableDiscount) {
+  // Three Bashes all costing 0, through three different layers. They are one
+  // option, and its copy is the one the action should take: the turn-layer
+  // discount first, which expires at end of turn anyway (v2-spec.md §6.5).
+  CombatState s = make_minimal_state(0);
+  Card combat{CardId::Bash};
+  set_combat_cost(combat, 0);
+  Card once{CardId::Bash};
+  once.free_once = true;
+  Card turn{CardId::Bash};
+  set_turn_cost(turn, 0);
+  s.current_hand = {combat, once, turn};
+
+  const PendingChoice pc =
+      build_choice(s, ChoiceKind::HandToTopOfDraw, kSourceStandIn);
+
+  ASSERT_EQ(pc.num_options, 1);
+  EXPECT_TRUE(pc.options[0].same_as(turn));
+
+  // Without the turn copy, the combat copy goes before the free-once one.
+  s.current_hand = {once, combat};
+  const PendingChoice two =
+      build_choice(s, ChoiceKind::HandToTopOfDraw, kSourceStandIn);
+  ASSERT_EQ(two.num_options, 1);
+  EXPECT_TRUE(two.options[0].same_as(combat));
 }
 
 TEST(PerInstance, ChoiceStillCollapsesIdenticalCopies) {
@@ -1130,22 +1218,28 @@ TEST(PerInstance, ChoiceStillCollapsesIdenticalCopies) {
 }
 
 TEST(PerInstance, ChoiceTakesTheCopyThatWasChosen) {
-  // Picking the buffed Rampage must move THAT copy, not an arbitrary one.
-  CombatState s = make_minimal_state(0);
-  Card weak{CardId::Rampage};
-  Card strong{CardId::Rampage};
-  strong.bonus_damage = 10;
-  s.current_hand.push_back(weak);
-  s.current_hand.push_back(strong);
+  // Picking "Bash at 0" through the ACTION SPACE must move THAT copy, not an
+  // arbitrary one — and the second copy must be reachable the same way, which
+  // CardId-only actions could not do.
+  for (const int pick_column : {0, 2}) {
+    CombatState s = make_minimal_state(0);
+    Card free_bash{CardId::Bash};
+    set_combat_cost(free_bash, 0);
+    s.current_hand = {Card{CardId::Bash}, free_bash};
 
-  request_choice_then_marker(s, ChoiceKind::HandToTopOfDraw, kSourceStandIn);
-  ASSERT_EQ(s.pending_choice.num_options, 2);
-  ASSERT_TRUE(resolve_choice(s, 1));  // the +10 copy
+    request_choice_then_marker(s, ChoiceKind::HandToTopOfDraw, kSourceStandIn);
+    ASSERT_EQ(s.pending_choice.num_options, 2);
+    ASSERT_TRUE(apply_action(
+        s, encode_action(ActionBlock::CardSelect,
+                         static_cast<int>(CardId::Bash), 0, pick_column)));
 
-  ASSERT_EQ(s.draw_pile.size(), 1u);
-  EXPECT_EQ(s.draw_pile.back().bonus_damage, 10);  // the chosen one moved
-  ASSERT_EQ(s.current_hand.size(), 1u);
-  EXPECT_EQ(s.current_hand[0].bonus_damage, 0);    // the other stayed
+    ASSERT_EQ(s.draw_pile.size(), 1u);
+    EXPECT_EQ(cost_column(s, s.draw_pile.back()), pick_column)
+        << "the chosen copy moved";
+    ASSERT_EQ(s.current_hand.size(), 1u);
+    EXPECT_EQ(cost_column(s, s.current_hand[0]), 2 - pick_column)
+        << "the other stayed";
+  }
 }
 
 TEST(PerInstance, DualWieldCopiesInheritInstanceState) {
@@ -1171,15 +1265,14 @@ TEST(PerInstance, DualWieldCopiesInheritInstanceState) {
   EXPECT_EQ(buffed, 2) << "the copy should inherit the +10";
 }
 
-TEST(PerInstance, ObsPublishesPerOptionInstanceDamage) {
-  // Two Rampages at different bonuses must be distinguishable in the OBS, not
-  // just in the mask — otherwise the agent sees "2 Rampage" and cannot choose.
+TEST(PerInstance, ObsDistinguishesSameCardOptionsByCost) {
+  // Two Bash options must be distinguishable in the OBS, not just in the mask —
+  // otherwise the agent sees "2 Bash" and cannot choose. The slot's cost float
+  // is what tells them apart (v2-spec.md §6.5); the damage payload is the same.
   CombatState s = make_minimal_state(0);
-  Card weak{CardId::Rampage};
-  Card strong{CardId::Rampage};
-  strong.bonus_damage = 10;
-  s.current_hand.push_back(weak);
-  s.current_hand.push_back(strong);
+  Card free_bash{CardId::Bash};
+  set_combat_cost(free_bash, 0);
+  s.current_hand = {Card{CardId::Bash}, free_bash};
   s.pending_choice = build_choice(s, ChoiceKind::HandToTopOfDraw,
                                   kSourceStandIn);
   ASSERT_EQ(s.pending_choice.num_options, 2);
@@ -1190,12 +1283,15 @@ TEST(PerInstance, ObsPublishesPerOptionInstanceDamage) {
 
   // Same card id in both slots...
   EXPECT_FLOAT_EQ(obs[kSlotBase + 0 * stride + 1],
-                  static_cast<float>(static_cast<int>(CardId::Rampage)));
+                  static_cast<float>(static_cast<int>(CardId::Bash)));
   EXPECT_FLOAT_EQ(obs[kSlotBase + 1 * stride + 1],
-                  static_cast<float>(static_cast<int>(CardId::Rampage)));
-  // ...but different damage payloads.
+                  static_cast<float>(static_cast<int>(CardId::Bash)));
+  // ...the same instance damage...
   EXPECT_FLOAT_EQ(obs[kSlotBase + 0 * stride + 2], 8.0f);
-  EXPECT_FLOAT_EQ(obs[kSlotBase + 1 * stride + 2], 18.0f);
+  EXPECT_FLOAT_EQ(obs[kSlotBase + 1 * stride + 2], 8.0f);
+  // ...and different costs.
+  EXPECT_FLOAT_EQ(obs[kSlotBase + 0 * stride + 3], 0.0f);
+  EXPECT_FLOAT_EQ(obs[kSlotBase + 1 * stride + 3], 2.0f);
 }
 
 // ============================================================================
@@ -1285,10 +1381,10 @@ TEST(GeneratedCards, WoundAndBurnAreUnplayable) {
   s.current_hand.push_back(Card{CardId::Burn});
 
   const auto mask = valid_actions(s);
-  EXPECT_FALSE(mask[static_cast<int>(CardId::Wound) * kMaxEnemies]);
-  EXPECT_FALSE(mask[static_cast<int>(CardId::Burn) * kMaxEnemies]);
+  EXPECT_FALSE(mask[card_action(CardId::Wound)]);
+  EXPECT_FALSE(mask[card_action(CardId::Burn)]);
   // And the apply path agrees with the mask.
-  EXPECT_FALSE(apply_action(s, static_cast<int>(CardId::Wound) * kMaxEnemies));
+  EXPECT_FALSE(apply_action(s, card_action(CardId::Wound)));
 }
 
 TEST(GeneratedCards, BurnDamagesThePlayerAtEndOfTurnAndThenDiscards) {
@@ -1811,7 +1907,7 @@ TEST(MetaCards, DoubleTapReplaysTheNextAttack) {
   ASSERT_EQ(get_status(s.character.powers, Power::DoubleTap), 1);
 
   s.current_hand.push_back(Card{CardId::Strike});
-  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
 
   EXPECT_EQ(s.enemies[0].hp, hp - 12) << "Strike's 6 damage, twice";
   EXPECT_EQ(get_status(s.character.powers, Power::DoubleTap), 0)
@@ -1825,7 +1921,7 @@ TEST(MetaCards, DoubleTapReplayCostsNoEnergy) {
   const int energy = s.character.energy;
 
   s.current_hand.push_back(Card{CardId::Strike});
-  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
 
   // Strike costs 1; the free replay costs nothing.
   EXPECT_EQ(s.character.energy, energy - 1);
@@ -1837,7 +1933,7 @@ TEST(MetaCards, DoubleTapDoesNotAffectSkills) {
   ASSERT_TRUE(play(s, CardId::DoubleTap));
 
   s.current_hand.push_back(Card{CardId::Defend});
-  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Defend) * kMaxEnemies));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Defend)));
 
   EXPECT_EQ(s.character.current_block, 5) << "Defend is a Skill, played once";
   EXPECT_EQ(get_status(s.character.powers, Power::DoubleTap), 1)
@@ -1853,9 +1949,9 @@ TEST(MetaCards, DoubleTapPlusReplaysTwoAttacks) {
   ASSERT_EQ(get_status(s.character.powers, Power::DoubleTap), 2);
 
   s.current_hand.push_back(Card{CardId::Strike});
-  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
   s.current_hand.push_back(Card{CardId::Strike});
-  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
 
   EXPECT_EQ(s.enemies[0].hp, hp - 24) << "two Strikes, each played twice";
   EXPECT_EQ(get_status(s.character.powers, Power::DoubleTap), 0);
@@ -1869,7 +1965,7 @@ TEST(MetaCards, DoubleTapSecondCopyEntersNoPile) {
   s.discard_pile.clear();
 
   s.current_hand.push_back(Card{CardId::Strike});
-  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
 
   int strikes = 0;
   for (const Card& c : s.discard_pile) {
@@ -2059,7 +2155,7 @@ TEST(MetaCards, DoubleTapReplaysThroughTheQueueNotRecursion) {
   s.enemies[0].hp = 8;  // survives the first Strike, dies to the replay
 
   s.current_hand.push_back(Card{CardId::Strike});
-  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
 
   EXPECT_LE(s.enemies[0].hp, 0);
   EXPECT_EQ(s.outcome, Outcome::Won);
@@ -2088,11 +2184,15 @@ TEST(WikiAudit, InfernalBladeDiscountIsConsumedByOnePlay) {
   // is on the instance rather than on the card type.
   set_turn_cost(s.current_hand.back(), 0);
 
+  // Each copy is its own action (v2-spec.md §6.5): "Strike at 0" is the free
+  // one, "Strike at 1" the other.
   const int start = s.character.energy;
-  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0, /*cost_column=*/0)));
   EXPECT_EQ(s.character.energy, start) << "the free copy costs nothing";
+  EXPECT_FALSE(valid_actions(s)[card_action(CardId::Strike, 0, 0)])
+      << "the one free copy is gone, so no free Strike remains";
 
-  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::Strike) * kMaxEnemies));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
   EXPECT_EQ(s.character.energy, start - 1)
       << "only ONE copy was free; the second pays its printed cost";
 }
@@ -2109,7 +2209,8 @@ TEST(WikiAudit, InfernalBladeDiscountStillCoversItsOwnCard) {
   const CardId got = s.current_hand[0].card_id;
   ASSERT_EQ(effective_cost(s, got), 0);
 
-  ASSERT_TRUE(apply_action(s, static_cast<int>(got) * kMaxEnemies));
+  // Whatever was rolled, its copy is free this turn, so it is "got at cost 0".
+  ASSERT_TRUE(apply_action(s, card_action(got, 0, /*cost_column=*/0)));
   EXPECT_EQ(s.character.energy, after_blade) << "the generated attack was free";
 }
 
@@ -2130,7 +2231,7 @@ TEST(WikiAudit, BurningPactChoosesFromThePreDrawHand) {
   s.draw_pile.push_back(Card{CardId::Cleave});
   s.draw_pile.push_back(Card{CardId::Bash});
 
-  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::BurningPact) * kMaxEnemies));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::BurningPact)));
 
   ASSERT_TRUE(s.pending_choice.active());
   EXPECT_EQ(s.pending_choice.num_options, 2)
@@ -2151,7 +2252,7 @@ TEST(WikiAudit, BurningPactStillDrawsAfterTheExhaustResolves) {
   s.current_hand.push_back(Card{CardId::Strike});  // 2nd candidate -> real pause
   for (int i = 0; i < 4; ++i) s.draw_pile.push_back(Card{CardId::Bash});
 
-  ASSERT_TRUE(apply_action(s, static_cast<int>(CardId::BurningPact) * kMaxEnemies));
+  ASSERT_TRUE(apply_action(s, card_action(CardId::BurningPact)));
   ASSERT_TRUE(s.pending_choice.active());
   // Answer with whichever slot offers the Defend.
   int defend_slot = -1;

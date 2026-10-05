@@ -4,7 +4,7 @@ from __future__ import annotations
 import gymnasium as gym
 import numpy as np
 
-from minispire._core import ActionBlock, CardId, encode_action
+from minispire._core import CardId
 from minispire._core import CombatEnv as _CombatEnv
 from minispire._core import EncounterPool
 
@@ -18,16 +18,20 @@ class MinispireEnv(gym.Env):
     regions live, and they are mutually exclusive:
 
     * **combat** — play a card, or ``END_TURN_ACTION``. Legal only when no
-      choice is pending.
+      choice is pending. A play names its copy as (card, cost, target):
+      copies of one card can cost different amounts, and "Bash at cost 0" and
+      "Bash at cost 2" are different actions (v2-spec.md §6.5).
     * **card selection** — answer a pending mid-card choice (Armaments,
-      Warcry, ...) by picking the CARD, not its position in the offer. Legal
-      only *during* a choice, with ``DECLINE_ACTION`` when it is optional.
+      Warcry, ...) by picking the (card, cost), not its position in the
+      offer. Legal only *during* a choice, with ``DECLINE_ACTION`` when it is
+      optional.
 
-    Never build an index by adding offsets. Use ``minispire._core.encode_action``
-    and ``decode_action`` — or :meth:`choice_action` for a pending choice. The
-    block constants are published for inspection, not for arithmetic; offset
-    math repeated at call sites is how ``end-turn = size - 1`` once broke the
-    TUI and 13 tests at once.
+    Never build an index by adding offsets. Use :meth:`play_action` and
+    :meth:`choice_action` for a specific copy, and
+    ``minispire._core.encode_action`` / ``decode_action`` otherwise. The block
+    constants are published for inspection, not for arithmetic; offset math
+    repeated at call sites is how ``end-turn = size - 1`` once broke the TUI
+    and 13 tests at once.
 
     Observation space is `Box(-inf, inf, shape=(OBS_SIZE,), dtype=float32)`
     — raw, unnormalized values per ROB-40. The shape is fixed whether or not a
@@ -139,21 +143,30 @@ class MinispireEnv(gym.Env):
         """Return the pending mid-card choice, if any (Stage 4c).
 
         Answer ``options[i]`` with :meth:`choice_action`. Choices are
-        entity-indexed, so the action is the card's own index in the
-        card-selection block, not ``i``. The obs already encodes the offer for
-        the agent; this is the named-value form for the TUI and for inspection
-        — not used in the training loop.
+        entity-indexed, so the action is the option's (card, cost) index in
+        the card-selection block, not ``i``. The obs already encodes the offer
+        for the agent; this is the named-value form for the TUI and for
+        inspection — not used in the training loop.
         """
         return self._env.choice_view()
 
     def choice_action(self, i: int) -> int:
         """The global action that picks ``options[i]`` of the pending choice.
 
-        Goes through the engine's encoder rather than adding offsets, so the
-        layout lives in exactly one place (v2-spec.md §6.2).
+        The engine builds it — (card, cost column), v2-spec.md §6.5 — so the
+        layout, and the rule for a copy's cost column, live in one place.
         """
-        card = self.choice_view().options[i]
-        return encode_action(ActionBlock.CardSelect, int(card))
+        return self._env.choice_action(i)
+
+    def play_action(self, hand_index: int, target: int) -> int:
+        """The global action that plays the copy at ``hand_index`` at enemy
+        slot ``target``.
+
+        Names THAT copy — (card, cost column, target), v2-spec.md §6.5 — so a
+        discounted copy and a full-price one are different plays. Not a
+        legality check; read :meth:`action_masks`.
+        """
+        return self._env.play_action(hand_index, target)
 
     def effective_cost(self, card_id) -> int:
         """What `card_id` costs to play right now.

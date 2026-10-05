@@ -87,7 +87,7 @@ no Gymnasium surface, so it is exercised only by `ctest`.
 | `EVENTS` | 25 |
 | `EVENT_OPTIONS` | 58 |
 | **observation** | **4,115 floats** (2.32× v1.0.0) |
-| **action space** | **2,135** (63% of it the combat block v1.0.0 already ships) |
+| **action space** | **8,615** (78% of it the combat card × cost × target block, §6.5; 2,135 before the cost dimension) |
 
 Every one of these is **Act 1-reachable content only** — no reserved indices for
 acts 2–3 (§5.1 rule 5).
@@ -1468,10 +1468,10 @@ every state, forever — never "the *k*th option offered".
 
 | block | size | index means |
 |---|---:|---|
-| combat: card × target | 270 × 5 = **1,350** | play card *c* at enemy slot *t* |
+| combat: card × cost × target | 270 × 5 × 5 = **6,750** | play a copy of card *c* that costs *k*, at enemy slot *t* (§6.5) |
 | end turn | 1 | |
 | map: choose node | 105 | move to grid position *p* |
-| card selection | **270** | pick card *c* — purpose comes from the live phase (§6.1) |
+| card selection: card × cost | 270 × 5 = **1,350** | pick a copy of card *c* that costs *k* — purpose comes from the live phase (§6.1, §6.5) |
 | relic selection | **140** | pick relic *r* — **shop only** (§6.4) |
 | potion: use × target | 33 × 5 = **165** | Fire/Fear/Weak/Poison potions target an enemy |
 | potion: discard | **33** | |
@@ -1481,10 +1481,13 @@ every state, forever — never "the *k*th option offered".
 | take Max HP instead | 1 | Singing Bowl |
 | decline / skip / leave | 1 | |
 
-**Total = 2,135** actions.
+**Total = 8,615** actions.
 
-Of that, **1,350 (63%) is the combat card×target block** — the same block v1.0.0
-already ships, just wider. Everything the run layer adds comes to **786**.
+Of that, **6,750 (78%) is the combat card×cost×target block**. It was 1,350
+(card × target) until §6.5 added the cost dimension; the action count was 2,135
+then. Everything the run layer adds comes to **786** plus the card-selection
+block's cost dimension. Width is cheap: the mask walks the hand and the option
+list, never the action space (`decision-points.md` §3).
 
 ### 6.1 The purpose collision
 
@@ -1543,6 +1546,13 @@ Consequences to carry out:
   interchangeable (and rung IDs already make a grown Rampage a distinct `CardId`),
   so entity-indexing loses nothing.
 
+  > ⚠️ **False once costs became per copy — amended by §6.5 (Rob, 2026-10-04).**
+  > Madness, Enlightenment, Infernal Blade and Snecko Eye's Confusion give two
+  > copies of one `CardId` different costs, and a human picks between them on
+  > the card face. CardId alone then named "some copy", and a CardSelect took
+  > the first option with that id, so a second copy could never be chosen. The
+  > identity is now (`CardId`, cost).
+
 #### What exactly is superseded in `decision-points.md`
 
 Its **§5.3 "Canonical ordering (R2)"** declares slot order to be *part of the
@@ -1558,7 +1568,7 @@ That rule exists to *mitigate* rank-indexing — ordering slots by ascending
 
 | §5.3 clause | status |
 |---|---|
-| card choices ordered by ascending `CardId` | **moot** — the action index *is* the `CardId` |
+| card choices ordered by ascending `CardId` | **moot** — the action index *is* the (`CardId`, cost) pair (§6.5) |
 | non-card choices by natural index | **superseded** — map/shop/event get their own entity blocks |
 | "deduplicated by type; identical cards collapse to one slot" | **survives, and supports this change** — it already establishes that identical cards are interchangeable, which is why entity-indexing loses nothing |
 
@@ -1681,6 +1691,77 @@ Relic actions exist only for **shop purchases**, where the player chooses which
 of 3 relics to buy against a gold constraint. Boss relics, which *are* a real
 choice, are structurally absent because the run ends at the Act 1 boss (§9).
 
+### 6.5 Copies are addressed by (CardId, cost) (Rob, 2026-10-04)
+
+**Ruling.** Both card-indexed blocks gain a cost dimension. A play is
+(card, cost, target); a card selection is (card, cost). "Play a Bash that costs
+0" and "play a Bash that costs 2" are different actions with fixed meanings.
+
+**Why cost, and only cost.** Two copies of one `CardId` can differ in cost
+(Madness, Enlightenment, Infernal Blade, Discovery, Snecko Eye's Confusion),
+and a human picks between them by the number on the card face. How long a
+discount lasts — this turn, this combat, until played — is not on the card face.
+A human knows it only by remembering what caused it, a second-degree fact, so it
+is not in the observation (Rob, 2026-10-04) and therefore not in the action
+either. Prior art for this shape, chiefly Mahjong environments giving red fives
+their own tile ids: [`../research/rl-action-representation.md`](../research/rl-action-representation.md).
+
+**The cost column** of a copy is its effective cost (`instance_effective_cost`:
+Corruption, then `free_once`, the turn layer, the combat layer, the printed
+cost), from 0 to `kMaxCardCost` (4). **X-cost and unplayable cards use column
+0.** Their cost never differs between copies, so the column carries nothing, and
+a fixed column keeps one action per card.
+
+**Mask.** Plays: each hand copy lights (card, its column, target) if it is
+playable and affordable at its OWN cost. Choices: each option lights (card, its
+column).
+
+**The residual, and the tie-break.** Copies with the same (card, column) can
+still differ in two ways:
+
+- **the discount's layer**, which the card face does not show (the ruling above);
+- **a Rampage or Searing Blow above its rung cap**, whose damage the card face
+  DOES show. This is the above-cap aliasing `observation-space.md` §5 already
+  accepted for the rung ladders. Nothing is lost relative to before §6.5, when
+  a CardSelect took the first option with its id and a second such copy could
+  not be chosen either.
+
+One action then covers several copies, and the engine picks **the least durable
+discount first**:
+
+1. a turn-layer discount (expires at end of turn whether played or not);
+2. printed cost or a combat-layer discount (survives being played);
+3. `free_once` (spent by playing);
+
+then the canonical `play_key` order, so the pick is deterministic. For plays
+this never does worse than any other copy: the combat discount survives the play
+and a free-once discount does not. For choices the one rule applies to every
+kind; the known case where it is not the best pick is Dual Wield (copies inherit
+the layers, so copying the durable copy is better). That is accepted: the agent
+cannot see the difference it would be choosing on.
+
+**Choices are deduplicated by (card, column)** — one option per action, with the
+representative chosen by the tie-break. A menu whose only two copies differ
+invisibly therefore offers one option and auto-resolves, where StS would open
+the screen. The agent loses nothing it could observe.
+
+**Observation.** Each choice option slot carries the option's cost column
+(slot stride 3 → 4, +270 floats). Without it a pile choice — Exhume, Headbutt —
+would offer (card, cost) actions whose costs the agent cannot see; the mask is
+not an observation (§5.9: the value head never sees it). Hand copies already
+show their costs in the hand's (card × cost) planes (`relic-effects.md` §6.28),
+indexed the same way as the play action.
+
+**What this retires.** `colorless-effects.md` D2 option A — "the cheapest copy is
+the one played" — is gone: a play names its cost, so saving a combat-long
+discount for a later turn is expressible. What remains is the invisible-layer
+tie-break above, listed in §9's divergence table.
+
+**Interface.** `kTotalActions` goes from 2,135 to 8,615, and every index after
+the Combat block shifts. `encode_action` takes the cost column; `DecodedAction`
+carries it. Python never computes a column: `CombatEnv.play_action(hand_index,
+target)` and `choice_action(i)` return the action for a specific copy.
+
 ## 7. Reward
 
 Fully specified in [`run-reward.md`](run-reward.md). Summary:
@@ -1774,7 +1855,7 @@ footnote in a design doc. The full list to publish:
 | Frozen Eye excluded from the shop pool | reveals draw-pile *order*; no way to show it |
 | Neow always offers 4 blessings | no cross-run state exists (§8) |
 | Relic order is insertion order | §5.4 — a real parity defect |
-| **The cheapest copy of a card is the one played** | Actions name a `CardId`, not a copy, so when one copy is discounted (Madness, Discovery, Infernal Blade) and another is not, the engine spends the cheap one. Optimal within a turn; a human could instead SAVE a combat-long discount for a later turn. `colorless-effects.md` D2 option A (Rob, 2026-09-19) |
+| **Copies that differ only invisibly share one action** | Actions name (`CardId`, cost), §6.5. Two copies at the same cost whose discounts differ in duration (turn, combat, until played) look identical on the card face, so the engine picks one: the least durable discount first. A human who remembers what caused each discount could choose otherwise. Replaced "the cheapest copy is the one played" (D2 option A, 2026-09-19), retired by §6.5 (Rob, 2026-10-04) |
 | Ascension pinned at 0 | §3.0 |
 
 A researcher comparing mini-spire win rates against CommunicationMod or

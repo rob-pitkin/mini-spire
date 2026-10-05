@@ -106,13 +106,35 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
                       const PlayContext& ctx_play) {
   const CardData& data = CARD_DATABASE.at(card_id);
 
-  // 1. Pay energy at translation time — an X-cost card's X (= its hit count)
+  // 1. Which copy is played. A play names (card, cost column), so the copy is
+  // one in that column; when several are, the least durable discount goes
+  // first (v2-spec.md §6.5, taken_before). It is chosen before energy is paid
+  // because the copy's OWN cost is what is paid.
+  int hand_idx = -1;
+  if (ctx_play.take_from_hand) {
+    assert(ctx_play.cost_column >= 0 && "a play from hand must name its copy");
+    for (int i = 0; i < static_cast<int>(state.current_hand.size()); ++i) {
+      const Card& c = state.current_hand[i];
+      if (c.card_id != card_id) continue;
+      if (cost_column(state, c) != ctx_play.cost_column) continue;
+      if (hand_idx < 0 || taken_before(c, state.current_hand[hand_idx])) {
+        hand_idx = i;
+      }
+    }
+    assert(hand_idx >= 0 && "mask should have rejected this action");
+  }
+
+  // 2. Pay energy at translation time — an X-cost card's X (= its hit count)
   // must be known before its hits can be queued. A free replay pays nothing
   // and reuses the original X ("the second play of an X-cost Attack will use
   // the same value of X as the first").
   int x = 0;
   if (ctx_play.pay_energy) {
-    const int cost = effective_cost(state, card_id);  // Corruption, Blood for Blood
+    // The played copy's own cost: Corruption, its layers, Blood for Blood.
+    const int cost =
+        hand_idx >= 0
+            ? instance_effective_cost(state, state.current_hand[hand_idx])
+            : effective_cost(state, card_id);
     if (cost == kXCost) {
       x = spend_all_energy(state);
     } else {
@@ -131,31 +153,15 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
   // hits: -1 means "X hits" (Whirlwind); otherwise the literal count.
   const int hits = (data.hits < 0) ? x_effect : data.hits;
 
-  // 2. The played card leaves the hand now — it is "in flight" during
+  // 3. The played card leaves the hand now — it is "in flight" during
   // resolution (StS) and rejoins a pile via the queued ExhaustCard/DiscardCard.
   // The INSTANCE is captured, not just the id: Rampage's accumulated bonus and
   // Searing Blow's upgrade count ride on the copy and must survive back into
   // the pile it lands in.
   Card played = ctx_play.instance;
   if (ctx_play.take_from_hand) {
-    // The CHEAPEST copy of this id, not the first (colorless-effects.md D2,
-    // option A). Actions are indexed by CardId, so "play Bludgeon" cannot name
-    // a copy; when one copy is discounted and another is not, a human clicks
-    // the free one. Playing the cheapest is therefore both the optimal line and
-    // the one a player would take.
-    int idx = -1;
-    int best_cost = 0;
-    for (int i = 0; i < static_cast<int>(state.current_hand.size()); ++i) {
-      if (state.current_hand[i].card_id != card_id) continue;
-      const int this_cost = instance_effective_cost(state, state.current_hand[i]);
-      if (idx < 0 || this_cost < best_cost) {
-        idx = i;
-        best_cost = this_cost;
-      }
-    }
-    assert(idx >= 0 && "mask should have rejected this action");
-    played = state.current_hand[idx];
-    state.current_hand.erase(state.current_hand.begin() + idx);
+    played = state.current_hand[hand_idx];
+    state.current_hand.erase(state.current_hand.begin() + hand_idx);
     // Forethought's freeToPlayOnce is spent here, on the copy that leaves the
     // hand. The turn layer is reset by the pile it lands in (move_to_discard /
     // move_to_exhaust), which is StS's Soul -> clearPowers.
@@ -173,7 +179,7 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     target_slots.push_back(target);
   }
 
-  // 3. Translate the CardData field-bag into its default action sequence.
+  // 4. Translate the CardData field-bag into its default action sequence.
   ActionQueue q;
   ResolutionContext ctx;
 
@@ -1173,13 +1179,15 @@ CombatState start_v1_combat(uint32_t seed) {
   return state;
 }
 
-int encode_action(ActionBlock block, int entity, int target) {
+int encode_action(ActionBlock block, int entity, int target, int cost) {
   const ActionBlockSpan& b = kActionBlocks[static_cast<std::size_t>(block)];
-  assert(entity >= 0 && entity * b.stride < b.size &&
+  assert(entity >= 0 && entity * b.stride() < b.size &&
          "entity out of range for its action block");
-  assert(target >= 0 && target < b.stride &&
+  assert(target >= 0 && target < b.targets &&
          "target out of range for its action block");
-  return b.first + entity * b.stride + target;
+  assert(cost >= 0 && cost < b.costs &&
+         "cost column out of range for its action block");
+  return b.first + (entity * b.costs + cost) * b.targets + target;
 }
 
 DecodedAction decode_action(int action) {
@@ -1192,8 +1200,10 @@ DecodedAction decode_action(int action) {
     const ActionBlockSpan& b = kActionBlocks[i];
     if (action < b.first + b.size) {
       const int offset = action - b.first;
-      return DecodedAction{static_cast<ActionBlock>(i), offset / b.stride,
-                           offset % b.stride};
+      const int target = offset % b.targets;
+      const int cost = (offset / b.targets) % b.costs;
+      const int entity = offset / b.stride();
+      return DecodedAction{static_cast<ActionBlock>(i), entity, target, cost};
     }
   }
   // Unreachable while action_blocks_tile_the_space() holds, which is a
@@ -1218,10 +1228,20 @@ bool card_action_is_legal(const CombatState& state, const DecodedAction& d) {
   // Blood) come from the query layer, so the mask can't disagree with what
   // resolution actually does (Stage 4b, §4.5).
   if (!is_playable(state, card)) return false;
-  if (find_first_in_hand(state.current_hand, card) < 0) return false;
+  // The action names a cost column (v2-spec.md §6.5): some copy of the card in
+  // that column must be in hand. Every copy in one column costs the same — the
+  // column IS the effective cost — so whichever is found answers affordability.
+  const Card* copy = nullptr;
+  for (const Card& c : state.current_hand) {
+    if (c.card_id == card && cost_column(state, c) == d.cost) {
+      copy = &c;
+      break;
+    }
+  }
+  if (copy == nullptr) return false;
   // X-cost cards (ROB-80) are always affordable (X = current energy, may be 0);
   // fixed-cost cards need enough energy.
-  const int cost = effective_cost(state, card);
+  const int cost = instance_effective_cost(state, *copy);
   if (cost != kXCost && state.character.energy < cost) return false;
 
   // Target legality fork.
@@ -1245,20 +1265,22 @@ std::vector<bool> valid_actions(const CombatState& state) {
   }
 
   // Choice mode: the combat block is entirely illegal, and the legal actions
-  // are the OFFERED CARDS, indexed by CardId (§6.2).
+  // are the OFFERED CARDS, indexed by (CardId, cost column) (§6.2, §6.5).
   //
   // v1.0.0 indexed these by rank — "the 3rd option" — so the same index meant
   // different cards in different states. Entity-indexing makes index k mean
-  // card k forever, which is the property §6 requires of the whole space.
+  // "this card at this cost" forever, which is the property §6 requires of the
+  // whole space.
   //
   // Still walks the option list rather than the action space: the list is <= 10
-  // against 2,135 actions, and walking the space was a measured 39% of step
+  // against 8,615 actions, and walking the space was a measured 39% of step
   // cost at Stage 4a.
   if (state.pending_choice.active()) {
     const PendingChoice& pc = state.pending_choice;
     for (int i = 0; i < pc.num_options; ++i) {
       mask[encode_action(ActionBlock::CardSelect,
-                         static_cast<int>(pc.options[i].card_id))] = true;
+                         static_cast<int>(pc.options[i].card_id), 0,
+                         cost_column(state, pc.options[i]))] = true;
     }
     if (pc.is_optional) mask[encode_action(ActionBlock::Decline)] = true;
     return mask;
@@ -1271,11 +1293,15 @@ std::vector<bool> valid_actions(const CombatState& state) {
   for (const Card& c : state.current_hand) {
     const int card_idx = static_cast<int>(c.card_id);
     if (card_idx < 0 || card_idx >= num_card_ids) continue;
+    // Each copy lights its OWN cost column, so a 0-cost and a 2-cost Bash are
+    // two separate plays (§6.5).
+    const int column = cost_column(state, c);
     for (int target = 0; target < kMaxEnemies; ++target) {
-      const int action = encode_action(ActionBlock::Combat, card_idx, target);
-      if (mask[action]) continue;  // duplicate card in hand, already decided
+      const int action =
+          encode_action(ActionBlock::Combat, card_idx, target, column);
+      if (mask[action]) continue;  // same (card, column) seen, already decided
       mask[action] = card_action_is_legal(
-          state, DecodedAction{ActionBlock::Combat, card_idx, target});
+          state, DecodedAction{ActionBlock::Combat, card_idx, target, column});
     }
   }
 
@@ -1377,12 +1403,16 @@ bool apply_action_inner(CombatState& state, int action) {
       case ActionBlock::Decline:
         return resolve_choice(state, kDeclineChoice);
       case ActionBlock::CardSelect: {
-        // Which offered option is this card? The mask only lit cards that ARE
-        // on offer, so a miss means the caller ignored the mask — refused, and
-        // resolve_choice never sees an index it cannot use.
+        // Which offered option is this (card, cost column)? Options are one per
+        // pair (build_choice), so at most one matches. The mask only lit pairs
+        // that ARE on offer, so a miss means the caller ignored the mask —
+        // refused, and resolve_choice never sees an index it cannot use.
         const PendingChoice& pc = state.pending_choice;
         for (int i = 0; i < pc.num_options; ++i) {
-          if (pc.options[i].card_id == d.card()) return resolve_choice(state, i);
+          if (pc.options[i].card_id == d.card() &&
+              cost_column(state, pc.options[i]) == d.cost) {
+            return resolve_choice(state, i);
+          }
         }
         return false;
       }
@@ -1407,7 +1437,11 @@ bool apply_action_inner(CombatState& state, int action) {
       // it here doubled the per-step mask cost). Shares card_action_is_legal
       // with valid_actions, so the two can't disagree.
       if (!card_action_is_legal(state, d)) return false;
-      handle_play_card(state, d.card(), d.target);
+      {
+        PlayContext ctx;
+        ctx.cost_column = d.cost;  // the copy this play names (§6.5)
+        handle_play_card(state, d.card(), d.target, ctx);
+      }
       return true;
     case ActionBlock::EndTurn:
       handle_end_turn(state);

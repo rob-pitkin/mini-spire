@@ -2572,28 +2572,38 @@ PendingChoice build_choice(const CombatState& state, ChoiceKind kind,
   pc.source_card = source_card;
   if (kind == ChoiceKind::None) return pc;
 
-  // Dedupe INTERCHANGEABLE copies. Two cards collapse into one option only if
-  // they play identically — same id AND same instance state — so a Rampage at
-  // +10 and one at +0 are two distinct, separately selectable options.
+  // One option per (CardId, cost column) — one per CardSelect action (v2-spec.md
+  // §6.5). Copies sharing a pair differ only in what the action cannot name (a
+  // discount's layer, a bonus above the rung cap), so they collapse, and the
+  // representative is the copy the action should take: taken_before, the least
+  // durable discount first. It is a real copy from the pile, so ApplyChoice's
+  // take_from_pile finds and removes exactly it.
   for (const Card& c : source_pile(state, kind)) {
     if (!card_qualifies(kind, c.card_id)) continue;
-    bool already = false;
+    const int column = cost_column(state, c);
+    int existing = -1;
     for (int i = 0; i < pc.num_options; ++i) {
-      if (pc.options[i].same_as(c)) {
-        already = true;
+      if (pc.options[i].card_id == c.card_id &&
+          cost_column(state, pc.options[i]) == column) {
+        existing = i;
         break;
       }
     }
-    if (already) continue;
+    if (existing >= 0) {
+      if (taken_before(c, pc.options[existing])) pc.options[existing] = c;
+      continue;
+    }
     assert(pc.num_options < kNumOptionSlots);
     pc.options[pc.num_options++] = c;
   }
-  // Canonical ordering: ascending CardId, then ascending instance state
-  // (Card::sorts_before). It must be deterministic on every platform because a
-  // CardSelect action takes the FIRST option with its CardId, so the order
-  // decides which of two differing copies that action means.
+  // Canonical ordering: ascending CardId, then ascending cost column. The pairs
+  // are unique, so the order is total and the same on every platform. Slot i of
+  // the choice observation is option i.
   std::sort(pc.options.begin(), pc.options.begin() + pc.num_options,
-            [](const Card& a, const Card& b) { return a.sorts_before(b); });
+            [&state](const Card& a, const Card& b) {
+              if (a.card_id != b.card_id) return a.card_id < b.card_id;
+              return cost_column(state, a) < cost_column(state, b);
+            });
   return pc;
 }
 

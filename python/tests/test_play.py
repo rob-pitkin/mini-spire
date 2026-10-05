@@ -152,17 +152,21 @@ import pytest
 
 from minispire import _core
 from minispire.env import MinispireEnv, make_single_enemy_env
-from minispire.render.app import resolve_card_action
+from minispire.render.app import resolve_play_action
 from minispire.render import screen
 
 
-def test_card_playable_matches_mask_for_starter_hand():
+def test_every_starter_copy_is_playable_on_turn_one():
+    # Every starter card costs at most 2 and turn 1 has 3 energy, so EVERY
+    # copy in the opening hand is playable — an invariant of the deal, not a
+    # fact about which cards seed 0 happens to draw.
     env = MinispireEnv()
     env.reset(seed=0)
     mask = env.action_masks()
-    # Strike/Bash/Defend are all in the opening hand at full energy -> playable.
-    for cid in (_core.CardId.Strike, _core.CardId.Defend, _core.CardId.Bash):
-        assert screen.card_playable(mask, cid) is True
+    hand = env.state_piles().hand
+    assert hand
+    for position in range(len(hand)):
+        assert screen.copy_playable(env, mask, position) is True, position
 
 
 def test_living_enemy_slots_single_enemy():
@@ -171,30 +175,40 @@ def test_living_enemy_slots_single_enemy():
     assert screen.living_enemy_slots(obs) == [0]
 
 
-def test_resolve_targeted_card_auto_targets_single_enemy():
-    """A targeted card with one living enemy encodes card*N + 0, no prompt."""
+def test_resolve_play_action_auto_targets_the_single_enemy():
+    """With one living enemy no card prompts for a target: every copy resolves
+    to its own (card, cost) play at slot 0, and the engine agrees it is legal."""
     env, obs = make_single_enemy_env()
-    n = _core.CombatEnv.MAX_ENEMIES
-    action = resolve_card_action(_core.CardId.Strike, screen.living_enemy_slots(obs))
-    assert action == int(_core.CardId.Strike) * n + 0
-    # And the engine agrees it's legal.
-    assert env.action_masks()[action]
+    living = screen.living_enemy_slots(obs)
+    assert living == [0]
+    hand = env.state_piles().hand
+    for position in range(len(hand)):
+        action = resolve_play_action(env, position, living)
+        assert action is not None, "one living enemy: never a target prompt"
+        decoded = _core.decode_action(action)
+        assert decoded.card() == hand[position]
+        assert decoded.target == 0
+        assert env.action_masks()[action]
 
 
-def test_resolve_untargeted_card_uses_offset_zero():
-    env = MinispireEnv()
+def test_resolve_untargeted_card_uses_slot_zero():
+    # A deck of Defends, so every copy in hand is untargeted whatever is dealt.
+    env = MinispireEnv(deck=[_core.CardId.Defend] * 10)
     obs, _ = env.reset(seed=0)
-    n = _core.CombatEnv.MAX_ENEMIES
-    action = resolve_card_action(_core.CardId.Defend, screen.living_enemy_slots(obs))
-    assert action == int(_core.CardId.Defend) * n + 0
-    assert env.action_masks()[action]
+    living = screen.living_enemy_slots(obs)
+    for position in range(len(env.state_piles().hand)):
+        action = resolve_play_action(env, position, living)
+        assert action is not None
+        assert _core.decode_action(action).target == 0
+        assert env.action_masks()[action]
 
 
 def test_resolved_action_steps_without_error():
     """End-to-end: render_hand -> resolve -> step actually advances the env."""
     env, obs = make_single_enemy_env()
-    # Play Strike via the same path the TUI uses.
-    action = resolve_card_action(_core.CardId.Strike, screen.living_enemy_slots(obs))
+    # Play the first copy in hand via the same path the TUI uses. No starter
+    # card ends a Jaw Worm fight on its own.
+    action = resolve_play_action(env, 0, screen.living_enemy_slots(obs))
     obs2, _r, term, trunc, _info = env.step(action)
     assert obs2.shape == (MinispireEnv.OBS_SIZE,)
     assert not (term or trunc)  # one Strike doesn't end the fight
@@ -281,8 +295,10 @@ def test_action_layout_constants_are_consistent():
 
     ce = _core.CombatEnv
     B = _core.ActionBlock
-    assert ce.NUM_ACTIONS == 2135
-    assert ce.END_TURN_ACTION == ce.NUM_CARD_TYPES * ce.MAX_ENEMIES
+    assert ce.NUM_ACTIONS == 8615
+    assert ce.NUM_COST_COLUMNS == 5
+    assert ce.END_TURN_ACTION == (
+        ce.NUM_CARD_TYPES * ce.NUM_COST_COLUMNS * ce.MAX_ENEMIES)
     # End turn is NOT the last index — the whole reason this bug class existed.
     assert ce.END_TURN_ACTION != ce.NUM_ACTIONS - 1
     assert _core.decode_action(ce.END_TURN_ACTION).block == B.EndTurn
@@ -296,4 +312,4 @@ def test_every_action_round_trips_through_encode_and_decode():
 
     for a in range(_core.CombatEnv.NUM_ACTIONS):
         d = _core.decode_action(a)
-        assert _core.encode_action(d.block, d.entity, d.target) == a, a
+        assert _core.encode_action(d.block, d.entity, d.target, d.cost) == a, a

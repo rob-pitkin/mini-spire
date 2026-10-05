@@ -105,7 +105,9 @@ def test_obs_size_matches_its_component_blocks():
     env_cls = _core.CombatEnv
     # 4 piles + one hand plane per effective cost (relic-effects.md §6.28)
     piles = (4 + env_cls.NUM_COST_PLANES) * env_cls.NUM_CARD_TYPES
-    choice = 5 + env_cls.NUM_CARD_TYPES * 3
+    # Header, then per option slot: occupied, card id, damage, cost column
+    # (v2-spec.md §6.5).
+    choice = 5 + env_cls.NUM_CARD_TYPES * 4
     expected = (
         env_cls.PLAYER_OBS_SIZE
         + env_cls.MAX_ENEMIES * env_cls.ENEMY_OBS_STRIDE

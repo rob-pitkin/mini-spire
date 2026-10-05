@@ -212,7 +212,7 @@ TEST(CombatEnv, ActionMaskIsKNumActions) {
   // end-turn-as-size-minus-one bug happened.
   EXPECT_EQ(env.action_mask().size(),
             static_cast<std::size_t>(minispire::kTotalActions));
-  EXPECT_EQ(minispire::kTotalActions, 2135);
+  EXPECT_EQ(minispire::kTotalActions, 8615);
 }
 
 TEST(CombatEnv, EndTurnAlwaysLegalAfterReset) {
@@ -542,17 +542,18 @@ TEST(CombatEnv, StatePilesHandPlusDrawMatchesStarterDeck) {
 }
 
 TEST(CombatEnv, StatePilesUpdatesAfterPlayingCard) {
-  // End the turn so the discard reshuffle behavior is tested too: actually,
-  // simpler — find a Strike in hand, play it, verify discard now has 1 Strike.
-  CombatEnv env;
-  env.reset(0);
+  // Play a Strike, then the discard holds it. The hand is built, not dealt:
+  // this used to read seed 0's opening hand and GTEST_SKIP without a Strike,
+  // which is a test depending on a draw — and when §6.5 moved the Strike's
+  // action index, it silently skipped instead of failing.
+  CombatState s = start_v1_combat(0);
+  s.current_hand = {Card{CardId::Strike}, Card{CardId::Defend}};
+  s.discard_pile.clear();
+  s.character.energy = 3;
+  CombatEnv env(s);
 
-  // Find Strike's action index = static_cast<int>(CardId::Strike) = 0
-  // (per CardId enum order). Verify it's legal before stepping.
-  int strike_action = static_cast<int>(CardId::Strike);
-  if (!env.action_mask()[strike_action]) {
-    GTEST_SKIP() << "Seed 0 opening hand has no Strike";
-  }
+  const int strike_action = minispire::testing::card_action(CardId::Strike);
+  ASSERT_TRUE(env.action_mask()[strike_action]);
 
   std::size_t hand_before = env.state_piles().hand.size();
   env.step(strike_action);
@@ -596,6 +597,39 @@ TEST(CombatEnv, DrawCostsDoNotRevealDrawOrder) {
 
   EXPECT_EQ(CombatEnv(top_free).state_piles().draw_costs,
             CombatEnv(top_full).state_piles().draw_costs);
+}
+
+// play_action / choice_action name a specific copy: (CardId, cost column),
+// v2-spec.md §6.5. Two Bashes at different costs give two different actions,
+// and each one is the action the mask lights for that copy.
+TEST(CombatEnv, PlayAndChoiceActionsNameTheCopy) {
+  CombatState s = start_v1_combat(0);
+  Card free_bash{CardId::Bash};
+  set_combat_cost(free_bash, 0);
+  s.current_hand = {Card{CardId::Bash}, free_bash};
+  s.character.energy = 3;
+  CombatEnv env(s);
+
+  const int full = env.play_action(0, 0);
+  const int free = env.play_action(1, 0);
+  EXPECT_NE(full, free);
+  EXPECT_EQ(decode_action(full).cost, 2);
+  EXPECT_EQ(decode_action(free).cost, 0);
+  EXPECT_TRUE(env.action_mask()[full]);
+  EXPECT_TRUE(env.action_mask()[free]);
+  EXPECT_THROW(env.play_action(2, 0), std::out_of_range);
+  EXPECT_THROW(env.choice_action(0), std::out_of_range) << "no choice pending";
+
+  CombatState c = start_v1_combat(0);
+  c.exhaust_pile = {Card{CardId::Bash}, free_bash};
+  c.pending_choice = build_choice(c, ChoiceKind::ExhaustToHand, CardId::Exhume);
+  CombatEnv chooser(c);
+  ASSERT_EQ(chooser.choice_view().options.size(), 2u);
+  const int pick0 = chooser.choice_action(0);
+  const int pick1 = chooser.choice_action(1);
+  EXPECT_NE(pick0, pick1);
+  EXPECT_TRUE(chooser.action_mask()[pick0]);
+  EXPECT_TRUE(chooser.action_mask()[pick1]);
 }
 
 TEST(CombatEnv, ChoiceViewReportsEachOptionsOwnCost) {
@@ -643,7 +677,7 @@ CombatState make_one_strike_kill_state(int enemy_hp, int char_hp,
   return s;
 }
 
-constexpr int kStrikeAction = static_cast<int>(CardId::Strike);
+const int kStrikeAction = minispire::testing::card_action(CardId::Strike);
 
 }  // namespace
 

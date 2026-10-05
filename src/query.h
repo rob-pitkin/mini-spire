@@ -18,10 +18,14 @@
 
 namespace minispire {
 
-// Effective energy cost of a card right now: the cheapest copy in hand, since
-// the engine plays the cheapest. With no copy in hand, what a fresh copy would
-// cost (Corruption; Blood for Blood reduced by this combat's HP-loss events).
-// Returns kXCost unchanged for X-cost cards — "spend all" isn't a number.
+// Effective energy cost of a card TYPE right now: the cheapest copy in hand.
+// With no copy in hand, what a fresh copy would cost (Corruption; Blood for
+// Blood reduced by this combat's HP-loss events). Returns kXCost unchanged for
+// X-cost cards — "spend all" isn't a number.
+//
+// Not what a play costs: a play names its copy by cost column (v2-spec.md §6.5)
+// and pays THAT copy's instance_effective_cost. This answers a per-type
+// question, for display and for cards not in hand.
 int effective_cost(const CombatState& state, CardId card);
 
 // As above, for a specific card INSTANCE: X-cost, then Corruption, then the
@@ -29,6 +33,20 @@ int effective_cost(const CombatState& state, CardId card);
 // cost (relic-effects.md §6.27). Use this one whenever a specific copy is in
 // hand.
 int instance_effective_cost(const CombatState& state, const Card& card);
+
+// The copy's COST COLUMN: the cost index of the two card-indexed action blocks
+// (v2-spec.md §6.5). Its effective cost, 0..kMaxCardCost. X-cost and unplayable
+// cards are column 0: their cost never differs between copies, so the column
+// would say nothing, and a fixed one keeps a single action per card.
+int cost_column(const CombatState& state, const Card& card);
+
+// Of two copies sharing one (card, cost column) — they differ only in ways the
+// card face does not show — is `a` the one an action takes first? The least
+// durable discount goes first (v2-spec.md §6.5): a turn-layer discount (it
+// expires at end of turn anyway), then printed or combat-layer cost (it
+// survives being played), then free_once last (playing spends it). Ties fall to
+// Card::sorts_before, so the pick never depends on pile order.
+bool taken_before(const Card& a, const Card& b);
 
 // Corruption: a Skill costs 0 while it is up. Above every cost layer.
 bool corruption_frees_skill(const CombatState& state, CardId card);

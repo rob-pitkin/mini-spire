@@ -494,6 +494,7 @@ PYBIND11_MODULE(_core, m) {
       .def_readonly("block", &DecodedAction::block)
       .def_readonly("entity", &DecodedAction::entity)
       .def_readonly("target", &DecodedAction::target)
+      .def_readonly("cost", &DecodedAction::cost)
       .def("card", &DecodedAction::card,
            "The CardId, for the card-indexed blocks (Combat, CardSelect).");
 
@@ -503,18 +504,25 @@ PYBIND11_MODULE(_core, m) {
   // same layout table before crossing into C++.
   m.def(
       "encode_action",
-      [](ActionBlock block, int entity, int target) {
+      [](ActionBlock block, int entity, int target, int cost) {
         const ActionBlockSpan& b = kActionBlocks[static_cast<std::size_t>(block)];
-        if (entity < 0 || entity * b.stride >= b.size) {
+        if (entity < 0 || entity * b.stride() >= b.size) {
           throw py::value_error("entity out of range for its action block");
         }
-        if (target < 0 || target >= b.stride) {
+        if (target < 0 || target >= b.targets) {
           throw py::value_error("target out of range for its action block");
         }
-        return encode_action(block, entity, target);
+        if (cost < 0 || cost >= b.costs) {
+          throw py::value_error("cost column out of range for its action block");
+        }
+        return encode_action(block, entity, target, cost);
       },
       py::arg("block"), py::arg("entity") = 0, py::arg("target") = 0,
-      "The global action index for `entity` (and `target`) within `block`.");
+      py::arg("cost") = 0,
+      "The global action index for `entity` (and `target`, and for the two "
+      "card blocks the cost column) within `block`. Prefer "
+      "CombatEnv.play_action / choice_action for a specific copy: they derive "
+      "the cost column from the engine.");
   m.def(
       "decode_action",
       [](int action) {
@@ -653,9 +661,9 @@ PYBIND11_MODULE(_core, m) {
       // is the last index of the COMBAT block, not of the action space; never
       // derive end-turn as NUM_ACTIONS - 1.
       //
-      // FIRST_OPTION_SLOT is gone: choices are entity-indexed now (§6.2), so
-      // the i-th offered card is answered with CARD_SELECT_BLOCK + its CardId,
-      // not with a positional slot.
+      // FIRST_OPTION_SLOT is gone: choices are entity-indexed now (§6.2), by
+      // (CardId, cost column) (§6.5) — use choice_action(i), never an offset.
+      .def_readonly_static("NUM_COST_COLUMNS", &kNumCostColumns)
       .def_readonly_static("END_TURN_ACTION", &kEndTurnAction)
       .def_readonly_static("MAP_BLOCK", &kMapBlock)
       .def_readonly_static("CARD_SELECT_BLOCK", &kCardSelectBlock)
@@ -697,9 +705,16 @@ PYBIND11_MODULE(_core, m) {
            "Boolean mask of legal actions (length NUM_ACTIONS).")
       .def("choice_view", &CombatEnv::choice_view,
            "The pending mid-card choice, if any (Stage 4c). options[i] is "
-           "answered with encode_action(ActionBlock.CardSelect, options[i]) — "
-           "choices are entity-indexed. For the TUI; allocates, so not for "
+           "answered with choice_action(i). For the TUI; allocates, so not for "
            "the training loop.")
+      .def("play_action", &CombatEnv::play_action, py::arg("hand_index"),
+           py::arg("target"),
+           "The action that plays the copy at this hand position at this enemy "
+           "slot: (CardId, cost column, target), v2-spec.md §6.5. Not a "
+           "legality check — read the mask.")
+      .def("choice_action", &CombatEnv::choice_action, py::arg("option_index"),
+           "The action that picks option i of the pending choice: (CardId, "
+           "cost column), v2-spec.md §6.5.")
       .def("state_piles", &CombatEnv::state_piles,
            "Read pile contents (hand/draw/discard/exhaust) as CardId lists. "
            "Allocates — not for use in the training loop.")

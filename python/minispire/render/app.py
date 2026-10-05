@@ -48,23 +48,14 @@ EXIT_LOSS = 1
 EXIT_QUIT = 2
 
 
-def card_action(card_id, target_slot: int) -> int:
-    """Global action index for playing `card_id` at `target_slot`.
+def resolve_play_action(env, hand_index: int,
+                        living_slots: list[int]) -> int | None:
+    """The action for playing the copy at `hand_index`, or None if the player
+    must pick a target.
 
-    The combat block is a (card x target) cross-product (ROB-60), so an
-    untargeted card uses the canonical slot 0. Encoded by the engine, never by
-    offset arithmetic here — the layout is v2-spec.md §6's to change.
-    """
-    return _core.encode_action(_core.ActionBlock.Combat, int(card_id),
-                               target_slot)
-
-
-def resolve_card_action(card_id, living_slots: list[int]) -> int | None:
-    """The action for playing `card_id`, or None if the player must pick a target.
-
-    Pure, and separate from the app for the same reason keys.py is: it is a
-    decision, and a decision inside an event handler can only be tested by
-    driving a terminal. Three cases —
+    Separate from the app for the same reason keys.py is: it is a decision,
+    and a decision inside an event handler can only be tested by driving a
+    terminal. Three cases —
 
       * untargeted card -> canonical slot 0
       * one living enemy -> auto-target it, since there is nothing to choose
@@ -72,11 +63,15 @@ def resolve_card_action(card_id, living_slots: list[int]) -> int | None:
 
     Auto-targeting matters beyond convenience: prompting for a target when only
     one exists is a keypress the player cannot get wrong but still has to make.
+
+    The action names THIS copy — (card, cost, target), v2-spec.md §6.5 — and
+    the env builds it, so no layout arithmetic happens here.
     """
+    card_id = env.state_piles().hand[hand_index]
     if not _core.card_targets_enemy(card_id):
-        return card_action(card_id, 0)
+        return env.play_action(hand_index, 0)
     if len(living_slots) == 1:
-        return card_action(card_id, living_slots[0])
+        return env.play_action(hand_index, living_slots[0])
     return None
 
 
@@ -114,6 +109,8 @@ class MinispireApp(App):
         self.focus = 0
         # The two-phase selection. Set when a card needs a target and more than
         # one enemy is alive; cleared when the target is picked or cancelled.
+        # Holds the card's HAND POSITION, not its CardId: two copies at
+        # different costs are different plays (v2-spec.md §6.5).
         self.pending_card = None
         self._action_map: list = []
         self._targets: list[int] = []
@@ -244,9 +241,9 @@ class MinispireApp(App):
             if self.pending_card is not None:
                 if not (0 <= index < len(self._targets)):
                     return
-                card, self.pending_card = self.pending_card, None
+                position, self.pending_card = self.pending_card, None
                 self.mode = Mode.PLAY
-                self._step(card_action(card, self._targets[index]))
+                self._step(self.env.play_action(position, self._targets[index]))
             else:
                 # Entity-indexed (v2-spec.md §6.2): the env resolves option
                 # `index` to its card's action, so the TUI adds no offsets.
@@ -260,16 +257,16 @@ class MinispireApp(App):
         if not (0 <= index < len(self._action_map)):
             return
 
-        card_id = self._action_map[index]
+        position = self._action_map[index]
         living = screen.living_enemy_slots(self.obs)
-        action = resolve_card_action(card_id, living)
+        action = resolve_play_action(self.env, position, living)
         if action is not None:
             self._step(action)
             return
         # Two or more living enemies: enter the targeting phase. keys.py sees
         # this as an ordinary "pick one of N" — only the app knows it is a
         # target and that a card is waiting on it.
-        self.pending_card = card_id
+        self.pending_card = position
         self._targets = living
         self.mode = Mode.CHOOSE
         self.focus = 0

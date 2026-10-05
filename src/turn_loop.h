@@ -104,34 +104,34 @@ CombatState start_v1_combat(uint32_t seed);
 // INDEXED: index k means the same thing in every state, forever — never "the
 // k-th option offered".
 //
-// ┌──────────────────────┬───────┬──────────────────────────────────────────┐
-// │ block                │  size │ index means                              │
-// ├──────────────────────┼───────┼──────────────────────────────────────────┤
-// │ combat: card×target  │ 1,350 │ play card c at enemy slot t              │
-// │ end turn             │     1 │                                          │
-// │ map: choose node     │   105 │ move to grid position p                  │
-// │ card selection       │   270 │ pick card c — purpose from the phase     │
-// │ relic selection      │   140 │ pick relic r — shop only                 │
-// │ potion: use × target │   165 │ drink potion p at enemy slot t           │
-// │ potion: discard      │    33 │                                          │
-// │ event option         │    58 │ globally enumerated option id            │
-// │ rest option          │     5 │ rest, smith, lift, toke, dig             │
-// │ purpose selection    │     6 │ choose WHY a card list opens (§6.1)      │
-// │ take Max HP instead  │     1 │ Singing Bowl                             │
-// │ decline / skip       │     1 │                                          │
-// └──────────────────────┴───────┴──────────────────────────────────────────┘
-//                                  = 2,135
-//
-// The combat block is unchanged in POSITION (still index 0) but is now 270
-// cards wide rather than 189 — the colorless and curse blocks landed. Every
-// pre-existing card keeps its exact index, because those ids were appended.
+// ┌─────────────────────────┬───────┬───────────────────────────────────────┐
+// │ block                   │  size │ index means                           │
+// ├─────────────────────────┼───────┼───────────────────────────────────────┤
+// │ combat: card×cost×target│ 6,750 │ play a copy of c costing k, at slot t │
+// │ end turn                │     1 │                                       │
+// │ map: choose node        │   105 │ move to grid position p               │
+// │ card selection: card×cost│1,350 │ pick a copy of c costing k            │
+// │ relic selection         │   140 │ pick relic r — shop only              │
+// │ potion: use × target    │   165 │ drink potion p at enemy slot t        │
+// │ potion: discard         │    33 │                                       │
+// │ event option            │    58 │ globally enumerated option id         │
+// │ rest option             │     5 │ rest, smith, lift, toke, dig          │
+// │ purpose selection       │     6 │ choose WHY a card list opens (§6.1)   │
+// │ take Max HP instead     │     1 │ Singing Bowl                          │
+// │ decline / skip          │     1 │                                       │
+// └─────────────────────────┴───────┴───────────────────────────────────────┘
+//                                     = 8,615
 //
 // THE POSITIONAL OPTION-SLOT CHANNEL IS GONE (§6.2). v1.0.0 indexed a choice by
 // RANK — "the 3rd card offered" — which meant the same index meant different
-// things in different states. Card choices are now indexed by CardId, so the
-// index IS the identity. decision-points.md §5.3's canonical slot ordering was
-// a mitigation for rank-indexing and is moot: there are no positional slots
-// left to order.
+// things in different states. Card choices are indexed by identity instead.
+//
+// THE IDENTITY IS (CardId, cost), NOT CardId (§6.5, Rob 2026-10-04). Two copies
+// of one card can cost different amounts — Madness, Enlightenment, Snecko Eye —
+// and a human picks between them by the number on the card. With CardId alone
+// the action meant "some copy", and the second copy could never be chosen. The
+// cost index is the copy's COST COLUMN (cost_column in query.h): its effective
+// cost, 0..kMaxCardCost, with X-cost and unplayable cards fixed at column 0.
 //
 // Blocks past `end turn` are sized and reserved but not all wired — map, event
 // and purpose have no producer yet, and their indices are permanently masked
@@ -147,11 +147,17 @@ inline constexpr int kNumPurposes = 6;                       // §6.1
 // cannot drift.
 inline constexpr int kRestOptionBlockSize = 5;
 
+// Cost columns per card in the two card-indexed blocks: effective costs 0 to
+// kMaxCardCost (§6.5).
+inline constexpr int kNumCostColumns = kMaxCardCost + 1;
+
 inline constexpr int kCombatBlock = 0;
-inline constexpr int kEndTurnAction = kNumCardTypes * kMaxEnemies;
+inline constexpr int kEndTurnAction =
+    kNumCardTypes * kNumCostColumns * kMaxEnemies;
 inline constexpr int kMapBlock = kEndTurnAction + 1;
 inline constexpr int kCardSelectBlock = kMapBlock + kNumMapNodes;
-inline constexpr int kRelicSelectBlock = kCardSelectBlock + kNumCardTypes;
+inline constexpr int kRelicSelectBlock =
+    kCardSelectBlock + kNumCardTypes * kNumCostColumns;
 inline constexpr int kPotionUseBlock = kRelicSelectBlock + kNumRelics;
 inline constexpr int kPotionDiscardBlock = kPotionUseBlock + kNumPotions * kMaxEnemies;
 inline constexpr int kEventOptionBlock = kPotionDiscardBlock + kNumPotions;
@@ -161,8 +167,8 @@ inline constexpr int kTakeMaxHpAction = kPurposeBlock + kNumPurposes;
 inline constexpr int kDeclineAction = kTakeMaxHpAction + 1;
 inline constexpr int kTotalActions = kDeclineAction + 1;
 
-static_assert(kTotalActions == 2135,
-              "the v2 action space is 2,135 actions (v2-spec.md §6). If this "
+static_assert(kTotalActions == 8615,
+              "the v2 action space is 8,615 actions (v2-spec.md §6). If this "
               "fires, a block size changed — update the spec table too, do not "
               "just move the number.");
 
@@ -184,10 +190,17 @@ enum class ActionBlock : uint8_t {
 };
 inline constexpr int kNumActionBlocks = 12;
 
+// A block is entities × costs × targets, laid out entity-major, then cost, then
+// target: index = first + (entity * costs + cost) * targets + target.
 struct ActionBlockSpan {
-  int first;   // first action index of the block
-  int size;    // indices the block occupies
-  int stride;  // indices per entity: kMaxEnemies for the ×target blocks, else 1
+  int first;    // first action index of the block
+  int size;     // indices the block occupies
+  int costs;    // cost columns per entity: kNumCostColumns for the two
+                // card-indexed blocks (§6.5), else 1
+  int targets;  // targets per (entity, cost): kMaxEnemies for the ×target
+                // blocks, else 1
+
+  constexpr int stride() const { return costs * targets; }  // per entity
 };
 
 // The layout as data, indexed by ActionBlock. Built from the k*Block constants
@@ -195,18 +208,19 @@ struct ActionBlockSpan {
 // arithmetic. It names what already exists, so that encode_action and
 // decode_action have exactly one place to read the layout from.
 inline constexpr std::array<ActionBlockSpan, kNumActionBlocks> kActionBlocks = {{
-    {kCombatBlock, kNumCardTypes * kMaxEnemies, kMaxEnemies},
-    {kEndTurnAction, 1, 1},
-    {kMapBlock, kNumMapNodes, 1},
-    {kCardSelectBlock, kNumCardTypes, 1},
-    {kRelicSelectBlock, kNumRelics, 1},
-    {kPotionUseBlock, kNumPotions * kMaxEnemies, kMaxEnemies},
-    {kPotionDiscardBlock, kNumPotions, 1},
-    {kEventOptionBlock, kNumEventOptions, 1},
-    {kRestOptionBlock, kRestOptionBlockSize, 1},
-    {kPurposeBlock, kNumPurposes, 1},
-    {kTakeMaxHpAction, 1, 1},
-    {kDeclineAction, 1, 1},
+    {kCombatBlock, kNumCardTypes * kNumCostColumns * kMaxEnemies,
+     kNumCostColumns, kMaxEnemies},
+    {kEndTurnAction, 1, 1, 1},
+    {kMapBlock, kNumMapNodes, 1, 1},
+    {kCardSelectBlock, kNumCardTypes * kNumCostColumns, kNumCostColumns, 1},
+    {kRelicSelectBlock, kNumRelics, 1, 1},
+    {kPotionUseBlock, kNumPotions * kMaxEnemies, 1, kMaxEnemies},
+    {kPotionDiscardBlock, kNumPotions, 1, 1},
+    {kEventOptionBlock, kNumEventOptions, 1, 1},
+    {kRestOptionBlock, kRestOptionBlockSize, 1, 1},
+    {kPurposeBlock, kNumPurposes, 1, 1},
+    {kTakeMaxHpAction, 1, 1, 1},
+    {kDeclineAction, 1, 1, 1},
 }};
 
 // The blocks tile [0, kTotalActions) in order: each starts where the last
@@ -215,7 +229,10 @@ inline constexpr std::array<ActionBlockSpan, kNumActionBlocks> kActionBlocks = {
 constexpr bool action_blocks_tile_the_space() {
   int next = 0;
   for (const ActionBlockSpan& b : kActionBlocks) {
-    if (b.first != next || b.size <= 0 || b.size % b.stride != 0) return false;
+    if (b.first != next || b.size <= 0 || b.costs <= 0 || b.targets <= 0 ||
+        b.size % b.stride() != 0) {
+      return false;
+    }
     next = b.first + b.size;
   }
   return next == kTotalActions;
@@ -226,8 +243,9 @@ static_assert(action_blocks_tile_the_space(),
 
 struct DecodedAction {
   ActionBlock block;
-  int entity;  // which card / map node / relic / potion / option / purpose
-  int target;  // enemy slot for Combat and PotionUse; 0 for every other block
+  int entity;    // which card / map node / relic / potion / option / purpose
+  int target;    // enemy slot for Combat and PotionUse; 0 for every other block
+  int cost = 0;  // cost column for Combat and CardSelect (§6.5); 0 elsewhere
 
   // For the two card-indexed blocks, Combat and CardSelect.
   CardId card() const { return static_cast<CardId>(entity); }
@@ -241,14 +259,19 @@ struct DecodedAction {
 // once: the layout knowledge re-derived wherever someone needed an index.
 //
 // Both are pure — no state — so the mask and the apply path cannot disagree.
-// encode_action asserts `entity` and `target` are in range for their block.
-int encode_action(ActionBlock block, int entity = 0, int target = 0);
+// encode_action asserts `entity`, `target` and `cost` are in range for their
+// block. `cost` is a COST COLUMN (cost_column in query.h), not a raw cost: an
+// X-cost card's is 0. It comes last so every non-card block keeps its call
+// shape; a card play or selection must pass it.
+int encode_action(ActionBlock block, int entity = 0, int target = 0,
+                  int cost = 0);
 DecodedAction decode_action(int action);
 
-// Validity mask over the full action space. An action is legal iff the card is
-// in hand AND affordable, AND — if the card targets an enemy — that target slot
-// holds a living enemy; if it does not target an enemy (Defend), only the
-// canonical target slot 0 is legal. End-turn is always legal while in progress.
+// Validity mask over the full action space. A play (card, cost column, target)
+// is legal iff a copy of the card at that cost column is in hand AND affordable
+// at its own cost, AND — if the card targets an enemy — that target slot holds
+// a living enemy; if it does not target an enemy (Defend), only the canonical
+// target slot 0 is legal. End-turn is always legal while in progress.
 std::vector<bool> valid_actions(const CombatState& state);
 
 // How a card came to be played. A normal play pays energy and leaves the hand;
@@ -262,6 +285,10 @@ struct PlayContext {
   bool enters_pile = true;     // false for Double Tap's second copy
   Card instance{CardId::Strike};  // the copy being played, when not from hand
   int forced_x = -1;           // reuse the first play's X (Double Tap)
+  // Which copy leaves the hand: the cost column the play action named
+  // (v2-spec.md §6.5). Required when take_from_hand; ties between copies in
+  // one column go to taken_before.
+  int cost_column = -1;
 };
 
 // Resolve one card. Public because the PlayCard ACTION re-enters it: a

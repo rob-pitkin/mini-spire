@@ -136,14 +136,15 @@ CombatEnv::CombatEnv(float hp_reward_coeff, EncounterPool pool,
   // combat block still starts at 0 and end-turn still closes it; everything
   // after is the run-layer blocks, sized and reserved whether or not their
   // phases exist yet.
-  static_assert(kEndTurnAction == kNumCardTypes * kMaxEnemies,
+  static_assert(kEndTurnAction == kNumCardTypes * kNumCostColumns * kMaxEnemies,
                 "end-turn must be the last index of the combat block");
   static_assert(kNumActions == kTotalActions,
                 "the env's action count must be the published layout's total");
-  // Card selection covers every card type, so a pile choice can never overflow
-  // — a pile cannot hold more distinct card types than exist, and truncation
-  // would be a parity bug.
-  static_assert(kCardSelectBlock + kNumCardTypes <= kTotalActions,
+  // Card selection covers every (card type, cost column), so a pile choice can
+  // never overflow — a pile cannot hold more distinct (card, cost) pairs than
+  // exist, and truncation would be a parity bug.
+  static_assert(kCardSelectBlock + kNumCardTypes * kNumCostColumns <=
+                    kTotalActions,
                 "card selection must fit inside the action space");
   // And kNumCardTypes must match the actual card database.
   assert(static_cast<int>(CARD_DATABASE.size()) == kNumCardTypes &&
@@ -390,6 +391,8 @@ void CombatEnv::compute_obs() {
       // just in the mask. (v2's shop reuses this float for gold cost.)
       o[base + 2] =
           static_cast<float>(instance_card_damage(state_, pc.options[i]));
+      // The cost column this option's action names (§6.5).
+      o[base + 3] = static_cast<float>(cost_column(state_, pc.options[i]));
     }
   }
 }
@@ -469,6 +472,32 @@ std::vector<EnemyKind> CombatEnv::enemy_kinds() const {
 
 int CombatEnv::effective_cost(CardId card) const {
   return minispire::effective_cost(state_, card);
+}
+
+// Out-of-range indices throw rather than assert: these are called from Python,
+// where pybind11 turns std::out_of_range into an IndexError, and an assert
+// compiled out of a release build would hand encode_action a bad index.
+int CombatEnv::play_action(int hand_index, int target) const {
+  if (hand_index < 0 ||
+      hand_index >= static_cast<int>(state_.current_hand.size())) {
+    throw std::out_of_range("play_action: no card at that hand position");
+  }
+  if (target < 0 || target >= kMaxEnemies) {
+    throw std::out_of_range("play_action: target is not an enemy slot");
+  }
+  const Card& c = state_.current_hand[static_cast<std::size_t>(hand_index)];
+  return encode_action(ActionBlock::Combat, static_cast<int>(c.card_id), target,
+                       cost_column(state_, c));
+}
+
+int CombatEnv::choice_action(int option_index) const {
+  const PendingChoice& pc = state_.pending_choice;
+  if (!pc.active() || option_index < 0 || option_index >= pc.num_options) {
+    throw std::out_of_range("choice_action: no such option");
+  }
+  const Card& c = pc.options[option_index];
+  return encode_action(ActionBlock::CardSelect, static_cast<int>(c.card_id), 0,
+                       cost_column(state_, c));
 }
 
 }  // namespace minispire

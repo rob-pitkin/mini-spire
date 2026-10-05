@@ -1,5 +1,6 @@
 #include "query.h"
 
+#include <cassert>
 #include <cstring>
 
 #include "action.h"     // get_status
@@ -77,14 +78,41 @@ int instance_effective_cost(const CombatState& state, const Card& card) {
   return turn_layer_cost(card);
 }
 
+int cost_column(const CombatState& state, const Card& card) {
+  const CardData& data = CARD_DATABASE.at(card.card_id);
+  if (data.cost == kXCost || data.unplayable) return 0;
+  const int cost = instance_effective_cost(state, card);
+  assert(cost >= 0 && cost <= kMaxCardCost &&
+         "an effective cost outside the action space's cost columns");
+  return cost;
+}
+
+namespace {
+
+// How long a copy's discount lasts, as the order to spend it in: 0 expires at
+// end of turn, 1 survives being played, 2 is spent by playing.
+int discount_durability(const Card& c) {
+  if (c.free_once) return 2;
+  if (c.turn_cost != kNoCostOverride) return 0;
+  return 1;
+}
+
+}  // namespace
+
+bool taken_before(const Card& a, const Card& b) {
+  const int da = discount_durability(a);
+  const int db = discount_durability(b);
+  if (da != db) return da < db;
+  return a.sorts_before(b);
+}
+
 int effective_cost(const CombatState& state, CardId card) {
   const CardData& data = CARD_DATABASE.at(card);
   if (data.cost == kXCost) return kXCost;  // "spend all" — not a number
 
-  // The CHEAPEST copy in hand decides what "play this card" costs, because the
-  // action names a CardId rather than a copy and the engine plays the cheapest
-  // (colorless-effects.md D2, option A). With no copy in hand — the TUI asking
-  // about a card in a pile — this is the type's cost.
+  // The CHEAPEST copy in hand. A per-type answer: a play pays its own copy's
+  // cost (v2-spec.md §6.5). With no copy in hand — the TUI asking about a card
+  // in a pile — this is the type's cost.
   int best = -1;
   for (const Card& c : state.current_hand) {
     if (c.card_id != card) continue;

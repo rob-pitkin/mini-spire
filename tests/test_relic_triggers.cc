@@ -14,6 +14,7 @@
 #include "enemy.h"  // make_jaw_worm, for the deterministic multi-enemy fixture
 #include "query.h"
 #include "run_state.h"
+#include "test_helpers.h"
 #include "turn_loop.h"
 
 namespace minispire {
@@ -36,13 +37,7 @@ CombatState bare_fight(uint32_t seed = 1) { return fight_with({}, seed); }
 
 // The same, as an ELITE fight. Several relics are conditional on the fight's
 // kind, which CombatState now carries as is_elite.
-// The combat action index for playing `id` at `target`. Derived the same way
-// the action space defines it, never as an offset from kEndTurnAction — the
-// option-slot channel sits after the combat block, so the last index is
-// decline, not end-turn.
-int card_action(CardId id, int target = 0) {
-  return static_cast<int>(id) * kMaxEnemies + target;
-}
+using testing::card_action;
 
 // Deal `amount` fixed damage to the player through the real executor path, so
 // block, Intangible, Plated Armor and Buffer all see it as they would in play.
@@ -937,10 +932,12 @@ TEST(RelicTriggers, ToolboxDoesNotSwallowThePostDrawRelicHooks) {
 TEST(RelicTriggers, ToolboxsOpeningChoiceIsAnsweredThroughTheActionSpace) {
   CombatState s = fight_with({RelicId::Toolbox});
   ASSERT_TRUE(s.pending_choice.active());
-  const CardId offered = s.pending_choice.options[0].card_id;
+  const Card offered = s.pending_choice.options[0];
 
   ASSERT_TRUE(apply_action(
-      s, encode_action(ActionBlock::CardSelect, static_cast<int>(offered))));
+      s, encode_action(ActionBlock::CardSelect,
+                       static_cast<int>(offered.card_id), 0,
+                       cost_column(s, offered))));
   EXPECT_FALSE(s.pending_choice.active());
   EXPECT_EQ(static_cast<int>(s.current_hand.size()), STARTING_HAND_SIZE + 1);
 }
@@ -950,9 +947,12 @@ TEST(RelicTriggers, ToolboxsOpeningChoiceIsAnsweredThroughTheActionSpace) {
 TEST(RelicTriggers, ToolboxsOpeningChoiceRefusesACardItDidNotOffer) {
   CombatState s = fight_with({RelicId::Toolbox});
   ASSERT_TRUE(s.pending_choice.active());
-  EXPECT_FALSE(apply_action(
-      s, encode_action(ActionBlock::CardSelect,
-                       static_cast<int>(CardId::Strike))));
+  for (int column = 0; column < kNumCostColumns; ++column) {
+    EXPECT_FALSE(apply_action(
+        s, encode_action(ActionBlock::CardSelect,
+                         static_cast<int>(CardId::Strike), 0, column)))
+        << "a Strike at cost " << column << " was accepted";
+  }
   EXPECT_TRUE(s.pending_choice.active()) << "the refused action still resolved";
 }
 

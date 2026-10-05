@@ -37,19 +37,49 @@ using namespace minispire;
 
 namespace {
 
+// One copy's cost, re-derived from its fields rather than asked of the query
+// layer, which is the whole point of this oracle: X-cost stays X; Corruption
+// sits above every layer; then free_once, the turn cost, the combat cost, the
+// printed cost (relic-effects.md §6.27).
+int oracle_copy_cost(const CombatState& state, const Card& c) {
+  const CardData& data = CARD_DATABASE.at(c.card_id);
+  if (data.cost == kXCost) return kXCost;
+  auto cp = state.character.powers.find(Power::Corruption);
+  if (data.type == CardType::Skill && cp != state.character.powers.end() &&
+      cp->second > 0) {
+    return 0;
+  }
+  return c.free_once                       ? 0
+         : c.turn_cost != kNoCostOverride   ? c.turn_cost
+         : c.combat_cost != kNoCostOverride ? c.combat_cost
+                                            : data.cost;
+}
+
+// The action's cost column for that copy (v2-spec.md §6.5): its cost, with
+// X-cost and unplayable cards fixed at column 0. Restated from the spec, not
+// shared with cost_column.
+int oracle_column(const CombatState& state, const Card& c) {
+  const CardData& data = CARD_DATABASE.at(c.card_id);
+  if (data.cost == kXCost || data.unplayable) return 0;
+  return oracle_copy_cost(state, c);
+}
+
 // The reference implementation. Deliberately independent — see the header note.
 std::vector<bool> reference_valid_actions(const CombatState& state) {
   const int num_card_ids = static_cast<int>(CARD_DATABASE.size());
   std::vector<bool> mask(kTotalActions, false);
   if (state.outcome != Outcome::InProgress) return mask;
 
-  // During a pending choice ONLY the offered cards are legal — at their CardId
-  // in the card-selection block (§6.2), not at their rank — and the whole
-  // combat block is illegal.
+  // During a pending choice ONLY the offered cards are legal — at their
+  // (CardId, cost column) in the card-selection block (§6.2, §6.5), not at
+  // their rank — and the whole combat block is illegal. Raw arithmetic, like
+  // the combat block below.
   if (state.pending_choice.active()) {
     for (int i = 0; i < state.pending_choice.num_options; ++i) {
-      const int card = static_cast<int>(state.pending_choice.options[i].card_id);
-      mask[kCardSelectBlock + card] = true;
+      const Card& option = state.pending_choice.options[i];
+      const int card = static_cast<int>(option.card_id);
+      mask[kCardSelectBlock + card * kNumCostColumns +
+           oracle_column(state, option)] = true;
     }
     if (state.pending_choice.is_optional) mask[kDeclineAction] = true;
     return mask;
@@ -64,51 +94,30 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
   // not call decode_action — which makes it the one INTENTIONAL cross-check of
   // the encoder's combat block, rather than a second copy of it. Everywhere else
   // in the codebase, offset arithmetic goes through encode/decode_action.
+  // Layout (v2-spec.md §6.5): card-major, then cost column, then target.
   for (int action = 0; action < kEndTurnAction; ++action) {
-    const int card_idx = action / kMaxEnemies;
+    const int card_idx = action / (kNumCostColumns * kMaxEnemies);
+    const int column = (action / kMaxEnemies) % kNumCostColumns;
     const int target = action % kMaxEnemies;
     if (card_idx < 0 || card_idx >= num_card_ids) continue;
     const CardId card = static_cast<CardId>(card_idx);
     const CardData& data = CARD_DATABASE.at(card);
     if (data.unplayable) continue;
 
-    bool in_hand = false;
+    // A copy of this card AT THIS COLUMN must be in hand; its own cost decides
+    // affordability. Every copy in one column costs the same, so the first
+    // found answers.
+    const Card* copy = nullptr;
     for (const Card& c : state.current_hand) {
-      if (c.card_id == card) {
-        in_hand = true;
+      if (c.card_id == card && oracle_column(state, c) == column) {
+        copy = &c;
         break;
       }
     }
-
-    // Cost modifiers, recomputed here rather than asked of effective_cost.
-    int cost = data.cost;
-    if (cost != kXCost) {
-      bool corrupted = false;
-      auto cp = state.character.powers.find(Power::Corruption);
-      if (cp != state.character.powers.end() && cp->second > 0) corrupted = true;
-      if (data.type == CardType::Skill && corrupted) {
-        cost = 0;  // Corruption sits above every layer
-      } else {
-        // Each copy's three layers, in precedence order — free_once, then the
-        // turn cost, then the combat cost, then printed (relic-effects.md
-        // §6.27) — and the CHEAPEST copy is the one the engine plays
-        // (colorless-effects.md D2). Re-derived from the fields rather than
-        // asked of the query layer, which is the whole point of this oracle.
-        int best = -1;
-        for (const Card& c : state.current_hand) {
-          if (c.card_id != card) continue;
-          const int copy_cost =
-              c.free_once                     ? 0
-              : c.turn_cost != kNoCostOverride ? c.turn_cost
-              : c.combat_cost != kNoCostOverride ? c.combat_cost
-                                                 : data.cost;
-          if (best < 0 || copy_cost < best) best = copy_cost;
-        }
-        if (best >= 0) cost = best;
-      }
-    }
+    if (copy == nullptr) continue;
+    const int cost = oracle_copy_cost(state, *copy);
     const bool affordable = cost == kXCost || state.character.energy >= cost;
-    if (!in_hand || !affordable) continue;
+    if (!affordable) continue;
     if (entangled && data.type == CardType::Attack) continue;
 
     // Clash: every card in hand must be an Attack.
