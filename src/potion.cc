@@ -11,46 +11,52 @@ struct PotionInfo {
   // Drunk at a single enemy. The rest either affect the player or hit
   // everything, and asking them for a target would be a dead action index.
   bool targets_enemy;
+  // StS's getPotency(ascension), before Sacred Bark doubles it. 0 where the
+  // potion reads no potency (Blessing of the Forge, Elixir, Gambler's Brew,
+  // Smoke Bomb) and for Entropic Brew, whose loop reads the slot count.
+  int potency;
 };
 
 // Indexed by PotionId; order must match the enum, pinned by static_assert.
+// Potencies from each decompiled potion's getPotency, cross-checked against
+// wiki.gg's Potions_List (potion-effects.md §0).
 constexpr std::array<PotionInfo, kNumPotions> kPotionInfo = {{
     // Common (17)
-    {PotionRarity::Common, "Blood Potion", false},
-    {PotionRarity::Common, "Block Potion", false},
-    {PotionRarity::Common, "Dexterity Potion", false},
-    {PotionRarity::Common, "Energy Potion", false},
-    {PotionRarity::Common, "Explosive Potion", false},
-    {PotionRarity::Common, "Fire Potion", true},
-    {PotionRarity::Common, "Strength Potion", false},
-    {PotionRarity::Common, "Swift Potion", false},
-    {PotionRarity::Common, "Weak Potion", true},
-    {PotionRarity::Common, "Fear Potion", true},
-    {PotionRarity::Common, "Attack Potion", false},
-    {PotionRarity::Common, "Skill Potion", false},
-    {PotionRarity::Common, "Power Potion", false},
-    {PotionRarity::Common, "Colorless Potion", false},
-    {PotionRarity::Common, "Flex Potion", false},
-    {PotionRarity::Common, "Speed Potion", false},
-    {PotionRarity::Common, "Blessing of the Forge", false},
+    {PotionRarity::Common, "Blood Potion", false, 20},  // % of max HP
+    {PotionRarity::Common, "Block Potion", false, 12},
+    {PotionRarity::Common, "Dexterity Potion", false, 2},
+    {PotionRarity::Common, "Energy Potion", false, 2},
+    {PotionRarity::Common, "Explosive Potion", false, 10},
+    {PotionRarity::Common, "Fire Potion", true, 20},
+    {PotionRarity::Common, "Strength Potion", false, 2},
+    {PotionRarity::Common, "Swift Potion", false, 3},
+    {PotionRarity::Common, "Weak Potion", true, 3},
+    {PotionRarity::Common, "Fear Potion", true, 3},
+    {PotionRarity::Common, "Attack Potion", false, 1},  // copies
+    {PotionRarity::Common, "Skill Potion", false, 1},
+    {PotionRarity::Common, "Power Potion", false, 1},
+    {PotionRarity::Common, "Colorless Potion", false, 1},
+    {PotionRarity::Common, "Flex Potion", false, 5},
+    {PotionRarity::Common, "Speed Potion", false, 5},
+    {PotionRarity::Common, "Blessing of the Forge", false, 0},
     // Uncommon (9)
-    {PotionRarity::Uncommon, "Elixir", false},
-    {PotionRarity::Uncommon, "Regen Potion", false},
-    {PotionRarity::Uncommon, "Ancient Potion", false},
-    {PotionRarity::Uncommon, "Liquid Bronze", false},
-    {PotionRarity::Uncommon, "Gambler's Brew", false},
-    {PotionRarity::Uncommon, "Essence of Steel", false},
-    {PotionRarity::Uncommon, "Duplication Potion", false},
-    {PotionRarity::Uncommon, "Distilled Chaos", false},
-    {PotionRarity::Uncommon, "Liquid Memories", false},
+    {PotionRarity::Uncommon, "Elixir", false, 0},
+    {PotionRarity::Uncommon, "Regen Potion", false, 5},
+    {PotionRarity::Uncommon, "Ancient Potion", false, 1},
+    {PotionRarity::Uncommon, "Liquid Bronze", false, 3},
+    {PotionRarity::Uncommon, "Gambler's Brew", false, 0},
+    {PotionRarity::Uncommon, "Essence of Steel", false, 4},
+    {PotionRarity::Uncommon, "Duplication Potion", false, 1},
+    {PotionRarity::Uncommon, "Distilled Chaos", false, 3},
+    {PotionRarity::Uncommon, "Liquid Memories", false, 1},
     // Rare (7)
-    {PotionRarity::Rare, "Heart of Iron", false},
-    {PotionRarity::Rare, "Cultist Potion", false},
-    {PotionRarity::Rare, "Fruit Juice", false},
-    {PotionRarity::Rare, "Snecko Oil", false},
-    {PotionRarity::Rare, "Fairy in a Bottle", false},
-    {PotionRarity::Rare, "Smoke Bomb", false},
-    {PotionRarity::Rare, "Entropic Brew", false},
+    {PotionRarity::Rare, "Heart of Iron", false, 6},
+    {PotionRarity::Rare, "Cultist Potion", false, 1},
+    {PotionRarity::Rare, "Fruit Juice", false, 5},
+    {PotionRarity::Rare, "Snecko Oil", false, 5},
+    {PotionRarity::Rare, "Fairy in a Bottle", false, 30},  // % of max HP
+    {PotionRarity::Rare, "Smoke Bomb", false, 0},
+    {PotionRarity::Rare, "Entropic Brew", false, 0},
 }};
 
 static_assert(kPotionInfo.size() == kNumPotions,
@@ -78,6 +84,55 @@ const char* potion_name(PotionId id) {
 
 bool potion_targets_enemy(PotionId id) {
   return kPotionInfo[static_cast<int>(id)].targets_enemy;
+}
+
+int potion_base_potency(PotionId id) {
+  return kPotionInfo[static_cast<int>(id)].potency;
+}
+
+bool potion_effect_implemented(PotionId id) {
+  switch (id) {
+    // Step 1 (potion-effects.md §8): the potions built from existing
+    // mechanisms, plus Speed (Dexterity Down), Regen and Cultist.
+    case PotionId::BloodPotion:
+    case PotionId::BlockPotion:
+    case PotionId::DexterityPotion:
+    case PotionId::EnergyPotion:
+    case PotionId::ExplosivePotion:
+    case PotionId::FirePotion:
+    case PotionId::StrengthPotion:
+    case PotionId::SwiftPotion:
+    case PotionId::WeakPotion:
+    case PotionId::FearPotion:
+    case PotionId::FlexPotion:
+    case PotionId::SpeedPotion:
+    case PotionId::BlessingOfTheForge:
+    case PotionId::RegenPotion:
+    case PotionId::AncientPotion:
+    case PotionId::LiquidBronze:
+    case PotionId::EssenceOfSteel:
+    case PotionId::HeartOfIron:
+    case PotionId::CultistPotion:
+    case PotionId::FruitJuice:
+      return true;
+    // Later steps. Fairy in a Bottle is never drinkable at all (§5.4), so it
+    // stays false even once its death intercept lands.
+    case PotionId::AttackPotion:
+    case PotionId::SkillPotion:
+    case PotionId::PowerPotion:
+    case PotionId::ColorlessPotion:
+    case PotionId::ElixirPotion:
+    case PotionId::GamblersBrew:
+    case PotionId::LiquidMemories:
+    case PotionId::DuplicationPotion:
+    case PotionId::DistilledChaos:
+    case PotionId::SneckoOil:
+    case PotionId::FairyPotion:
+    case PotionId::SmokeBomb:
+    case PotionId::EntropicBrew:
+      return false;
+  }
+  return false;
 }
 
 const std::vector<PotionId>& potion_pool(PotionRarity rarity) {

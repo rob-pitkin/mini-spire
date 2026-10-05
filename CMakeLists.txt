@@ -71,6 +71,7 @@ if(MINISPIRE_BUILD_TESTS AND NOT SKBUILD)
     tests/test_path_choice.cc
     tests/test_rest_site.cc
     tests/test_relic_potion.cc
+    tests/test_potions.cc
     tests/test_relic_state.cc
     tests/test_relic_triggers.cc
     tests/test_shop.cc

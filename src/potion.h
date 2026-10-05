@@ -48,6 +48,17 @@ const char* potion_name(PotionId id);
 // Potions that need a target when drunk — the ones that hit one enemy.
 bool potion_targets_enemy(PotionId id);
 
+// StS's getPotency before Sacred Bark: the number the potion's effect uses
+// (Block Potion 12, Swift Potion 3, Blood Potion 20 percent). 0 for potions
+// that read no potency. Sacred Bark's doubling needs the relic list, so it is
+// applied by potion_potency in query.h.
+int potion_base_potency(PotionId id);
+
+// Whether drinking this potion has an effect in the engine yet. Potions land
+// in steps (docs/design/potion-effects.md §8); one not yet built stays masked
+// off rather than doing nothing when drunk. Discarding works for every potion.
+bool potion_effect_implemented(PotionId id);
+
 const std::vector<PotionId>& potion_pool(PotionRarity rarity);
 
 }  // namespace minispire

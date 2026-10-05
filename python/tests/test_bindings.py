@@ -108,11 +108,17 @@ def test_obs_size_matches_its_component_blocks():
     # Header, then per option slot: occupied, card id, damage, cost column
     # (v2-spec.md §6.5).
     choice = 5 + env_cls.NUM_CARD_TYPES * 4
+    # A count per potion, then the belt's slot capacity
+    # (docs/design/potion-effects.md §3.2).
+    potions = 33 + 1
     expected = (
         env_cls.PLAYER_OBS_SIZE
         + env_cls.MAX_ENEMIES * env_cls.ENEMY_OBS_STRIDE
         + piles
         + 1  # turn number
         + choice
+        + potions
     )
     assert expected == env_cls.OBS_SIZE
+    assert env_cls.POTION_OBS_SIZE == potions
+    assert env_cls.POTION_OBS_INDEX == env_cls.OBS_SIZE - potions

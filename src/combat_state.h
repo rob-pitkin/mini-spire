@@ -161,6 +161,10 @@ struct CombatState {
   // carries rather than something to infer.
   bool is_elite = false;
   std::vector<PotionId> potions;
+  // How many potions the belt holds: 3, or 5 with Potion Belt. A human sees the
+  // empty slots, and Entropic Brew fills them, so the fight carries the number
+  // rather than asking the run (potion-effects.md §5.6).
+  int potion_slots = kBasePotionSlots;
 
   // Gold earned during THIS fight (Hand of Greed's "if Fatal, gain 20 Gold").
   // Gold itself belongs to RunState; combat only records what it earned, and

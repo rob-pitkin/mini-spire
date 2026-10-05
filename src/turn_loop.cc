@@ -18,12 +18,13 @@ namespace minispire {
 namespace {
 
 // Debuffs decrement by 1 at end of the bearer's turn; remove at 0. Powers never
-// tick — decrement-ness is now the TYPE, so no per-effect denylist.
-// Intangible loses one stack at the end of the player's turn. The only power
-// that decrements — everything else is either permanent for the fight or
-// removed wholesale at a named hook (Flame Barrier, Rage).
-void tick_intangible(std::unordered_map<Power, int>& powers) {
-  auto it = powers.find(Power::Intangible);
+// tick — decrement-ness is now the TYPE, so no per-effect denylist — with two
+// named exceptions, each losing one stack at the end of the player's turn:
+// Intangible, and Regen (Rob, 2026-10-04; potion-effects.md Q2). Everything
+// else is either permanent for the fight or removed wholesale at a named hook
+// (Flame Barrier, Rage).
+void tick_one_power(std::unordered_map<Power, int>& powers, Power p) {
+  auto it = powers.find(p);
   if (it == powers.end()) return;
   if (--it->second <= 0) powers.erase(it);
 }
@@ -83,14 +84,6 @@ void check_enemy_terminal(CombatState& state) {
 
 void check_character_terminal(CombatState& state) {
   if (state.character.hp <= 0) state.outcome = Outcome::Lost;
-}
-
-// Returns hand index of first card with this id, or -1 if absent.
-int find_first_in_hand(const std::vector<Card>& hand, CardId id) {
-  for (std::size_t i = 0; i < hand.size(); ++i) {
-    if (hand[i].card_id == id) return static_cast<int>(i);
-  }
-  return -1;
 }
 
 // Play one card: translate it into its action sequence and drain the queue
@@ -846,16 +839,21 @@ void handle_end_turn(CombatState& state) {
     check_enemy_terminal(state);
     if (state.outcome != Outcome::InProgress) return;
   }
-  // 1b. Tick character debuffs, and the ONE power that ticks.
+  // 1b. Tick character debuffs, and the TWO powers that tick.
   //
-  // Intangible is a deliberate, named exception to "powers never tick" (Rob,
-  // 2026-09-12; see status_effect.h). It is a duration BUFF in StS — beneficial,
-  // so it cannot live in the debuff map, which would put it in the wrong
-  // observation block and route it through Artifact. Handled here explicitly
-  // rather than by a per-power tick list, so the exception stays one line and
-  // one name instead of becoming a general mechanism.
+  // Intangible (Rob, 2026-09-12) and Regen (Rob, 2026-10-04) are deliberate,
+  // named exceptions to "powers never tick" (see status_effect.h). Both are
+  // BUFFs in StS — beneficial, so neither can live in the debuff map, which
+  // would put it in the wrong observation block and route it through Artifact.
+  // Named here one by one rather than by a per-power tick list, so each
+  // exception stays one line and one name instead of becoming a general
+  // mechanism.
+  //
+  // Regen ticks AFTER the drain above, which healed by its current stacks —
+  // StS's RegenAction heals, then decrements.
   tick_debuffs(state.character.debuffs);
-  tick_intangible(state.character.powers);
+  tick_one_power(state.character.powers, Power::Intangible);
+  tick_one_power(state.character.powers, Power::Regen);
   // 1c. Leftover energy is NOT discarded here. The turn-start refill is the
   // single authority on what energy a turn begins with (query.cc's
   // energy_after_turn_start), and it replaces the total for everyone who does
@@ -1087,6 +1085,7 @@ CombatState start_combat(CombatSetup setup) {
   // be here before the hand is dealt below.
   state.relics = std::move(setup.relics);
   state.potions = std::move(setup.potions);
+  state.potion_slots = setup.potion_slots;
 
   // Energy relics are read AFTER relics are assigned, for the same reason
   // everything else in CombatSetup is: a bonus computed before the relics exist
@@ -1254,6 +1253,24 @@ bool card_action_is_legal(const CombatState& state, const DecodedAction& d) {
   return d.target == 0;
 }
 
+bool holds_potion(const CombatState& state, PotionId p) {
+  return std::find(state.potions.begin(), state.potions.end(), p) !=
+         state.potions.end();
+}
+
+// Is drinking `p` at `target` legal now? The one source of truth for potion
+// legality, shared by the mask and apply_action like card_action_is_legal.
+// A potion that targets an enemy needs a living one in that slot; any other
+// uses the canonical slot 0 (potion-effects.md §3.1).
+bool potion_use_is_legal(const CombatState& state, PotionId p, int target) {
+  if (!holds_potion(state, p) || !potion_can_be_drunk(state, p)) return false;
+  if (potion_targets_enemy(p)) {
+    return target >= 0 && target < static_cast<int>(state.enemies.size()) &&
+           state.enemies[target].hp > 0;
+  }
+  return target == 0;
+}
+
 }  // namespace
 
 std::vector<bool> valid_actions(const CombatState& state) {
@@ -1302,6 +1319,19 @@ std::vector<bool> valid_actions(const CombatState& state) {
       if (mask[action]) continue;  // same (card, column) seen, already decided
       mask[action] = card_action_is_legal(
           state, DecodedAction{ActionBlock::Combat, card_idx, target, column});
+    }
+  }
+
+  // Potions (potion-effects.md §3.1). Walk the belt, not the 198 potion
+  // actions; two copies of one potion light the same indices. A potion can
+  // always be discarded; it can be drunk when potion_use_is_legal says so.
+  for (PotionId p : state.potions) {
+    const int id = static_cast<int>(p);
+    mask[encode_action(ActionBlock::PotionDiscard, id)] = true;
+    for (int target = 0; target < kMaxEnemies; ++target) {
+      if (potion_use_is_legal(state, p, target)) {
+        mask[encode_action(ActionBlock::PotionUse, id, target)] = true;
+      }
     }
   }
 
@@ -1368,6 +1398,33 @@ void refresh_hand(CombatState& state) {
   }
 }
 
+// Take one copy of `p` off the belt. Potions carry no per-copy state, so any
+// copy is the copy.
+void remove_one_potion(CombatState& state, PotionId p) {
+  const auto it = std::find(state.potions.begin(), state.potions.end(), p);
+  if (it != state.potions.end()) state.potions.erase(it);
+}
+
+// Drink a potion: StS's PotionPopUp order (potion-effects.md §2). The slot is
+// freed FIRST, synchronously, before any queued effect runs — which is why an
+// Entropic Brew refills its own slot. Then the potion's effects, then
+// Hook::PotionDrunk (Toy Ornithopter), so the relic's heal resolves after the
+// potion's own effects. Not a card: no energy, no card-played hooks.
+void use_potion(CombatState& state, PotionId p, int target) {
+  remove_one_potion(state, p);
+  ActionQueue q;
+  ResolutionContext ctx;
+  push_potion_effects(state, p, target, q);
+  fire_relic_hooks(state, Hook::PotionDrunk, q);
+  drain(state, q, ctx);
+  // Explosive and Fire Potion can kill; the on-death hooks fire before the
+  // terminal checks, as after a card.
+  process_deaths(state, ctx);
+  check_character_terminal(state);
+  if (state.outcome != Outcome::InProgress) return;
+  check_enemy_terminal(state);
+}
+
 bool apply_action_inner(CombatState& state, int action);
 
 }  // namespace
@@ -1421,7 +1478,7 @@ bool apply_action_inner(CombatState& state, int action) {
       case ActionBlock::Map:
       case ActionBlock::RelicSelect:
       case ActionBlock::PotionUse:
-      case ActionBlock::PotionDiscard:
+      case ActionBlock::PotionDiscard:  // Q8: no potion action mid-choice
       case ActionBlock::EventOption:
       case ActionBlock::RestOption:
       case ActionBlock::Purpose:
@@ -1446,14 +1503,27 @@ bool apply_action_inner(CombatState& state, int action) {
     case ActionBlock::EndTurn:
       handle_end_turn(state);
       return true;
+    case ActionBlock::PotionUse: {
+      // Shares potion_use_is_legal with valid_actions, so the two can't
+      // disagree.
+      const PotionId p = static_cast<PotionId>(d.entity);
+      if (!potion_use_is_legal(state, p, d.target)) return false;
+      use_potion(state, p, d.target);
+      return true;
+    }
+    case ActionBlock::PotionDiscard: {
+      // Always available while the potion is held; it does nothing else.
+      const PotionId p = static_cast<PotionId>(d.entity);
+      if (!holds_potion(state, p)) return false;
+      remove_one_potion(state, p);
+      return true;
+    }
     // Run-layer blocks. A CombatState has no map, shop, event or rest phase, so
     // none is ever live here. Enumerated for the same reason as above: a phase
     // that gains a producer becomes a new case, visibly.
     case ActionBlock::Map:
     case ActionBlock::CardSelect:
     case ActionBlock::RelicSelect:
-    case ActionBlock::PotionUse:
-    case ActionBlock::PotionDiscard:
     case ActionBlock::EventOption:
     case ActionBlock::RestOption:
     case ActionBlock::Purpose:

@@ -172,6 +172,13 @@ void fire_relic_card_played(CombatState& state, CardType type, ActionQueue& q);
 // Use this wherever one relic on a hook can read what another just changed.
 void fire_relic_hooks_sequentially(CombatState& state, Hook hook);
 
+// Queue one potion's effects (docs/design/potion-effects.md §4), at Sacred
+// Bark's potency when it is held. `target` is the enemy slot for a potion that
+// targets one, ignored otherwise. Handles exactly the potions
+// potion_effect_implemented() reports; the caller checks that first.
+void push_potion_effects(const CombatState& state, PotionId id, int target,
+                         ActionQueue& q);
+
 // Drain the queue to completion: pop-execute until empty, short-circuiting on
 // a terminal outcome. Executors may push more actions. The queue must be empty
 // at every agent decision point (§4.2 invariant).

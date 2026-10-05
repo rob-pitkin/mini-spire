@@ -23,6 +23,8 @@
 // hand-written test could have established.
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <iterator>
 #include <random>
 #include <vector>
 
@@ -153,6 +155,40 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
       mask[action] = (target == 0);
     }
   }
+
+  // Potions (potion-effects.md §3.1), restated rather than asked of the
+  // engine. Every held potion can be discarded. It can be drunk if its effect
+  // is built — the step-1 list, restated here on purpose and widened as each
+  // step lands — at a living enemy if it targets one, else at slot 0. Raw
+  // arithmetic: use is potion × target, discard one per potion.
+  static const PotionId kBuilt[] = {
+      PotionId::BloodPotion,     PotionId::BlockPotion,
+      PotionId::DexterityPotion, PotionId::EnergyPotion,
+      PotionId::ExplosivePotion, PotionId::FirePotion,
+      PotionId::StrengthPotion,  PotionId::SwiftPotion,
+      PotionId::WeakPotion,      PotionId::FearPotion,
+      PotionId::FlexPotion,      PotionId::SpeedPotion,
+      PotionId::BlessingOfTheForge, PotionId::RegenPotion,
+      PotionId::AncientPotion,   PotionId::LiquidBronze,
+      PotionId::EssenceOfSteel,  PotionId::HeartOfIron,
+      PotionId::CultistPotion,   PotionId::FruitJuice};
+  for (PotionId p : state.potions) {
+    const int id = static_cast<int>(p);
+    mask[kPotionDiscardBlock + id] = true;
+    if (std::find(std::begin(kBuilt), std::end(kBuilt), p) == std::end(kBuilt)) {
+      continue;
+    }
+    const bool targeted = p == PotionId::FirePotion ||
+                          p == PotionId::WeakPotion || p == PotionId::FearPotion;
+    for (int target = 0; target < kMaxEnemies; ++target) {
+      const bool ok =
+          targeted ? target < static_cast<int>(state.enemies.size()) &&
+                         state.enemies[target].hp > 0
+                   : target == 0;
+      if (ok) mask[kPotionUseBlock + id * kMaxEnemies + target] = true;
+    }
+  }
+
   mask[kEndTurnAction] = true;
   return mask;
 }
@@ -165,7 +201,8 @@ TEST(MaskOracle, EngineMaskMatchesAnIndependentDerivation) {
   // Coverage counters — a stress harness that never reaches a branch passes
   // vacuously, which is exactly how the free-cost branch went unexercised for
   // as long as it did.
-  long long saw_choice = 0, saw_free = 0, saw_entangle = 0, saw_rung = 0;
+  long long saw_choice = 0, saw_free = 0, saw_entangle = 0, saw_rung = 0,
+            saw_potion = 0;
 
   for (uint32_t seed = 0; seed < 300; ++seed) {
     for (EncounterPool pool : {EncounterPool::Weak, EncounterPool::Strong,
@@ -189,6 +226,12 @@ TEST(MaskOracle, EngineMaskMatchesAnIndependentDerivation) {
               searing_blow_rung(id) > 0) {
             ++saw_rung;
           }
+        }
+        // Potions: any of the 33, built or not, so the oracle sees both the
+        // drinkable and the discard-only kind. Capped near a real belt.
+        if (rng() % 6 == 0 && s.potions.size() < 5) {
+          s.potions.push_back(static_cast<PotionId>(rng() % kNumPotions));
+          ++saw_potion;
         }
         // Query-layer state: Corruption, Barricade.
         if (rng() % 9 == 0) s.character.powers[Power::Corruption] = 1;
@@ -261,4 +304,5 @@ TEST(MaskOracle, EngineMaskMatchesAnIndependentDerivation) {
   EXPECT_GT(saw_free, 100) << "free-this-turn cost branch barely exercised";
   EXPECT_GT(saw_entangle, 100) << "entangle branch barely exercised";
   EXPECT_GT(saw_rung, 50) << "rung ladder cards barely exercised";
+  EXPECT_GT(saw_potion, 100) << "potions barely exercised";
 }

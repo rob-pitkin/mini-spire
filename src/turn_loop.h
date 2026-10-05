@@ -79,6 +79,9 @@ struct CombatSetup {
   // First-class combat state (§3.0.1), so the fight can show and use them.
   std::vector<HeldRelic> relics;
   std::vector<PotionId> potions;
+  // The belt's capacity, which the run owns (Potion Belt raises it). A
+  // standalone fight keeps the base 3.
+  int potion_slots = kBasePotionSlots;
 };
 
 // Constructs an initial CombatState (ROB-66): seeded RNG, the character at the

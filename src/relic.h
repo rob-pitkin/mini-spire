@@ -245,6 +245,10 @@ inline constexpr int kMagicFlowerHealDenominator = 2;
 // here, so the property holds by construction rather than by remembering it.
 inline constexpr int kCharonsAshesDamage = 3;
 
+// Toy Ornithopter: heal 5 HP whenever a potion is used — in combat through the
+// queue, after the potion's own effects (potion-effects.md §2).
+inline constexpr int kToyOrnithopterHeal = 5;
+
 // Champion Belt: 1 Weak alongside every Vulnerable the PLAYER applies to an
 // enemy.
 //

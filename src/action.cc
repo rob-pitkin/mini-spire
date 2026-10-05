@@ -317,7 +317,13 @@ bool apply_power(CombatState& state, const PowerApplication& app,
   //
   // Gated on amount < 0 deliberately: a POSITIVE application must never consume
   // a charge, or an enemy's own Ritual/Enrage Strength would burn its Artifact.
-  if (app.amount < 0) {
+  //
+  // The exception is a debuff-typed power (power_is_debuff): Flex's Strength
+  // Down and Speed Potion's Dexterity Down are DEBUFFs in StS, so their
+  // positive application is negated too (potion-effects.md §5.3). The
+  // end-of-turn loss they cause is a negative Strength/Dexterity application,
+  // so Artifact can also block that one instead — the wiki's "either".
+  if (app.amount < 0 || power_is_debuff(app.effect)) {
     auto art = m->find(Power::Artifact);
     if (art != m->end() && art->second > 0) {
       if (--art->second <= 0) m->erase(art);
@@ -1316,6 +1322,15 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
         }
         break;
 
+      case Hook::PotionDrunk:
+        // Toy Ornithopter: "whenever you use a potion, heal 5 HP." StS's
+        // onUsePotion runs after the potion's use() has queued its effects, so
+        // the heal resolves after them (potion-effects.md §2).
+        if (relic.id == RelicId::ToyOrnithopter) {
+          push_player_heal(q, kToyOrnithopterHeal);
+        }
+        break;
+
       default:
         // Every other hook is wired in a later batch. Listed explicitly rather
         // than silently ignored so an unhandled hook is a visible gap.
@@ -1325,6 +1340,117 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
 }
 
 }  // namespace
+
+void push_potion_effects(const CombatState& state, PotionId id, int target,
+                         ActionQueue& q) {
+  const int p = potion_potency(state, id);
+  switch (id) {
+    case PotionId::BloodPotion:
+      // A percentage of max HP, truncated: (int)(maxHealth * potency / 100).
+      push_player_heal(q, state.character.max_hp * p / 100);
+      break;
+    case PotionId::BlockPotion:
+      // GainBlockAction, not a card's block: Dexterity and Frail do not apply.
+      push_player_block(q, p);
+      break;
+    case PotionId::DexterityPotion:
+      push_player_power(q, Power::Dexterity, p);
+      break;
+    case PotionId::EnergyPotion:
+      push_player_energy(q, p);
+      break;
+    case PotionId::ExplosivePotion: {
+      // Pure damage to every enemy with no owner: no Strength, no Vulnerable,
+      // no attack-only triggers — what DamageAllEnemies already means.
+      Action a = make_action(ActionKind::DamageAllEnemies);
+      a.amount = p;
+      q.push_back(a);
+      break;
+    }
+    case PotionId::FirePotion: {
+      // THORNS-type damage: Vulnerable multiplies only NORMAL damage, so the
+      // fixed path is exact (potion-effects.md §5.1).
+      Action a = make_action(ActionKind::DealFixedDamage);
+      a.actor = kPlayerSlot;
+      a.target = target;
+      a.amount = p;
+      q.push_back(a);
+      break;
+    }
+    case PotionId::StrengthPotion:
+      push_player_strength(q, p);
+      break;
+    case PotionId::SwiftPotion:
+      push_draw(q, p);
+      break;
+    case PotionId::WeakPotion:
+    case PotionId::FearPotion: {
+      // The player applies it, so Sadistic Nature and Champion Belt answer
+      // exactly as they do for a card's debuff.
+      Action a = make_action(ActionKind::ApplyDebuff);
+      a.actor = kPlayerSlot;
+      a.target = target;
+      a.debuff = id == PotionId::WeakPotion ? Debuff::Weak : Debuff::Vulnerable;
+      a.amount = p;
+      q.push_back(a);
+      break;
+    }
+    case PotionId::FlexPotion:
+      push_player_strength(q, p);
+      push_player_power(q, Power::StrengthDown, p);
+      break;
+    case PotionId::SpeedPotion:
+      push_player_power(q, Power::Dexterity, p);
+      push_player_power(q, Power::DexterityDown, p);
+      break;
+    case PotionId::BlessingOfTheForge:
+      // ArmamentsAction(true): every card in hand, for the rest of combat.
+      q.push_back(make_action(ActionKind::UpgradeHand));
+      break;
+    case PotionId::RegenPotion:
+      push_player_power(q, Power::Regen, p);
+      break;
+    case PotionId::AncientPotion:
+      push_player_power(q, Power::Artifact, p);
+      break;
+    case PotionId::LiquidBronze:
+      push_player_power(q, Power::Thorns, p);
+      break;
+    case PotionId::EssenceOfSteel:
+      push_player_power(q, Power::PlatedArmor, p);
+      break;
+    case PotionId::HeartOfIron:
+      push_player_power(q, Power::Metallicize, p);
+      break;
+    case PotionId::CultistPotion:
+      push_player_power(q, Power::Ritual, p);
+      break;
+    case PotionId::FruitJuice: {
+      // increaseMaxHp(p, true): max HP and current HP rise together.
+      Action a = make_action(ActionKind::GainMaxHp);
+      a.amount = p;
+      q.push_back(a);
+      break;
+    }
+    // Later steps of potion-effects.md §8; potion_effect_implemented() keeps
+    // them out of the mask until then.
+    case PotionId::AttackPotion:
+    case PotionId::SkillPotion:
+    case PotionId::PowerPotion:
+    case PotionId::ColorlessPotion:
+    case PotionId::ElixirPotion:
+    case PotionId::GamblersBrew:
+    case PotionId::LiquidMemories:
+    case PotionId::DuplicationPotion:
+    case PotionId::DistilledChaos:
+    case PotionId::SneckoOil:
+    case PotionId::FairyPotion:
+    case PotionId::SmokeBomb:
+    case PotionId::EntropicBrew:
+      assert(false && "potion not implemented yet; the mask should refuse it");
+      break;
+  }
+}
 
 void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
                              CardId card, int attacker_slot) {
@@ -1350,6 +1476,9 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
   const int magnetism = get_status(powers, Power::Magnetism);
   const int mayhem = get_status(powers, Power::Mayhem);
   const int next_turn_block = get_status(powers, Power::NextTurnBlock);
+  const int ritual = get_status(powers, Power::Ritual);
+  const int regen = get_status(powers, Power::Regen);
+  const int dexterity_down = get_status(powers, Power::DexterityDown);
 
   switch (hook) {
     case Hook::TurnStartPlayer:
@@ -1426,6 +1555,20 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
         push_player_strength(q, -strength_down);
         push_remove_player_power(q, Power::StrengthDown);
       }
+      // Speed Potion's Dexterity Down: the same shape as Strength Down.
+      if (dexterity_down > 0) {
+        push_player_power(q, Power::Dexterity, -dexterity_down);
+        push_remove_player_power(q, Power::DexterityDown);
+      }
+      // Cultist Potion: the PLAYER's Ritual gains Strength at the end of each
+      // of the player's turns, starting with the turn it was drunk. StS's
+      // RitualPower does this in atEndOfTurn(isPlayer) for the player and in
+      // atEndOfRound (with skipFirst) for an enemy; the enemy's lives in the
+      // enemy hooks and is untouched (potion-effects.md Q5).
+      if (ritual > 0) push_player_strength(q, ritual);
+      // Regen Potion: heal by the current stacks. The stack is taken off by the
+      // end-of-turn tick, after this drain (turn_loop.cc, handle_end_turn).
+      if (regen > 0) push_player_heal(q, regen);
       break;
     case Hook::CardPlayed:
       // Rage: block whenever an Attack is played this turn.
@@ -1949,10 +2092,12 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // Our Debuff enum is therefore NOT the whole set: negative Strength and
       // Dexterity live in `powers`. Clearing only the debuff map would leave a
       // -3 Strength in place, which the real relic removes.
+      // Strength Down and Dexterity Down are DEBUFF-typed too
+      // (power_is_debuff), so they go as well: the Flex Strength stays.
       state.character.debuffs.clear();
       for (auto it = state.character.powers.begin();
            it != state.character.powers.end();) {
-        if (it->second < 0) {
+        if (it->second < 0 || power_is_debuff(it->first)) {
           it = state.character.powers.erase(it);
         } else {
           ++it;

@@ -245,7 +245,7 @@ per §1.
 
 ---
 
-## 7. Status: 116 of 140 wired
+## 7. Status: 118 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -264,7 +264,7 @@ tree appears only on a comment line, so the discrepancy is not comment noise.
 One of the two counts used a different rule and neither recorded which, which is
 the whole argument for pinning the command here.
 
-The 24 remaining are not one backlog. **Most are blocked on engine pieces that
+The 22 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
@@ -273,7 +273,7 @@ have nothing to do with relics**, and those blockers are shared:
 | **No curse cards** | Omamori, Darkstone Periapt, Blue Candle, and the unreachable halves of Du-Vu Doll and Cursed Key | §6.4 |
 | ~~**No colorless cards**~~ | ~~Toolbox, half of Prismatic Shard~~ | ✅ **cleared.** All 35 colorless cards are implemented (`colorless-effects.md`) and the shop's 2 colorless slots now stock. **Toolbox** is wired: a 1-of-3 colorless choice that pauses combat setup BEFORE the opening hand (§6.9 — Rob ruled, 2026-09-20). **Prismatic Shard** is now unblocked: §6.8 was ruled (Rob, 2026-09-21) to the Colorless half only, a deliberate divergence recorded in the README. ⚠️ CORRECTED earlier: Orrery, Dolly's Mirror and Cauldron never needed colorless — Cauldron is potions only, and the other two need a shop CHOICE SCREEN over normal card rewards. |
 | **Needs a shop choice screen** | Orrery, Dolly's Mirror | moved here from the colorless row |
-| **Needs potion effects** | Cauldron, Toy Ornithopter, Sacred Bark | Cauldron moved here from the colorless row; the other two need `Hook::PotionDrunk`, which cannot fire until a potion can be drunk |
+| **Needs potion effects** | Cauldron | Cauldron moved here from the colorless row; it lands with Entropic Brew (`potion-effects.md` §8 step 6). ✅ **Toy Ornithopter and Sacred Bark wired** with potion step 1 (2026-10-05): `Hook::PotionDrunk` fires after a potion's effects, and Sacred Bark doubles `potion_potency`. |
 | **No events** | Neow's Lament, Odd Mushroom, Warped Tongs, Spirit Poop, and the 5 Face Trader masks | 10 of the special-tier relics |
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |

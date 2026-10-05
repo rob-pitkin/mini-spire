@@ -152,7 +152,14 @@ class CombatEnv {
   static constexpr int kTurnObsIndex =
       kPlayerObsSize + kMaxEnemies * kEnemyObsStride + kPileObsSize;
 
-  static constexpr int kObsSize = kTurnObsIndex + 1 + kChoiceObsSize;
+  // Potion block (docs/design/potion-effects.md §3.2), appended after the
+  // choice block so every earlier index keeps its position: the count held of
+  // each PotionId (v2-spec.md §5.6 — a count vector, not slots), then the
+  // belt's slot capacity, since a human sees the empty slots.
+  static constexpr int kPotionObsSize = kNumPotions + 1;
+  static constexpr int kPotionObsIndex = kTurnObsIndex + 1 + kChoiceObsSize;
+
+  static constexpr int kObsSize = kPotionObsIndex + kPotionObsSize;
 
   // Action space: the v2 layout (v2-spec.md §6). The layout constants and the
   // encode_action / decode_action pair live in turn_loop.h, so the env and the

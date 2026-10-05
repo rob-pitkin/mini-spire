@@ -106,6 +106,19 @@ bool taken_before(const Card& a, const Card& b) {
   return a.sorts_before(b);
 }
 
+int potion_potency(const CombatState& state, PotionId id) {
+  const int base = potion_base_potency(id);
+  return state.has_relic(RelicId::SacredBark) ? base * 2 : base;
+}
+
+bool potion_can_be_drunk(const CombatState& state, PotionId id) {
+  if (state.outcome != Outcome::InProgress) return false;
+  // Rob, 2026-10-04 (Q8): not while a card choice is open. StS may allow it;
+  // it changes no outcome, so it is not listed as a divergence.
+  if (state.pending_choice.active()) return false;
+  return potion_effect_implemented(id);
+}
+
 int effective_cost(const CombatState& state, CardId card) {
   const CardData& data = CARD_DATABASE.at(card);
   if (data.cost == kXCost) return kXCost;  // "spend all" — not a number

@@ -81,7 +81,7 @@ constexpr std::array<Power, kNumPlayerPowers> kObsPlayerPowerOrder = {
     Power::PlatedArmor,  Power::Intangible,    Power::Buffer,
     Power::PenNibCharge, Power::Magnetism,     Power::Panache,
     Power::SadisticNature, Power::Mayhem,      Power::StrengthDown,
-    Power::NextTurnBlock,
+    Power::NextTurnBlock, Power::Regen,        Power::DexterityDown,
 };
 static_assert(kObsPlayerPowerOrder.size() == kNumPlayerPowers,
               "kObsPlayerPowerOrder must list every power");
@@ -395,6 +395,17 @@ void CombatEnv::compute_obs() {
       o[base + 3] = static_cast<float>(cost_column(state_, pc.options[i]));
     }
   }
+
+  // --- Potion block (potion-effects.md §3.2) ---
+  // Counts held per PotionId, then the slot capacity. Written every step, like
+  // the choice block — the fill above zeroes it first.
+  static_assert(kChoiceBase + kChoiceObsSize == CombatEnv::kPotionObsIndex,
+                "potion block is not where kPotionObsIndex says it is");
+  for (PotionId p : state_.potions) {
+    o[CombatEnv::kPotionObsIndex + static_cast<int>(p)] += 1.0f;
+  }
+  o[CombatEnv::kPotionObsIndex + kNumPotions] =
+      static_cast<float>(state_.potion_slots);
 }
 
 void CombatEnv::compute_mask() {

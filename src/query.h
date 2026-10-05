@@ -48,6 +48,16 @@ int cost_column(const CombatState& state, const Card& card);
 // Card::sorts_before, so the pick never depends on pile order.
 bool taken_before(const Card& a, const Card& b);
 
+// A potion's potency right now: its base potency, doubled by Sacred Bark (StS's
+// getPotency). Potions that read no potency stay 0 (potion-effects.md §2).
+int potion_potency(const CombatState& state, PotionId id);
+
+// Can the player drink this potion now? In combat, at a decision point with no
+// pending choice (Q8), the fight in progress, and the potion's effect built
+// (potion_effect_implemented). Says nothing about whether one is HELD — the
+// mask checks that. Fairy in a Bottle is never drinkable.
+bool potion_can_be_drunk(const CombatState& state, PotionId id);
+
 // Corruption: a Skill costs 0 while it is up. Above every cost layer.
 bool corruption_frees_skill(const CombatState& state, CardId card);
 

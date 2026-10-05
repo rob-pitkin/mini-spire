@@ -195,10 +195,12 @@ TEST(CombatEnv, ObsBufferIsKObsSize) {
   env.reset(0);
   EXPECT_EQ(env.obs().size(), static_cast<std::size_t>(CombatEnv::kObsSize));
   // Compute the layout from constants so this never goes stale as the obs
-  // grows: player + enemies + piles + turn(1) + the Stage 4c choice block.
+  // grows: player + enemies + piles + turn(1) + the Stage 4c choice block +
+  // the potion block.
   const int expected = CombatEnv::kPlayerObsSize +
                        minispire::kMaxEnemies * CombatEnv::kEnemyObsStride +
-                       CombatEnv::kPileObsSize + 1 + CombatEnv::kChoiceObsSize;
+                       CombatEnv::kPileObsSize + 1 + CombatEnv::kChoiceObsSize +
+                       CombatEnv::kPotionObsSize;
   EXPECT_EQ(env.obs().size(), static_cast<std::size_t>(expected));
 }
 

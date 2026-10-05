@@ -1347,6 +1347,7 @@ void RunState::begin_combat(EncounterPool pool) {
   setup.max_hp = max_hp;
   setup.relics = relics;
   setup.potions = potions;
+  setup.potion_slots = potion_slots;
   combat = start_combat(std::move(setup));
 
   in_combat = true;

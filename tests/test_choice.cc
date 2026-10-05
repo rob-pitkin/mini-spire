@@ -634,7 +634,9 @@ TEST(ChoiceEncoding, ObsChoiceBlockIsZeroWhenNoChoicePends) {
   CombatEnv env;
   env.reset(0);
   const auto obs = env.obs();
-  for (int i = kChoiceBase; i < CombatEnv::kObsSize; ++i) {
+  // Bounded by the choice block itself, not kObsSize: the potion block follows
+  // it, and its slot-capacity float is never zero.
+  for (int i = kChoiceBase; i < kChoiceBase + CombatEnv::kChoiceObsSize; ++i) {
     EXPECT_FLOAT_EQ(obs[i], 0.0f) << "choice obs slot " << i;
   }
 }

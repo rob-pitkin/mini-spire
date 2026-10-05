@@ -468,7 +468,10 @@ PYBIND11_MODULE(_core, m) {
       .value("Mayhem", Power::Mayhem)
       .value("StrengthDown", Power::StrengthDown)
       // Self-Forming Clay banks block here for the next turn.
-      .value("NextTurnBlock", Power::NextTurnBlock);
+      .value("NextTurnBlock", Power::NextTurnBlock)
+      // Potion powers (docs/design/potion-effects.md).
+      .value("Regen", Power::Regen)
+      .value("DexterityDown", Power::DexterityDown);
 
   // --- The v2 action layout (v2-spec.md §6) -------------------------------
   //
@@ -681,6 +684,10 @@ PYBIND11_MODULE(_core, m) {
       .def_readonly_static("CHOICE_HEADER_SIZE", &CombatEnv::kChoiceHeaderSize)
       .def_readonly_static("CHOICE_SLOT_STRIDE", &CombatEnv::kChoiceSlotStride)
       .def_readonly_static("CHOICE_OBS_SIZE", &CombatEnv::kChoiceObsSize)
+      // The potion block (potion-effects.md §3.2): a count per PotionId, then
+      // the slot capacity, after the choice block.
+      .def_readonly_static("POTION_OBS_INDEX", &CombatEnv::kPotionObsIndex)
+      .def_readonly_static("POTION_OBS_SIZE", &CombatEnv::kPotionObsSize)
       .def(
           "reset",
           [](CombatEnv& self, uint32_t seed) {

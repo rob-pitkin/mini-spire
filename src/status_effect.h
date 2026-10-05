@@ -138,8 +138,26 @@ enum class Power {
                  // they STACK within a turn (wiki), which is why the amount is
                  // the stack value. Not card block: Dexterity and Frail do not
                  // apply. StS models it the same way, as NextTurnBlockPower.
+  // --- Potion powers (docs/design/potion-effects.md). ---
+  Regen,         // end of the player's turn: heal `stacks`, then lose one
+                 // stack (Regen Potion). THE SECOND POWER THAT TICKS (Rob,
+                 // 2026-10-04), beside Intangible: StS types RegenPower BUFF,
+                 // so it cannot be a Debuff — Artifact would negate it.
+  DexterityDown, // turn end: lose `stacks` Dexterity, then remove self (Speed
+                 // Potion). The Dexterity twin of StrengthDown, and like it
+                 // debuff-typed: see power_is_debuff.
   None,          // sentinel: "no power" (default for unused fields)
 };
+
+// Powers StS types DEBUFF although they live in our power map: the temporary
+// stat losses LoseStrengthPower (Flex) and LoseDexterityPower (Speed Potion).
+// Artifact negates their application and Orange Pellets removes them, exactly
+// as for a Debuff (potion-effects.md §5.3; wiki.gg Artifact and Flex pages).
+// They are powers, not Debuffs, because their loss is one fixed amount at end of
+// turn, not a 1/turn tick.
+inline bool power_is_debuff(Power p) {
+  return p == Power::StrengthDown || p == Power::DexterityDown;
+}
 
 // Per-entity obs block widths (combat_env). Each block is [debuffs then
 // powers]; the player block lists every power, the enemy block only the
@@ -151,7 +169,7 @@ enum class Power {
 // powers) because two of five is not worth a second table.
 inline constexpr int kNumDebuffs = 7;
 inline constexpr int kNumEnemyPowers = 7;
-inline constexpr int kNumPlayerPowers = 34;
+inline constexpr int kNumPlayerPowers = 36;
 
 // FUTURE (multi-enemy): Target { Character, Enemy } collapses any "the enemy"
 // to a single entity, which is unambiguous in v1 with one enemy. Multi-enemy
