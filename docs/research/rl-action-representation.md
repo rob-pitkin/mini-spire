@@ -41,11 +41,12 @@ have RL systems used for "the same entity with a visible variant"?
 - **sts_lightspeed** addresses cards by hand or pile index. Its MCTS
   (`BattleScumSearcher2`) prunes plays of a hand card equal to the previous one
   in (id, upgrades, costForTurn, cost, freeToPlayOnce, specialData), so it
-  treats copies that differ in any cost layer as distinct actions.
-  *Reported by the 2026-10-04 research agent; unverified here.*
+  treats copies that differ in any cost layer as distinct actions. Read by the
+  2026-10-04 research agent, with file and line citations in
+  [`choice-copy-options.md`](choice-copy-options.md) §4.
 - **CommunicationMod** offers `PLAY <hand index>` and `CHOOSE <index|name>`. The
   name form takes the first match: the same first-match problem the engine had.
-  *Reported by the research agent; unverified here.*
+  From its README, per the same report.
 
 ## Sources
 
@@ -62,5 +63,4 @@ have RL systems used for "the same entity with a visible variant"?
   Wolpertinger (Dulac-Arnold et al. 2015), OpenAI Five (Berner et al. 2019):
   cited from the papers' well-known descriptions; not re-fetched for this note.
 - Full option analysis (sizes, mask/obs/clone consequences, verified engine
-  facts): the research agent's report, to be copied to
-  `docs/research/choice-copy-options.md`.
+  facts): [`choice-copy-options.md`](choice-copy-options.md).
