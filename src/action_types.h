@@ -22,8 +22,10 @@ inline constexpr int kPlayerSlot = -1;
 inline constexpr int kNoSlot = -2;
 
 // PlayCard modes (Action::amount). Which re-entrant play this is.
-inline constexpr int kPlayFromDrawPile = 0;     // Havoc
-inline constexpr int kPlayDoubleTapReplay = 1;  // Double Tap
+inline constexpr int kPlayFromDrawPile = 0;  // Havoc
+// A free replay of the card just played: Double Tap and Duplication. The charge
+// was spent when the original was played (potion-effects.md T1).
+inline constexpr int kPlayReplay = 1;
 // Mayhem. Havoc's sibling, and the difference is the whole distinction between
 // the two cards: Havoc reads "and Exhaust it", Mayhem does not, so a card
 // Mayhem plays goes to the discard and can come round again.
@@ -91,6 +93,9 @@ enum class ActionKind {
   RemoveAllDebuffs,     // Orange Pellets: clear every debuff on the player at
                         // once. An action rather than a direct map clear so it
                         // goes through the executors like every other mutation.
+  RandomizeHandCosts,   // Snecko Oil: every hand card with a cost rolls a new
+                        // one, 0-3, for the rest of the combat
+                        // (RandomizeHandCostAction)
   DrawOpeningHand,      // the fight's first hand, Innate-aware. An ACTION so a
                         // pre-draw relic that pauses for a choice (Toolbox)
                         // parks the draw behind it instead of being overtaken
@@ -144,7 +149,11 @@ enum class ActionKind {
 struct Action {
   ActionKind kind;
   int actor = kNoSlot;   // damage source: kPlayerSlot or an enemy slot
-  int target = kNoSlot;  // recipient: kPlayerSlot or an enemy slot
+  // Recipient: kPlayerSlot or an enemy slot. A top-of-draw PlayCard (Havoc,
+  // Mayhem, Distilled Chaos) carries the slot rolled when the play was QUEUED,
+  // from the card-random stream — StS's PlayTopCardAction takes its monster as
+  // an argument (potion-effects.md T3, T4). kNoSlot when no enemy was alive.
+  int target = kNoSlot;
   int amount = 0;
   // For card-carrying kinds. None means "this action carries no card", which
   // is the truth for most kinds: an enemy's DealDamage, a Mayhem PlayCard that
@@ -186,9 +195,9 @@ struct Action {
   // it applies with (potion-effects.md S1). Replaced a bare `copies`, which was
   // the only setting back when a choice's other settings came from its card.
   ChoiceSettings choice{};
-  // PlayCard (Double Tap's replay): the first play's RAW X, so the replay
-  // "uses the same value of X as the first". It used to ride in `copies`,
-  // which named something else entirely.
+  // PlayCard replay (Double Tap, Duplication): the first play's RAW X, so the
+  // replay "uses the same value of X as the first". It used to ride in
+  // `copies`, which named something else entirely.
   int replay_x = 0;
   // Per-instance card state for card-moving kinds (ExhaustCard, DiscardCard,
   // AddCardToPile). Carried alongside `card` so a Rampage returning to the

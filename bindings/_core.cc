@@ -487,7 +487,8 @@ PYBIND11_MODULE(_core, m) {
       .value("NextTurnBlock", Power::NextTurnBlock)
       // Potion powers (docs/design/potion-effects.md).
       .value("Regen", Power::Regen)
-      .value("DexterityDown", Power::DexterityDown);
+      .value("DexterityDown", Power::DexterityDown)
+      .value("Duplication", Power::Duplication);
 
   // --- The v2 action layout (v2-spec.md §6) -------------------------------
   //

@@ -6,7 +6,9 @@ commit. **Step 1 done** (2026-10-05): 20 of 33 potions drinkable, every potion
 discardable, the observation block, Toy Ornithopter, Sacred Bark, debuff-typed
 powers (#30). **Step 2 done** (2026-10-10): 27 of 33 drinkable — the four
 Discovery potions, Elixir, Gambler's Brew, Liquid Memories — plus Gambling Chip,
-minimum picks, and the choice header and staged plane (#33).
+minimum picks, and the choice header and staged plane (#33). **Step 3 done**
+(2026-10-10): 30 of 33 — Duplication, Distilled Chaos, Snecko Oil — plus
+Double Tap's charge timing and Havoc's and Mayhem's targets (§1.2, §5.8).
 
 Potions are first-class combat state (`v2-spec.md` §3.0.1): held in
 `CombatState::potions`, observable, and usable through the combat action space.
@@ -58,6 +60,16 @@ name and targeting already in `src/potion.cc`.
 | S5 | Gambling Chip | Becomes a real choice (it is Gambler's Brew at the start of combat) and leaves the `v2-spec.md` §9 divergence table. |
 | S6 | Staged picks are not observed (#33) | Fixed in step 2: a per-card-type count of staged picks in the choice block (§3.3). |
 | S7 | What the menu tells a human that the header does not (copies, cost 0 on arrival, picks left) | Three header floats (§3.3). A potion's menu has no source card, and Sacred Bark is not in the combat observation, so nothing else carries them. |
+
+### 1.2 Step 3 rulings (Rob, 2026-10-10)
+
+| # | question | ruling |
+|---|---|---|
+| T1 | When Duplication spends a charge | When the original card is played: `DuplicationPower.onUseCard` decrements on the spot and queues the replay. Not when the replay resolves. Double Tap moves to the same rule, where the change is unobservable, so the two share one. |
+| T2 | Duplication as a power | `Power::Duplication`, a BUFF, observed with the player's powers. It replays any card type except a replay. With Double Tap also up, an Attack is played three times. Expiry per Q3. |
+| T3 | Distilled Chaos targets | Rolled at use from `card_rng`, one per card (§5.8). A card whose target has died by the time it plays is not played: it goes to its pile with no effect. A card whose target escaped is lost. |
+| T4 | Havoc and Mayhem | Moved onto the same pre-rolled target. StS plays all three through `PlayTopCardAction`; the engine rolled Havoc's and Mayhem's targets from the combat stream at play time. |
+| T5 | A top-of-draw card that cannot be used | The whole `canUse` rule, not only T3's dead target (§5.8). A card that fails `is_playable` (unplayable without Medical Kit, an Attack while Entangled, Clash, Secret Technique/Weapon) goes to its pile with no effect and no on-play triggers. It is exhausted only for Havoc or a card with its own Exhaust, else discarded. This fixes Mayhem exhausting an unplayable card, and autoplayed Attacks ignoring Entangle. |
 
 ## 2. Using and discarding a potion
 
@@ -167,13 +179,13 @@ mechanism.
 | Liquid Bronze | Thorns | 3 (6) | — | Exists |
 | Gambler's Brew | If the hand is non-empty: discard any number (zero allowed), then draw that many (the draw goes to the queue's front) | — | — | **New** `DiscardForDraw`, multi-select (S4, §5.7) |
 | Essence of Steel | Plated Armor | 4 (8) | — | Exists |
-| Duplication Potion | The next p cards of any type are played twice; expiry per Q3 | 1 (2) | — | **New**: Power::Duplication |
-| Distilled Chaos | Play the top p cards of the draw pile, not exhausting; each target is a random living enemy from `card_rng`, **all rolled at use** | 3 (6) | — | Exists: top-of-draw play (Mayhem). **New**: pre-rolled targets |
+| Duplication Potion | The next p cards of any type are played twice; a charge is spent as the card is played (T1); expiry per Q3 | 1 (2) | — | `Power::Duplication`, sharing Double Tap's replay (T2) |
+| Distilled Chaos | Play the top p cards of the draw pile, not exhausting; each target is a random living enemy from `card_rng`, **all rolled at use** | 3 (6) | — | The top-of-draw play shared with Havoc and Mayhem, with pre-rolled targets (§5.8) |
 | Liquid Memories | Discard pile → hand, costing 0 this turn. Empty discard: nothing. Discard size ≤ p: all of it, hand limit permitting. Else choose exactly p | 1 (2) | — | **New** `DiscardToHand`; minimum picks (S3, §5.7) |
 | Heart of Iron | Metallicize | 6 (12) | — | Exists |
 | Cultist Potion | Ritual on the player: gain p Strength at the end of each of its turns, starting this one | 1 (2) | — | Q5 |
 | Fruit Juice | +p Max HP, healing the same amount | 5 (10) | — | Exists: GainMaxHp. Also out of combat (§6) |
-| Snecko Oil | Draw p, then every hand card with cost ≥ 0 rolls 0–3 from `card_rng`; if different, its combat cost becomes the roll. Unlike Confusion it does not clear `free_once` | 5 (10) draw | — | **New**: randomize-hand-costs action |
+| Snecko Oil | Draw p, then every hand card with cost ≥ 0 rolls 0–3 from `card_rng`; if different, its combat cost becomes the roll. Unlike Confusion it does not clear `free_once` | 5 (10) draw | — | `RandomizeHandCosts`: one roll per hand card that is neither X-cost nor unplayable (ours print unplayables at 0, so the flag excludes them) |
 | Fairy in a Bottle | Never drinkable; see §5.4 | 30% (60%) | — | **New**: death intercept |
 | Smoke Bomb | Escape the fight; see §5.5 | — | — | **New**: `Outcome::Escaped` |
 | Entropic Brew | Fill every empty slot with a random potion; see §5.6 | — | — | **New**: potion RNG in combat |
@@ -333,6 +345,48 @@ StS.
 
 **Sacred Bark** doubles Liquid Memories' p (1 → 2). Elixir, Gambler's Brew and
 Gambling Chip read no potency.
+
+### 5.8 Autoplayed cards: the top-of-draw play and the replays (T1–T5)
+
+StS plays a card that the player did not pick through its card queue
+(`GameActionManager`), and two rules apply to every such card:
+
+**The target is fixed when the play is queued.** Havoc, Mayhem and Distilled
+Chaos all use `PlayTopCardAction(target, exhausts)`, and each caller passes
+`getRandomMonster(null, true, cardRandomRng)` as it queues the action. Distilled
+Chaos rolls all p targets in `use()`; Mayhem rolls one per stack at the start of
+the turn; Havoc rolls as it is played. The engine carries the slot on the
+`PlayCard` action (`roll_card_target`). A replay (Double Tap, Duplication) reuses
+the original play's target.
+
+**A card that cannot be used is not played.** The card queue checks
+`canUse(player, target)`: `is_playable` (unplayable without Medical Kit, an
+Attack while Entangled, Clash, Secret Technique/Weapon), and for a single-target
+card a target that is not dying. A card that fails goes through
+`UseCardAction` with `dontTriggerOnUseCard`: no effect, no on-play triggers, and
+only its pile move. It is exhausted under Havoc (`exhaustOnUseOnce`) or by its
+own Exhaust, Strange Spoon permitting, and discarded otherwise. A replay that
+fails vanishes, being `purgeOnUse`.
+
+`canUse` passes for an enemy that has escaped rather than died, and StS then
+drops the card from limbo without putting it in any pile (line 254). That branch
+cannot be reached here: every roll and every play in this section happens within
+the player's turn, enemies only escape on their own, and the roll skips an
+enemy that has already escaped.
+
+**Replays spend their charge as the original is played (T1).**
+`DoubleTapPower` and `DuplicationPower` decrement in `onUseCard` and queue the
+copy. Double Tap replays an Attack, Duplication any card, and with both up an
+Attack is played three times. Neither replays a replay.
+
+**Two known gaps, open as tasks.**
+- **#41, no card queue.** StS moves each autoplayed card into a card queue
+  that runs only once the action queue is empty. So Distilled Chaos takes all
+  p cards off the draw pile before playing any. The engine plays each before
+  taking the next, which differs when a played card draws or shuffles. The
+  same root cause makes Mayhem play before the turn's draw instead of after it.
+- **#42, X under autoplay.** The engine plays an X-cost card at X = 0. The
+  wiki's Mayhem page says it uses the full energy without spending it.
 
 ## 6. Run layer
 

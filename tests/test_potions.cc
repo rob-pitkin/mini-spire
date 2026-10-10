@@ -118,8 +118,8 @@ TEST(PotionActions, OnlyHeldPotionsAreLit) {
 TEST(PotionActions, APotionNotYetBuiltCanBeDiscardedButNotDrunk) {
   // Potions land in steps (§8); until its step, a potion is masked off rather
   // than doing nothing. Fairy in a Bottle is never drinkable (§5.4).
-  for (PotionId p : {PotionId::DuplicationPotion, PotionId::FairyPotion,
-                     PotionId::SmokeBomb, PotionId::EntropicBrew}) {
+  for (PotionId p : {PotionId::FairyPotion, PotionId::SmokeBomb,
+                     PotionId::EntropicBrew}) {
     CombatState s = fight_holding({p});
     const auto mask = valid_actions(s);
     for (int t = 0; t < kMaxEnemies; ++t) {
@@ -773,6 +773,290 @@ TEST(LiquidMemories, PicksWithNoAlternativeAreMadeWithoutPausing) {
   EXPECT_FALSE(s.pending_choice.active());
   EXPECT_EQ(count_of(s.current_hand, CardId::Strike), 2);
   EXPECT_EQ(count_of(s.discard_pile, CardId::Strike), 1);
+}
+
+// ============================================================================
+// Step 3: Duplication (§1.2 T1, T2; Q3)
+// ============================================================================
+
+int counter_of(const CombatState& s, RelicId id) {
+  for (const HeldRelic& r : s.relics) {
+    if (r.id == id) return r.counter;
+  }
+  return -1;
+}
+
+TEST(DuplicationPotion, GrantsOneChargeAndTwoWithSacredBark) {
+  CombatState s = fight_holding({PotionId::DuplicationPotion});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::DuplicationPotion)));
+  EXPECT_EQ(get_status(s.character.powers, Power::Duplication), 1);
+
+  CombatState b =
+      fight_holding({PotionId::DuplicationPotion}, {RelicId::SacredBark});
+  ASSERT_TRUE(apply_action(b, drink(PotionId::DuplicationPotion)));
+  EXPECT_EQ(get_status(b.character.powers, Power::Duplication), 2);
+}
+
+TEST(DuplicationPotion, PlaysTheNextCardTwiceWhateverItsType) {
+  // A Skill and a Power: Double Tap would replay neither.
+  CombatState skill = fight_holding({});
+  skill.character.powers[Power::Duplication] = 1;
+  skill.current_hand = cards({CardId::Defend});
+  ASSERT_TRUE(apply_action(skill, card_action(CardId::Defend)));
+  EXPECT_EQ(skill.character.current_block, 10);
+  EXPECT_EQ(get_status(skill.character.powers, Power::Duplication), 0);
+  EXPECT_EQ(count_of(skill.discard_pile, CardId::Defend), 1)
+      << "the replay enters no pile";
+
+  CombatState power = fight_holding({});
+  power.character.powers[Power::Duplication] = 1;
+  power.current_hand = cards({CardId::Inflame});
+  ASSERT_TRUE(apply_action(power, card_action(CardId::Inflame)));
+  EXPECT_EQ(get_status(power.character.powers, Power::Strength), 4);
+}
+
+TEST(DuplicationPotion, StacksWithDoubleTapOnAnAttack) {
+  CombatState s = fight_holding({});
+  s.enemies[0].hp = 100;
+  s.character.powers[Power::DoubleTap] = 1;
+  s.character.powers[Power::Duplication] = 1;
+  s.current_hand = cards({CardId::Strike});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike)));
+  EXPECT_EQ(s.enemies[0].hp, 100 - 3 * 6) << "played three times";
+  EXPECT_EQ(get_status(s.character.powers, Power::DoubleTap), 0);
+  EXPECT_EQ(get_status(s.character.powers, Power::Duplication), 0);
+}
+
+TEST(DuplicationPotion, TheChargeIsSpentWhenTheCardIsPlayed) {
+  // T1: DuplicationPower.onUseCard decrements as Havoc is played. So the Defend
+  // Havoc plays off the top finds no charge and is played once, and Havoc's
+  // own replay plays the next card, the Bash. Spending at replay time instead
+  // would replay the Defend (block 10) and leave Havoc's replay nothing.
+  CombatState s = fight_holding({});
+  s.enemies[0].hp = 100;
+  s.character.powers[Power::Duplication] = 1;
+  s.current_hand = cards({CardId::Havoc});
+  s.draw_pile = cards({CardId::Bash, CardId::Defend});  // back() is the top
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Havoc)));
+  EXPECT_EQ(s.character.current_block, 5) << "the Defend was not replayed";
+  EXPECT_EQ(s.enemies[0].hp, 100 - 8) << "Havoc's replay played the Bash";
+  EXPECT_EQ(count_of(s.exhaust_pile, CardId::Defend), 1);
+  EXPECT_EQ(count_of(s.exhaust_pile, CardId::Bash), 1);
+  EXPECT_EQ(get_status(s.character.powers, Power::Duplication), 0);
+}
+
+TEST(DuplicationPotion, AnUnusedChargeLosesOneAtEndOfRound) {
+  // Q3: atEndOfRound reduces by 1, so Sacred Bark's second charge survives one
+  // turn unused and the first expires.
+  CombatState s = fight_holding({});
+  s.character.powers[Power::Duplication] = 2;
+  s.character.current_block = 999;
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  EXPECT_EQ(get_status(s.character.powers, Power::Duplication), 1);
+  s.character.current_block = 999;
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  EXPECT_EQ(get_status(s.character.powers, Power::Duplication), 0);
+}
+
+TEST(DuplicationPotion, AReplayWhoseTargetDiedIsNotPlayed) {
+  // The replay is autoplayed: its target is dying, so canUse fails and the
+  // purgeOnUse copy vanishes without triggers. Ink Bottle counts one card.
+  CombatState s = fight_holding({}, {RelicId::InkBottle});
+  add_second_enemy(s);
+  s.enemies[0].hp = 3;
+  const int hp1 = s.enemies[1].hp;
+  s.character.powers[Power::Duplication] = 1;
+  s.current_hand = cards({CardId::Strike});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Strike, 0)));
+  EXPECT_LE(s.enemies[0].hp, 0);
+  EXPECT_EQ(s.enemies[1].hp, hp1) << "the replay did not retarget";
+  EXPECT_EQ(counter_of(s, RelicId::InkBottle), 1) << "the replay was played";
+}
+
+// ============================================================================
+// Step 3: Distilled Chaos, and Havoc/Mayhem's shared top-of-draw play (§1.2
+// T3-T5)
+// ============================================================================
+
+TEST(DistilledChaos, PlaysTheTopThreeCardsWithoutExhausting) {
+  CombatState s = fight_holding({PotionId::DistilledChaos});
+  s.enemies[0].hp = 100;
+  s.draw_pile = cards({CardId::Strike, CardId::Defend, CardId::Defend,
+                       CardId::Bash});  // Bash is on top
+  ASSERT_TRUE(apply_action(s, drink(PotionId::DistilledChaos)));
+  EXPECT_EQ(s.enemies[0].hp, 100 - 8);
+  EXPECT_EQ(s.character.current_block, 10);
+  EXPECT_EQ(s.discard_pile.size(), 3u);
+  EXPECT_TRUE(s.exhaust_pile.empty());
+  ASSERT_EQ(s.draw_pile.size(), 1u);
+  EXPECT_EQ(s.draw_pile[0].card_id, CardId::Strike);
+}
+
+// The rule restated, independently of roll_card_target: a uniform pick among
+// the living slots, from the card-random stream. Predicting with the function
+// under test would follow it into any mistake — a mutation that moved it to
+// the combat stream went unnoticed until this replaced that.
+int predict_target(std::mt19937& card_rng, int living) {
+  return static_cast<int>(std::uniform_int_distribution<std::size_t>(
+      0, static_cast<std::size_t>(living) - 1)(card_rng));
+}
+
+TEST(DistilledChaos, EveryTargetIsRolledAtUseFromTheCardStream) {
+  // T3. The targets are predicted from a COPY of card_rng taken before
+  // drinking, so the expected outcome is computed from the roll rather than
+  // assumed — the assertion holds for every seed. Both enemies are alive when
+  // all three are rolled, so each pick is among slots {0, 1}. A target rolled
+  // at use can be dead by the time its card plays; a Strike at a dead target
+  // is not played.
+  for (uint32_t seed = 0; seed < 24; ++seed) {
+    CombatState s = fight_holding({PotionId::DistilledChaos});
+    add_second_enemy(s);
+    s.card_rng = std::mt19937(seed);
+    s.enemies[0].hp = 1;
+    s.enemies[1].hp = 100;
+    s.draw_pile = cards({CardId::Defend, CardId::Strike, CardId::Strike});
+
+    std::mt19937 probe = s.card_rng;
+    const int t1 = predict_target(probe, 2);
+    const int t2 = predict_target(probe, 2);
+    bool alive0 = true;
+    int hp1 = 100;
+    for (int t : {t1, t2}) {
+      if (t == 0) {
+        alive0 = false;  // kills it, or finds it already dead and is not played
+      } else {
+        hp1 -= 6;
+      }
+    }
+
+    ASSERT_TRUE(apply_action(s, drink(PotionId::DistilledChaos)));
+    EXPECT_EQ(s.enemies[0].hp > 0, alive0) << "seed " << seed;
+    EXPECT_EQ(s.enemies[1].hp, hp1) << "seed " << seed;
+    EXPECT_EQ(s.character.current_block, 5) << "the Defend needs no target";
+  }
+}
+
+TEST(TopOfDrawPlay, ACardWhoseTargetDiedGoesToTheDiscardUnplayed) {
+  // Constructed directly: a queued top-of-draw play whose rolled target is
+  // dead. No damage anywhere, no on-play triggers, the card in the discard.
+  CombatState s = fight_holding({}, {RelicId::InkBottle});
+  add_second_enemy(s);
+  s.enemies[0].hp = 0;
+  const int hp1 = s.enemies[1].hp;
+  s.draw_pile = cards({CardId::Strike});
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a;
+  a.kind = ActionKind::PlayCard;
+  a.amount = kPlayTopOfDrawKeeping;
+  a.target = 0;
+  q.push_back(a);
+  drain(s, q, ctx);
+  EXPECT_EQ(s.enemies[1].hp, hp1);
+  EXPECT_EQ(count_of(s.discard_pile, CardId::Strike), 1);
+  EXPECT_EQ(counter_of(s, RelicId::InkBottle), 0) << "no on-play triggers";
+}
+
+TEST(TopOfDrawPlay, AnUnplayableCardIsDiscardedUnlessHavocPlaysIt) {
+  // T5: UseCardAction exhausts only for Havoc's exhaustOnUseOnce or the card's
+  // own Exhaust. Mayhem and Distilled Chaos used to exhaust a Wound.
+  CombatState chaos = fight_holding({PotionId::DistilledChaos});
+  chaos.draw_pile = cards({CardId::Wound, CardId::Wound, CardId::Dazed});
+  ASSERT_TRUE(apply_action(chaos, drink(PotionId::DistilledChaos)));
+  EXPECT_EQ(chaos.discard_pile.size(), 3u);
+  EXPECT_TRUE(chaos.exhaust_pile.empty());
+
+  CombatState havoc = fight_holding({});
+  havoc.current_hand = cards({CardId::Havoc});
+  havoc.draw_pile = cards({CardId::Wound});
+  ASSERT_TRUE(apply_action(havoc, card_action(CardId::Havoc)));
+  EXPECT_EQ(count_of(havoc.exhaust_pile, CardId::Wound), 1);
+}
+
+TEST(TopOfDrawPlay, AnAttackIsNotPlayedWhileEntangled) {
+  // T5: Entangle fails canUse for an autoplayed Attack as for one from hand.
+  // Feed carries its own Exhaust, so it exhausts even unplayed; the Strike is
+  // discarded.
+  CombatState s = fight_holding({PotionId::DistilledChaos});
+  s.enemies[0].hp = 100;
+  s.character.debuffs[Debuff::Entangle] = 1;
+  s.draw_pile = cards({CardId::Defend, CardId::Feed, CardId::Strike});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::DistilledChaos)));
+  EXPECT_EQ(s.enemies[0].hp, 100) << "no Attack was played";
+  EXPECT_EQ(count_of(s.discard_pile, CardId::Strike), 1);
+  EXPECT_EQ(count_of(s.exhaust_pile, CardId::Feed), 1);
+  EXPECT_EQ(s.character.current_block, 5) << "the Skill still played";
+}
+
+TEST(TopOfDrawPlay, HavocsTargetIsRolledFromTheCardStream) {
+  // T4: Havoc rolls its target as it is played, from card_rng — predicted
+  // from a copy, as above, so the assertion holds for every seed.
+  for (uint32_t seed = 0; seed < 16; ++seed) {
+    CombatState s = fight_holding({});
+    add_second_enemy(s);
+    s.card_rng = std::mt19937(seed);
+    s.enemies[0].hp = 100;
+    s.enemies[1].hp = 100;
+    s.current_hand = cards({CardId::Havoc});
+    s.draw_pile = cards({CardId::Strike});
+
+    std::mt19937 probe = s.card_rng;
+    const int t = predict_target(probe, 2);
+
+    ASSERT_TRUE(apply_action(s, card_action(CardId::Havoc)));
+    EXPECT_EQ(s.enemies[t].hp, 94) << "seed " << seed;
+    EXPECT_EQ(s.enemies[1 - t].hp, 100) << "seed " << seed;
+  }
+}
+
+// ============================================================================
+// Step 3: Snecko Oil
+// ============================================================================
+
+TEST(SneckoOil, DrawsFiveThenRollsEachEligibleCostOnce) {
+  // RandomizeHandCostAction, predicted from a copy of card_rng: one roll per
+  // card with a cost, in hand order; none for an X-cost or unplayable card. An
+  // equal roll leaves the card alone, so Bludgeon's turn discount survives a
+  // roll of 3 and a Strike is unchanged by a roll of 1. freeToPlayOnce stays.
+  for (uint32_t seed = 0; seed < 12; ++seed) {
+    CombatState s = fight_holding({PotionId::SneckoOil});
+    s.card_rng = std::mt19937(seed);
+    Card bludgeon{CardId::Bludgeon};
+    set_turn_cost(bludgeon, 0);
+    bludgeon.free_once = true;
+    s.current_hand = {bludgeon, Card{CardId::Whirlwind}, Card{CardId::Wound}};
+    s.draw_pile.assign(5, Card{CardId::Strike});
+
+    std::mt19937 probe = s.card_rng;
+    std::vector<int> rolls;
+    for (int i = 0; i < 6; ++i) {  // Bludgeon, then the five drawn Strikes
+      rolls.push_back(std::uniform_int_distribution<int>(0, 3)(probe));
+    }
+
+    ASSERT_TRUE(apply_action(s, drink(PotionId::SneckoOil)));
+    ASSERT_EQ(s.current_hand.size(), 8u);
+    // Read through the layers, not instance_effective_cost: free_once makes
+    // the effective cost 0 whatever the roll.
+    const Card& b = s.current_hand[0];
+    EXPECT_EQ(turn_layer_cost(b), rolls[0] == 3 ? 0 : rolls[0])
+        << "seed " << seed;
+    EXPECT_TRUE(b.free_once) << "Snecko Oil does not clear it";
+    EXPECT_EQ(instance_effective_cost(s, s.current_hand[1]), kXCost);
+    EXPECT_EQ(s.current_hand[2].combat_cost, kNoCostOverride) << "Wound";
+    for (int i = 0; i < 5; ++i) {
+      EXPECT_EQ(instance_effective_cost(s, s.current_hand[3 + i]), rolls[1 + i])
+          << "seed " << seed << " Strike " << i;
+    }
+    EXPECT_EQ(s.card_rng, probe) << "exactly one roll per eligible card";
+  }
+}
+
+TEST(SneckoOil, SacredBarkDrawsTen) {
+  CombatState s = fight_holding({PotionId::SneckoOil}, {RelicId::SacredBark});
+  s.draw_pile.assign(12, Card{CardId::Strike});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::SneckoOil)));
+  EXPECT_EQ(s.current_hand.size(), 10u);
+  EXPECT_EQ(s.draw_pile.size(), 2u);
 }
 
 // ============================================================================

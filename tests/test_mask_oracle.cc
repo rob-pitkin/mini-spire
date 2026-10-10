@@ -163,7 +163,7 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
 
   // Potions (potion-effects.md §3.1), restated rather than asked of the
   // engine. Every held potion can be discarded. It can be drunk if its effect
-  // is built — the list of steps 1 and 2, restated here on purpose and widened
+  // is built — the list of steps 1 to 3, restated here on purpose and widened
   // as each step lands — at a living enemy if it targets one, else at slot 0.
   // Raw arithmetic: use is potion × target, discard one per potion.
   static const PotionId kBuilt[] = {
@@ -181,7 +181,10 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
       PotionId::AttackPotion,    PotionId::SkillPotion,
       PotionId::PowerPotion,     PotionId::ColorlessPotion,
       PotionId::ElixirPotion,    PotionId::GamblersBrew,
-      PotionId::LiquidMemories};
+      PotionId::LiquidMemories,
+      // Step 3: the card-play potions.
+      PotionId::DuplicationPotion, PotionId::DistilledChaos,
+      PotionId::SneckoOil};
   for (PotionId p : state.potions) {
     const int id = static_cast<int>(p);
     mask[kPotionDiscardBlock + id] = true;

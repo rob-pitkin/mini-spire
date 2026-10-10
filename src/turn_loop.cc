@@ -18,15 +18,25 @@ namespace minispire {
 namespace {
 
 // Debuffs decrement by 1 at end of the bearer's turn; remove at 0. Powers never
-// tick — decrement-ness is now the TYPE, so no per-effect denylist — with two
+// tick — decrement-ness is now the TYPE, so no per-effect denylist — with three
 // named exceptions, each losing one stack at the end of the player's turn:
-// Intangible, and Regen (Rob, 2026-10-04; potion-effects.md Q2). Everything
+// Intangible, Regen (Rob, 2026-10-04; potion-effects.md Q2) and Duplication
+// (potion-effects.md Q3). Everything
 // else is either permanent for the fight or removed wholesale at a named hook
 // (Flame Barrier, Rage).
 void tick_one_power(std::unordered_map<Power, int>& powers, Power p) {
   auto it = powers.find(p);
   if (it == powers.end()) return;
   if (--it->second <= 0) powers.erase(it);
+}
+
+// Spend one charge of a counted power (Double Tap, Duplication), removing it
+// at 0. False, with nothing spent, if there is no charge.
+bool spend_one_charge(std::unordered_map<Power, int>& powers, Power p) {
+  auto it = powers.find(p);
+  if (it == powers.end() || it->second <= 0) return false;
+  if (--it->second <= 0) powers.erase(it);
+  return true;
 }
 
 void tick_debuffs(std::unordered_map<Debuff, int>& debuffs) {
@@ -497,10 +507,7 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     // exhausted from hand by Second Wind or Fiend Fire is untouched, because
     // those never reach this pile move. Powers do not reach here at all, which
     // is StS's explicit `type != POWER` guard falling out of the branch above.
-    if (exhausts && state.has_relic(RelicId::StrangeSpoon)) {
-      std::uniform_int_distribution<int> coin(0, 1);
-      if (coin(state.card_rng) == 1) exhausts = false;
-    }
+    if (exhausts && strange_spoon_spares(state)) exhausts = false;
     pile_move.kind =
         exhausts ? ActionKind::ExhaustCard : ActionKind::DiscardCard;
     // played.card_id, NOT the card_id argument: since ROB-87 a card's id can
@@ -638,26 +645,48 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
   // Havoc: play the top card of the draw pile and force-exhaust it. Pushed as
   // a PlayCard action (the kind the effects-architecture doc specced for
   // exactly this) so the nested play is a flat queue step, not a nested call.
+  // Its target is rolled NOW, as Havoc is played — Havoc.use passes
+  // getRandomMonster(null, true, cardRandomRng) to PlayTopCardAction (T4).
   if (data.plays_top_of_draw) {
     Action a;
     a.kind = ActionKind::PlayCard;
     a.amount = kPlayFromDrawPile;
+    a.target = roll_card_target(state);
     q.push_back(a);
   }
-  // Double Tap: if a charge is up and this was an Attack, replay it for free.
-  // Queued LAST so the replay resolves after the first play's effects; the
-  // charge is consumed by the executor, not here.
-  if (data.type == CardType::Attack && ctx_play.enters_pile &&
-      get_status(state.character.powers, Power::DoubleTap) > 0) {
-    Action a;
-    a.kind = ActionKind::PlayCard;
-    a.amount = kPlayDoubleTapReplay;
-    a.card = card_id;
-    a.card_bonus_damage = played.bonus_damage;
-    a.card_upgrades = played.upgrades;
-    a.target = target;
-    a.replay_x = x;  // the first play's RAW X — the replay adds Chemical X itself
-    q.push_back(a);
+  // Double Tap (an Attack) and Duplication (any card): each replays this card
+  // once, free, at the same target with the same X. Queued LAST so a replay
+  // resolves after the first play's effects.
+  //
+  // The charge is spent HERE, as the card is played, not when the replay
+  // resolves (potion-effects.md T1): DoubleTapPower and DuplicationPower
+  // decrement in onUseCard and queue the copy. So a card Havoc plays before
+  // the replay resolves finds the charge already gone.
+  //
+  // A replay is never replayed itself (StS's purgeOnUse); enters_pile is false
+  // only for a replay. With both powers up an Attack is played three times.
+  // Double Tap goes first, in Power enum order — StS uses the order the powers
+  // were applied, but the two replays are identical, so the order cannot show.
+  if (ctx_play.enters_pile) {
+    int replays = 0;
+    if (data.type == CardType::Attack &&
+        spend_one_charge(state.character.powers, Power::DoubleTap)) {
+      ++replays;
+    }
+    if (spend_one_charge(state.character.powers, Power::Duplication)) {
+      ++replays;
+    }
+    for (int i = 0; i < replays; ++i) {
+      Action a;
+      a.kind = ActionKind::PlayCard;
+      a.amount = kPlayReplay;
+      a.card = card_id;
+      a.card_bonus_damage = played.bonus_damage;
+      a.card_upgrades = played.upgrades;
+      a.target = target;
+      a.replay_x = x;  // the first play's RAW X — the replay adds Chemical X
+      q.push_back(a);
+    }
   }
   // The card's choice (Stage 4c) normally queues LAST, after draw: Warcry draws
   // first and you then pick from the resulting hand. The card itself has
@@ -847,21 +876,26 @@ void handle_end_turn(CombatState& state) {
     check_enemy_terminal(state);
     if (state.outcome != Outcome::InProgress) return;
   }
-  // 1b. Tick character debuffs, and the TWO powers that tick.
+  // 1b. Tick character debuffs, and the THREE powers that tick.
   //
-  // Intangible (Rob, 2026-09-12) and Regen (Rob, 2026-10-04) are deliberate,
-  // named exceptions to "powers never tick" (see status_effect.h). Both are
-  // BUFFs in StS — beneficial, so neither can live in the debuff map, which
-  // would put it in the wrong observation block and route it through Artifact.
-  // Named here one by one rather than by a per-power tick list, so each
-  // exception stays one line and one name instead of becoming a general
-  // mechanism.
+  // Intangible (Rob, 2026-09-12), Regen (Rob, 2026-10-04) and Duplication
+  // (potion-effects.md Q3) are deliberate, named exceptions to "powers never
+  // tick" (see status_effect.h). All are BUFFs in StS — beneficial, so none can
+  // live in the debuff map, which would put it in the wrong observation block
+  // and route it through Artifact. Named here one by one rather than by a
+  // per-power tick list, so each exception stays one line and one name instead
+  // of becoming a general mechanism.
   //
   // Regen ticks AFTER the drain above, which healed by its current stacks —
   // StS's RegenAction heals, then decrements.
+  //
+  // Duplication's StS tick is atEndOfRound, after the enemy phase. Here it is
+  // indistinguishable: no card is played during the enemy phase, which is the
+  // only thing a charge could be spent on. (Intangible's is not — task #39.)
   tick_debuffs(state.character.debuffs);
   tick_one_power(state.character.powers, Power::Intangible);
   tick_one_power(state.character.powers, Power::Regen);
+  tick_one_power(state.character.powers, Power::Duplication);
   // 1c. Leftover energy is NOT discarded here. The turn-start refill is the
   // single authority on what energy a turn begins with (query.cc's
   // energy_after_turn_start), and it replaces the total for everyone who does

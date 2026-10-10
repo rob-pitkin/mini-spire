@@ -122,12 +122,13 @@ bool potion_effect_implemented(PotionId id) {
     case PotionId::ElixirPotion:
     case PotionId::GamblersBrew:
     case PotionId::LiquidMemories:
-      return true;
-    // Later steps. Fairy in a Bottle is never drinkable at all (§5.4), so it
-    // stays false even once its death intercept lands.
+    // Step 3: the card-play potions (§1.2).
     case PotionId::DuplicationPotion:
     case PotionId::DistilledChaos:
     case PotionId::SneckoOil:
+      return true;
+    // Later steps. Fairy in a Bottle is never drinkable at all (§5.4), so it
+    // stays false even once its death intercept lands.
     case PotionId::FairyPotion:
     case PotionId::SmokeBomb:
     case PotionId::EntropicBrew:

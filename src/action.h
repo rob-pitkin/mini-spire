@@ -175,8 +175,9 @@ void fire_relic_hooks_sequentially(CombatState& state, Hook hook);
 // Queue one potion's effects (docs/design/potion-effects.md §4), at Sacred
 // Bark's potency when it is held. `target` is the enemy slot for a potion that
 // targets one, ignored otherwise. Handles exactly the potions
-// potion_effect_implemented() reports; the caller checks that first.
-void push_potion_effects(const CombatState& state, PotionId id, int target,
+// potion_effect_implemented() reports; the caller checks that first. Not
+// const: Distilled Chaos rolls its targets here, at use (potion-effects.md T3).
+void push_potion_effects(CombatState& state, PotionId id, int target,
                          ActionQueue& q);
 
 // Drain the queue to completion: pop-execute until empty, short-circuiting on
@@ -270,6 +271,20 @@ bool apply_power(CombatState& state, const PowerApplication& app,
 // populated PendingChoice; `num_options == 0` means no legal option exists.
 PendingChoice build_choice(const CombatState& state, ChoiceKind kind,
                            CardId source_card);
+
+// The target of a card played off the top of the draw pile (Havoc, Mayhem,
+// Distilled Chaos): a uniformly random living enemy slot, rolled from the
+// card-random stream when the play is QUEUED, or kNoSlot if none is alive.
+// StS's getRandomMonster(null, true, cardRandomRng), passed to
+// PlayTopCardAction (potion-effects.md T3, T4).
+int roll_card_target(CombatState& state);
+
+// Strange Spoon: a card about to exhaust discards instead, half the time —
+// UseCardAction's spoonProc, a cardRandomRng.randomBoolean() for any card but
+// a Power. True when the spoon spares it; rolls only while the relic is held.
+// Shared by a played card's own exhaust and a top-of-draw card that could not
+// be used (potion-effects.md T5), which go through the same UseCardAction.
+bool strange_spoon_spares(CombatState& state);
 
 // Where a choice's options come from. The observation's source_pile float is
 // this value (decision-points.md §5.2), and it decides where a staged

@@ -367,6 +367,18 @@ Toolbox, and update `relic-effects.md` §7.
 - **Mayhem is Havoc as a recurring power, minus the Exhaust**, and it fires
   BEFORE the turn's draw, so it plays the card already on top. The two share one
   executor branch with a single flag between them.
+  > **Amended 2026-10-10 (potion-effects.md T4, T5):** Distilled Chaos joined
+  > that branch. All three now take a target rolled from `card_rng` when the
+  > play is queued, not at play time from the combat stream. A card that cannot
+  > be used is not played; it is discarded, or exhausted under Havoc or by its
+  > own Exhaust. Mayhem used to exhaust an unplayable card.
+  >
+  > ⚠️ **The timing above is wrong (found 2026-10-10, task #41).**
+  > `MayhemPower.atStartOfTurn` queues a wrapper action that queues the
+  > `PlayTopCardAction` at the BOTTOM when it runs, which is after the turn's
+  > `DrawCardAction`. The wiki says the same: "Mayhem activates *after* drawing
+  > cards at the start of the turn". The engine still plays the card that was
+  > on top before the draw.
 - **The Bomb's blast is unmodifiable, not unblockable.** It lands at the end of
   the player's turn, before the enemies act, so block an enemy gained on its
   previous turn is still standing and absorbs part of it. That is correct, and

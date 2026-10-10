@@ -146,6 +146,11 @@ enum class Power {
   DexterityDown, // turn end: lose `stacks` Dexterity, then remove self (Speed
                  // Potion). The Dexterity twin of StrengthDown, and like it
                  // debuff-typed: see power_is_debuff.
+  Duplication,   // the next `stacks` cards of ANY type are played twice
+                 // (Duplication Potion). Double Tap's shape without the Attack
+                 // filter. THE THIRD POWER THAT TICKS (potion-effects.md Q3):
+                 // DuplicationPower.atEndOfRound loses one, so with Sacred
+                 // Bark an unused charge carries into the next turn.
   None,          // sentinel: "no power" (default for unused fields)
 };
 
@@ -169,7 +174,7 @@ inline bool power_is_debuff(Power p) {
 // powers) because two of five is not worth a second table.
 inline constexpr int kNumDebuffs = 7;
 inline constexpr int kNumEnemyPowers = 7;
-inline constexpr int kNumPlayerPowers = 36;
+inline constexpr int kNumPlayerPowers = 37;
 
 // FUTURE (multi-enemy): Target { Character, Enemy } collapses any "the enemy"
 // to a single entity, which is unambiguous in v1 with one enemy. Multi-enemy

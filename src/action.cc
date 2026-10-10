@@ -245,6 +245,22 @@ void confuse_drawn_card(CombatState& state, Card& card) {
   card.free_once = false;
 }
 
+int roll_card_target(CombatState& state) {
+  std::vector<int> living;
+  for (std::size_t i = 0; i < state.enemies.size(); ++i) {
+    if (state.enemies[i].hp > 0) living.push_back(static_cast<int>(i));
+  }
+  if (living.empty()) return kNoSlot;
+  std::uniform_int_distribution<std::size_t> pick(0, living.size() - 1);
+  return living[pick(state.card_rng)];
+}
+
+bool strange_spoon_spares(CombatState& state) {
+  if (!state.has_relic(RelicId::StrangeSpoon)) return false;
+  std::uniform_int_distribution<int> coin(0, 1);
+  return coin(state.card_rng) == 1;
+}
+
 namespace {
 
 // Resolve a Target to the map to write into. Returns nullptr if the target
@@ -1361,7 +1377,7 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
 
 }  // namespace
 
-void push_potion_effects(const CombatState& state, PotionId id, int target,
+void push_potion_effects(CombatState& state, PotionId id, int target,
                          ActionQueue& q) {
   const int p = potion_potency(state, id);
   switch (id) {
@@ -1501,11 +1517,31 @@ void push_potion_effects(const CombatState& state, PotionId id, int target,
       q.push_back(a);
       break;
     }
+    case PotionId::DuplicationPotion:
+      // The next p cards are played twice (T2); spent per card (T1), and an
+      // unused charge loses one at end of round (Q3).
+      push_player_power(q, Power::Duplication, p);
+      break;
+    case PotionId::DistilledChaos:
+      // `for i < potency: addToBot(PlayTopCardAction(getRandomMonster(null,
+      // true, cardRandomRng), false))` — every target rolled NOW, before any
+      // card is played (T3), and no forced exhaust (Mayhem's mode).
+      for (int i = 0; i < p; ++i) {
+        Action a = make_action(ActionKind::PlayCard);
+        a.amount = kPlayTopOfDrawKeeping;
+        a.target = roll_card_target(state);
+        q.push_back(a);
+      }
+      break;
+    case PotionId::SneckoOil:
+      // Draw p, then randomize the hand's costs. Both addToBot, so a card
+      // Evolve draws during the draw arrives after the costs are rolled and
+      // keeps its own — the queue order reproduces that.
+      push_draw(q, p);
+      q.push_back(make_action(ActionKind::RandomizeHandCosts));
+      break;
     // Later steps of potion-effects.md §8; potion_effect_implemented() keeps
     // them out of the mask until then.
-    case PotionId::DuplicationPotion:
-    case PotionId::DistilledChaos:
-    case PotionId::SneckoOil:
     case PotionId::FairyPotion:
     case PotionId::SmokeBomb:
     case PotionId::EntropicBrew:
@@ -1568,9 +1604,15 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
       // Mayhem: play the top card of the draw pile, once per stack. These hooks
       // run BEFORE the turn's draw is queued, which is the correct order: the
       // card played is the one already on top, not one just drawn.
+      //
+      // Every stack's target is rolled now, before any card plays —
+      // MayhemPower.atStartOfTurn passes getRandomMonster(null, true,
+      // cardRandomRng) to each PlayTopCardAction (T4). So with two stacks the
+      // first card can kill the second one's target.
       for (int i = 0; i < mayhem; ++i) {
         Action a = make_action(ActionKind::PlayCard);
         a.amount = kPlayTopOfDrawKeeping;
+        a.target = roll_card_target(state);
         q.push_back(a);
       }
       // Self-Forming Clay's block, banked by last turn's HP losses. Granted
@@ -2044,6 +2086,24 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
     case ActionKind::DiscardCard:
       move_to_discard(state, a.as_card());
       break;
+    case ActionKind::RandomizeHandCosts:
+      // Snecko Oil (RandomizeHandCostAction): `if (card.cost < 0 ||
+      // card.cost == (newCost = random(3))) continue; cost = costForTurn =
+      // newCost`. Confusion's rule, applied to the whole hand at once, with
+      // two differences that both fall out of the source: the roll is skipped
+      // entirely for an X-cost or unplayable card (ours print unplayables at 0,
+      // so the flag excludes them), and freeToPlayOnce is left alone —
+      // Confusion clears it, this does not. An equal roll keeps a turn
+      // discount, as Confusion's does.
+      for (Card& c : state.current_hand) {
+        if (CARD_DATABASE.at(c.card_id).unplayable || combat_layer_cost(c) < 0) {
+          continue;
+        }
+        const int roll = std::uniform_int_distribution<int>(
+            0, kConfusionMaxCost)(state.card_rng);
+        if (roll != combat_layer_cost(c)) set_combat_cost(c, roll);
+      }
+      break;
     case ActionKind::UpgradeHand:
       // Armaments+: upgrade every card in hand, in place (Searing Blow bumps
       // its counter rather than swapping id).
@@ -2300,50 +2360,60 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       PlayContext pc;
       pc.pay_energy = false;      // both cases are free plays
       pc.take_from_hand = false;  // the card is not in hand
+      // Every card played this way is AUTOPLAYED in StS, and the card queue
+      // plays one only if canUse(player, its target): is_playable, and for a
+      // single-target card a target that is not dying (cardPlayable). A card
+      // that fails is not played at all — no effect and no on-play triggers
+      // (potion-effects.md T3, T5).
+      auto can_use = [&state](CardId id, int target) {
+        if (!is_playable(state, id)) return false;
+        if (!card_targets_enemy(CARD_DATABASE.at(id))) return true;
+        return valid_enemy_slot(state, target) && state.enemies[target].hp > 0;
+      };
       if (a.amount == kPlayFromDrawPile || a.amount == kPlayTopOfDrawKeeping) {
-        // Havoc and Mayhem. Reshuffle first if the draw pile is empty ("it will
-        // shuffle your discard pile into your draw pile and target the new top
-        // card").
+        // Havoc, Mayhem and Distilled Chaos: StS's PlayTopCardAction. Reshuffle
+        // first if the draw pile is empty ("it will shuffle your discard pile
+        // into your draw pile and target the new top card").
         if (state.draw_pile.empty()) reshuffle_discard_into_draw(state, q);
         if (state.draw_pile.empty()) break;
         const Card top = state.draw_pile.back();
         state.draw_pile.pop_back();
-        // An unplayable card (Dazed, Wound) still exhausts but resolves
-        // nothing. Routed through the ExhaustCard ACTION rather than a bare
-        // move_to_exhaust: that executor is the only place Feel No Pain, Dark
-        // Embrace and Sentinel's energy_when_exhausted fire, and "whenever a
-        // card is Exhausted" is unconditional on cause (ROB-85). Every other
-        // exhaust path in the engine already goes through it; this was the lone
-        // exception, so Havoc-into-Dazed silently skipped the hooks.
-        if (CARD_DATABASE.at(top.card_id).unplayable) {
-          Action ex = make_action(ActionKind::ExhaustCard);
-          ex.carry(top);
-          q.push_back(ex);
+        // Havoc says "and Exhaust it" (exhaustOnUseOnce); Mayhem and Distilled
+        // Chaos do not, so their card takes its normal fate and can come round
+        // again. That is the only difference, and why they share this branch.
+        const bool havoc = a.amount == kPlayFromDrawPile;
+        // The target was rolled when the play was queued (T3, T4), and may
+        // have died since — Distilled Chaos's first card killing the second's.
+        if (!can_use(top.card_id, a.target)) {
+          // Not played: UseCardAction with dontTriggerOnUseCard, so the card
+          // only goes to its pile. It exhausts under Havoc or by its own
+          // Exhaust and is discarded otherwise — Mayhem's Wound is discarded,
+          // which this branch used to get wrong by exhausting every unplayable
+          // card. An exhaust goes through the ExhaustCard ACTION, the one place
+          // Feel No Pain, Dark Embrace and Sentinel fire (ROB-85), and Strange
+          // Spoon applies, as it does in UseCardAction.
+          bool exhausts = havoc || CARD_DATABASE.at(top.card_id).exhaust;
+          if (exhausts && strange_spoon_spares(state)) exhausts = false;
+          Action move = make_action(exhausts ? ActionKind::ExhaustCard
+                                             : ActionKind::DiscardCard);
+          move.carry(top);
+          q.push_back(move);
           break;
         }
-        // Havoc says "and Exhaust it"; Mayhem does not, so its card takes its
-        // normal fate and can come round again. That is the only difference
-        // between the two, and it is why they share this branch.
-        pc.force_exhaust = a.amount == kPlayFromDrawPile;
+        pc.force_exhaust = havoc;
         pc.instance = top;
         pc.forced_x = 0;  // an X-cost card played this way gets X = 0
-        // The player chose no target, so auto-target at random.
-        const int slot = pick_random_living_enemy(state);
-        handle_play_card(state, top.card_id, slot < 0 ? 0 : slot, pc);
+        handle_play_card(state, top.card_id, std::max(a.target, 0), pc);
         break;
       }
-      // Double Tap's replay. Consume a charge here, at execution.
-      const int charges = get_status(state.character.powers, Power::DoubleTap);
-      if (charges <= 0) break;
-      if (charges - 1 <= 0) {
-        state.character.powers.erase(Power::DoubleTap);
-      } else {
-        state.character.powers[Power::DoubleTap] = charges - 1;
-      }
+      // A replay — Double Tap or Duplication, its charge already spent when the
+      // original was played (T1). The copy is purgeOnUse in StS, so one that
+      // cannot be used (its target died to the first play) simply vanishes.
+      if (!can_use(a.card, a.target)) break;
       pc.enters_pile = false;  // the first copy already went to its pile
       pc.instance = a.as_card();
       pc.forced_x = a.replay_x;  // "uses the same value of X as the first"
-      handle_play_card(state, a.card, a.target, pc);
+      handle_play_card(state, a.card, std::max(a.target, 0), pc);
       break;
     }
     case ActionKind::MultiplyStrength: {
