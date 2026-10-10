@@ -648,6 +648,16 @@ void push_draw(ActionQueue& q, int amount) {
   a.amount = amount;
   q.push_back(a);
 }
+// Gambler's Brew and Gambling Chip (GamblingChipAction): discard any number of
+// cards from hand, zero allowed, then draw that many. StS asks for 99 picks;
+// the hand limit bounds it the same way kMaxMultiSelectPicks does.
+Action discard_for_draw_request() {
+  Action a = make_action(ActionKind::RequestChoice);
+  a.amount = static_cast<int>(ChoiceKind::DiscardForDraw);
+  a.choice.max_picks = kMaxMultiSelectPicks;
+  a.choice.min_picks = 0;
+  return a;
+}
 void push_remove_player_power(ActionQueue& q, Power p) {
   Action a = make_action(ActionKind::RemovePower);
   a.target = kPlayerSlot;
@@ -974,6 +984,9 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
           // because Action::card defaults to Strike, and the RequestChoice
           // executor copies it straight into PendingChoice::source_card.
           a.card = CardId::None;
+          // One colorless card, mandatory, at FULL price — the relic hands it
+          // over and does not discount it (potion-effects.md §5.2).
+          a.choice.pool = GenerationPool::Colorless;
           q.push_back(a);
         }
         // Snecko Eye: Confused before the opening hand is drawn. StS queues the
@@ -1197,8 +1210,15 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
         break;
 
       case Hook::TurnStartPostDraw:
-        // Gambling Chip and Warped Tongs need a choice and an upgrade path
-        // respectively; both land in later batches.
+        // Gambling Chip: once per combat, after the opening hand — the relic's
+        // atTurnStartPostDraw behind an `activated` flag that
+        // atBattleStartPreDraw clears, which is turn 1's post-draw hook. So the
+        // cards Ring of the Snake and the Bottled relics add can be discarded
+        // (wiki). The choice is Gambler's Brew's (potion-effects.md §5.7).
+        if (relic.id == RelicId::GamblingChip && state.turn_number == 1) {
+          q.push_back(discard_for_draw_request());
+        }
+        // Warped Tongs needs an upgrade path and lands in a later batch.
         if (relic.id == RelicId::Pocketwatch) {
           // Turn 1 only resets: StS's firstTurn flag skips the draw, and there
           // was no previous turn to have played few cards in. The counter is
@@ -1432,15 +1452,57 @@ void push_potion_effects(const CombatState& state, PotionId id, int target,
       q.push_back(a);
       break;
     }
-    // Later steps of potion-effects.md §8; potion_effect_implemented() keeps
-    // them out of the mask until then.
+    // The Discovery potions (potion-effects.md §5.2): DiscoveryAction, so the
+    // chosen card costs 0 this turn and Sacred Bark's potency is the copies.
+    // The typed three may be skipped; the Colorless Potion may not, because
+    // DiscoveryAction passes `skippable = cardType != null` and the colorless
+    // constructor sets no type. No source card — a potion opened the menu.
     case PotionId::AttackPotion:
     case PotionId::SkillPotion:
     case PotionId::PowerPotion:
-    case PotionId::ColorlessPotion:
-    case PotionId::ElixirPotion:
+    case PotionId::ColorlessPotion: {
+      Action a = make_action(ActionKind::RequestChoice);
+      const bool colorless = id == PotionId::ColorlessPotion;
+      a.amount = static_cast<int>(colorless ? ChoiceKind::DiscoverColorlessCard
+                                            : ChoiceKind::DiscoverCard);
+      a.choice.copies = p;
+      a.choice.min_picks = colorless ? 1 : 0;
+      a.choice.arrives_free = true;
+      a.choice.pool = id == PotionId::AttackPotion  ? GenerationPool::ClassAttack
+                      : id == PotionId::SkillPotion ? GenerationPool::ClassSkill
+                      : id == PotionId::PowerPotion ? GenerationPool::ClassPower
+                                                    : GenerationPool::Colorless;
+      q.push_back(a);
+      break;
+    }
+    case PotionId::ElixirPotion: {
+      // ExhaustAction(isRandom=false, anyNumber=true, canPickZero=true): any
+      // number of cards from hand, zero allowed (§5.7).
+      Action a = make_action(ActionKind::RequestChoice);
+      a.amount = static_cast<int>(ChoiceKind::ExhaustCardInHand);
+      a.choice.max_picks = kMaxMultiSelectPicks;
+      a.choice.min_picks = 0;
+      q.push_back(a);
+      break;
+    }
     case PotionId::GamblersBrew:
-    case PotionId::LiquidMemories:
+      // Checked when the potion is used, not when the action runs: StS's use()
+      // tests the hand before it queues GamblingChipAction.
+      if (!state.current_hand.empty()) q.push_back(discard_for_draw_request());
+      break;
+    case PotionId::LiquidMemories: {
+      // BetterDiscardPileToHandAction(p, newCost=0): exactly p cards, not
+      // optional, each costing 0 this turn (§5.7). Sacred Bark makes it 2.
+      Action a = make_action(ActionKind::RequestChoice);
+      a.amount = static_cast<int>(ChoiceKind::DiscardToHand);
+      a.choice.max_picks = p;
+      a.choice.min_picks = p;
+      a.choice.arrives_free = true;
+      q.push_back(a);
+      break;
+    }
+    // Later steps of potion-effects.md §8; potion_effect_implemented() keeps
+    // them out of the mask until then.
     case PotionId::DuplicationPotion:
     case PotionId::DistilledChaos:
     case PotionId::SneckoOil:
@@ -1765,6 +1827,10 @@ int pick_random_living_enemy(CombatState& state) {
                                           static_cast<int>(living.size()) - 1);
   return living[pick(state.rng)];
 }
+
+// Defined with the rest of the choice code, below.
+void open_multi_select(CombatState& state, const PendingChoice& built,
+                       ActionQueue& q);
 
 void execute(CombatState& state, const Action& a, ActionQueue& q,
              ResolutionContext& ctx) {
@@ -2276,7 +2342,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       }
       pc.enters_pile = false;  // the first copy already went to its pile
       pc.instance = a.as_card();
-      pc.forced_x = a.copies;  // "uses the same value of X as the first"
+      pc.forced_x = a.replay_x;  // "uses the same value of X as the first"
       handle_play_card(state, a.card, a.target, pc);
       break;
     }
@@ -2422,15 +2488,16 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         // variable number of draws — and a variable draw count shifts every
         // later roll in the stream. A fixed three draws keeps replay stable
         // (Rob, 2026-09-19); the offer itself is identical.
-        // Discovery offers the CLASS pool; Toolbox the colorless one.
-        std::vector<CardId> candidates = generation_pool(
-            requested == ChoiceKind::DiscoverCard ? GenerationPool::ClassAny
-                                                  : GenerationPool::Colorless);
+        //
+        // The pool, skippability, copies and cost-0 are the opener's settings
+        // (potion-effects.md §5.2): Discovery rolls the whole class pool and is
+        // mandatory, the Attack/Skill/Power Potions roll one type and may be
+        // skipped, Toolbox and the Colorless Potion roll the colorless pool.
+        std::vector<CardId> candidates = generation_pool(a.choice.pool);
         PendingChoice pc;
         pc.kind = requested;
         pc.source_card = a.card;
-        pc.is_optional = false;  // "Adding one is mandatory" (wiki)
-        pc.copies = 1;
+        pc.apply(a.choice);
         const int wanted =
             std::min<int>(3, static_cast<int>(candidates.size()));
         for (int i = 0; i < wanted; ++i) {
@@ -2449,14 +2516,15 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // skipped — StS plays the card, the choice just has no legal target
       // (e.g. Exhume with an empty exhaust pile). No pause, drain continues.
       PendingChoice pc = build_choice(state, requested, a.card);
-      pc.copies = CARD_DATABASE.at(a.card).choice_copies;  // Dual Wield+ = 2
-      // Multi-select (Purity, Forethought+): the choice stays open for several
-      // picks, and Decline means "done" — so it is always optional, which also
-      // keeps the single-option auto-resolve below from stealing a pick the
-      // agent might not want to make.
-      pc.max_picks = CARD_DATABASE.at(a.card).choice_max_picks;
-      if (pc.max_picks > 1) pc.is_optional = true;
+      pc.apply(a.choice);  // the opener's settings (potion-effects.md S1)
       if (pc.num_options == 0) break;
+      // Multi-select (Purity, Forethought+, Elixir, Gambler's Brew, Liquid
+      // Memories under Sacred Bark): it stays open for several picks, and may
+      // finish here without pausing if the agent has no say in it.
+      if (pc.is_multi()) {
+        open_multi_select(state, pc, q);
+        break;
+      }
       if (pc.num_options == 1 && !pc.is_optional) {
         // Exactly one legal option: StS applies it without prompting ("if
         // there is only one card in your discard pile, it will automatically
@@ -2467,7 +2535,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         apply.kind = ActionKind::ApplyChoice;
         apply.carry(pc.options[0]);
         apply.amount = a.amount;
-        apply.copies = pc.copies;
+        apply.choice = a.choice;
         q.push_front(apply);
         break;
       }
@@ -2517,7 +2585,9 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         case ChoiceKind::CopyAttackOrPowerInHand:
           // Dual Wield: ADD copies; the original stays in hand. The + adds 2.
           // Copies inherit the instance state (a copied +10 Rampage is +10).
-          for (int i = 0; i < a.copies; ++i) add_card_to_hand(state, chosen);
+          for (int i = 0; i < a.choice.copies; ++i) {
+            add_card_to_hand(state, chosen);
+          }
           break;
         case ChoiceKind::ExhaustCardInHand:
           // Burning Pact / True Grit+: exhaust the chosen card. Queued as an
@@ -2547,19 +2617,43 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
             q.push_back(place);
           }
           break;
-        case ChoiceKind::DiscoverCard: {
-          // Discovery: the chosen card is a fresh copy that costs 0 this turn.
-          // It is generated, so it comes from no pile and nothing is removed.
-          Card made = chosen;
-          set_turn_cost(made, 0);  // DiscoveryAction: setCostForTurn(0)
-          add_card_to_hand(state, made);
-          break;
-        }
+        case ChoiceKind::DiscoverCard:
         case ChoiceKind::DiscoverColorlessCard:
-          // Toolbox: the card arrives at FULL price — the relic hands it over,
-          // it does not discount it. A full hand sends it to the discard, which
-          // is what add_card_to_hand already does.
-          add_card_to_hand(state, chosen);
+          // A generated card: it comes from no pile, so nothing is removed.
+          // Each copy costs 0 this turn when the opener says so — Discovery and
+          // the Discovery potions do (DiscoveryAction's setCostForTurn(0)),
+          // Toolbox does not. Copies go to hand one at a time while it has
+          // room and to the discard after, which is DiscoveryAction's table
+          // for 2 copies (potion-effects.md §5.2).
+          for (int i = 0; i < a.choice.copies; ++i) {
+            Card made = chosen;
+            if (a.choice.arrives_free) set_turn_cost(made, 0);
+            add_card_to_hand(state, made);
+          }
+          break;
+        case ChoiceKind::DiscardForDraw:
+          // Gambler's Brew and Gambling Chip are always multi-selects, which
+          // finish through push_multi_select_finish. A single pick means the
+          // same thing: discard it, then draw one, ahead of everything else.
+          if (take_from_pile(state.current_hand, chosen)) {
+            Action draw = make_action(ActionKind::DrawCards);
+            draw.amount = 1;
+            q.push_front(draw);
+            Action discard = make_action(ActionKind::DiscardCard);
+            discard.carry(chosen);
+            q.push_front(discard);
+          }
+          break;
+        case ChoiceKind::DiscardToHand:
+          // Liquid Memories: the card leaves the discard pile only if the hand
+          // has room. BetterDiscardPileToHandAction otherwise leaves it where
+          // it is, so it is not moved at all — not moved and put back.
+          if (static_cast<int>(state.current_hand.size()) < HAND_SIZE_LIMIT &&
+              take_from_pile(state.discard_pile, chosen)) {
+            Card moved = chosen;
+            if (a.choice.arrives_free) set_turn_cost(moved, 0);
+            state.current_hand.push_back(moved);
+          }
           break;
         case ChoiceKind::None:
           break;
@@ -2668,6 +2762,8 @@ bool card_qualifies(ChoiceKind kind, CardId id) {
     case ChoiceKind::ExhaustToHand:
     case ChoiceKind::ExhaustCardInHand:
     case ChoiceKind::HandToBottomOfDraw:
+    case ChoiceKind::DiscardForDraw:
+    case ChoiceKind::DiscardToHand:
       return true;  // any card in the source pile
     case ChoiceKind::DiscoverCard:
     case ChoiceKind::DiscoverColorlessCard:
@@ -2681,28 +2777,22 @@ bool card_qualifies(ChoiceKind kind, CardId id) {
   return false;
 }
 
-// Which pile does this choice draw its options from?
+// Which pile does this choice draw its options from? (An External choice has
+// none — its options are rolled — and is never built from a pile.)
 const std::vector<Card>& source_pile(const CombatState& state,
                                      ChoiceKind kind) {
-  switch (kind) {
-    case ChoiceKind::DiscardToTopOfDraw:
+  switch (choice_pile(kind)) {
+    case ChoicePile::Discard:
       return state.discard_pile;
-    case ChoiceKind::ExhaustToHand:
+    case ChoicePile::Exhaust:
       return state.exhaust_pile;
-    case ChoiceKind::DrawPileSkillToHand:
-    case ChoiceKind::DrawPileAttackToHand:
-      // The draw pile. Options are deduplicated by identity, so this reveals
-      // WHAT is in the pile but never its ORDER — the parity rule v2-spec.md
-      // §5.10 calls out, and the same reason StS shows an unordered grid.
+    case ChoicePile::Draw:
+      // Options are deduplicated by identity, so this reveals WHAT is in the
+      // pile but never its ORDER — the parity rule v2-spec.md §5.10 calls out,
+      // and the same reason StS shows an unordered grid.
       return state.draw_pile;
-    case ChoiceKind::UpgradeCardInHand:
-    case ChoiceKind::HandToTopOfDraw:
-    case ChoiceKind::CopyAttackOrPowerInHand:
-    case ChoiceKind::ExhaustCardInHand:
-    case ChoiceKind::HandToBottomOfDraw:
-    case ChoiceKind::DiscoverCard:  // no pile at all — the options are rolled
-    case ChoiceKind::DiscoverColorlessCard:
-    case ChoiceKind::None:
+    case ChoicePile::Hand:
+    case ChoicePile::External:
       break;
   }
   return state.current_hand;
@@ -2710,12 +2800,55 @@ const std::vector<Card>& source_pile(const CombatState& state,
 
 }  // namespace
 
-PendingChoice build_choice(const CombatState& state, ChoiceKind kind,
-                           CardId source_card) {
+ChoicePile choice_pile(ChoiceKind kind) {
+  switch (kind) {
+    case ChoiceKind::UpgradeCardInHand:
+    case ChoiceKind::HandToTopOfDraw:
+    case ChoiceKind::CopyAttackOrPowerInHand:
+    case ChoiceKind::ExhaustCardInHand:
+    case ChoiceKind::HandToBottomOfDraw:
+    case ChoiceKind::DiscardForDraw:
+      return ChoicePile::Hand;
+    case ChoiceKind::DrawPileSkillToHand:
+    case ChoiceKind::DrawPileAttackToHand:
+      return ChoicePile::Draw;
+    case ChoiceKind::DiscardToTopOfDraw:
+    case ChoiceKind::DiscardToHand:
+      return ChoicePile::Discard;
+    case ChoiceKind::ExhaustToHand:
+      return ChoicePile::Exhaust;
+    case ChoiceKind::DiscoverCard:
+    case ChoiceKind::DiscoverColorlessCard:
+      return ChoicePile::External;  // generated, not taken from a pile
+    case ChoiceKind::None:
+      break;
+  }
+  return ChoicePile::Hand;
+}
+
+namespace {
+
+// build_choice, holding `num_held` cards of the pile out of the offer — one
+// copy per entry. A staged pick from any pile but the hand is still IN the pile
+// (potion-effects.md §3.3), and must not be offered again.
+PendingChoice build_choice_holding(const CombatState& state, ChoiceKind kind,
+                                   CardId source_card, const Card* held,
+                                   int num_held) {
   PendingChoice pc;
   pc.kind = kind;
   pc.source_card = source_card;
   if (kind == ChoiceKind::None) return pc;
+
+  std::array<bool, kMaxMultiSelectPicks> held_used{};
+  auto is_held = [&](const Card& c) {
+    for (int j = 0; j < num_held; ++j) {
+      if (!held_used[j] && held[j].same_as(c)) {
+        held_used[j] = true;
+        return true;
+      }
+    }
+    return false;
+  };
 
   // One option per (CardId, cost column) — one per CardSelect action (v2-spec.md
   // §6.5). Copies sharing a pair differ only in what the action cannot name (a
@@ -2725,6 +2858,7 @@ PendingChoice build_choice(const CombatState& state, ChoiceKind kind,
   // take_from_pile finds and removes exactly it.
   for (const Card& c : source_pile(state, kind)) {
     if (!card_qualifies(kind, c.card_id)) continue;
+    if (is_held(c)) continue;
     const int column = cost_column(state, c);
     int existing = -1;
     for (int i = 0; i < pc.num_options; ++i) {
@@ -2752,50 +2886,142 @@ PendingChoice build_choice(const CombatState& state, ChoiceKind kind,
   return pc;
 }
 
-namespace {
+// Stage one multi-select pick. A hand pick leaves the hand now —
+// HandCardSelectScreen lifts it out — and a pick from any other pile stays put
+// until the finish (potion-effects.md §3.3). False, with nothing changed, if a
+// hand pick is not in the hand.
+bool stage_pick(CombatState& state, PendingChoice& pc, const Card& chosen) {
+  if (choice_pile(pc.kind) == ChoicePile::Hand &&
+      !take_from_pile(state.current_hand, chosen)) {
+    return false;
+  }
+  pc.staged[pc.picks_made++] = chosen;
+  return true;
+}
 
-// Finish a multi-select: every staged card's effect resolves now, together
-// (colorless-effects.md D1). Resolving per pick instead would let a Dark
-// Embrace draw land between two of Purity's exhausts, so the agent could see —
-// and pick — a card it had not drawn when the choice opened.
-bool finish_multi_select(CombatState& state) {
+// Rebuild an open multi-select's offer from what its pile holds now, keeping
+// its settings and staged picks. Staged hand picks have already left the hand;
+// any other pile's are held out of the offer.
+void rebuild_offer(const CombatState& state, PendingChoice& pc) {
+  const bool in_pile = choice_pile(pc.kind) != ChoicePile::Hand;
+  PendingChoice rebuilt =
+      build_choice_holding(state, pc.kind, pc.source_card, pc.staged.data(),
+                           in_pile ? pc.picks_made : 0);
+  rebuilt.picks_made = pc.picks_made;
+  rebuilt.staged = pc.staged;
+  rebuilt.apply(pc.settings());
+  pc = rebuilt;
+}
+
+// Settle a multi-select whose offer was just built: while the agent has no say
+// in it — one option, and Decline not yet legal — stage that option and
+// rebuild. A single pick applies a lone mandatory option without pausing, for
+// the same reason: a step with one legal action holds no decision (§5.7).
+// True while the choice stays open for the agent; false once it is finished,
+// with the pick limit reached or nothing left to offer.
+bool settle_multi_select(CombatState& state) {
   PendingChoice& pc = state.pending_choice;
-  const ChoiceKind kind = pc.kind;
-  const std::array<Card, kMaxMultiSelectPicks> staged = pc.staged;
-  const int count = pc.picks_made;
+  while (pc.picks_made < pc.max_picks && pc.num_options > 0) {
+    if (pc.is_optional || pc.num_options != 1) return true;
+    const bool staged = stage_pick(state, pc, pc.options[0]);
+    assert(staged && "an option of a hand choice must be in the hand");
+    (void)staged;
+    rebuild_offer(state, pc);
+  }
+  return false;
+}
 
-  // Clear the pause BEFORE resuming, for the same reason the single-pick path
-  // does: the resumed drain may request another choice.
-  pc = PendingChoice{};
-  ActionQueue q = state.suspended_queue;
-  state.suspended_queue = ActionQueue{};
-
+// Queue a finished multi-select's effects at the FRONT of `q`, in pick order,
+// ahead of the rest of whatever opened it. Every staged card resolves together
+// (colorless-effects.md D1): resolving per pick would let a Dark Embrace draw
+// land between two of Purity's exhausts, so the agent could see — and pick — a
+// card it had not drawn when the choice opened.
+void push_multi_select_finish(const PendingChoice& done, ActionQueue& q) {
+  // Gambler's Brew / Gambling Chip: GamblingChipAction queues the draw with
+  // addToTop and then discards synchronously, so the draw resolves right
+  // after the discards and ahead of everything else. Nothing picked, no draw.
+  if (done.kind == ChoiceKind::DiscardForDraw && done.picks_made > 0) {
+    Action draw = make_action(ActionKind::DrawCards);
+    draw.amount = done.picks_made;
+    q.push_front(draw);
+  }
   // Walk backwards because each push_front puts its action ahead of the last,
   // so the first card picked ends up first in the queue. Forethought+ depends
   // on that: the card chosen first sits nearest the top of the draw pile and is
-  // drawn first.
-  for (int i = count - 1; i >= 0; --i) {
+  // drawn first. Liquid Memories does too: with one slot left in the hand, the
+  // first pick is the one that gets it.
+  for (int i = done.picks_made - 1; i >= 0; --i) {
     Action a;
-    switch (kind) {
+    switch (done.kind) {
       case ChoiceKind::ExhaustCardInHand:
         a = make_action(ActionKind::ExhaustCard);
         break;
       case ChoiceKind::HandToBottomOfDraw:
         a = make_action(ActionKind::PlaceOnBottomOfDraw);
         break;
+      case ChoiceKind::DiscardForDraw:
+        a = make_action(ActionKind::DiscardCard);
+        break;
+      case ChoiceKind::DiscardToHand:
+        // Still in the discard pile. ApplyChoice moves it only if the hand
+        // has room, judged card by card as the hand fills.
+        a = make_action(ActionKind::ApplyChoice);
+        a.amount = static_cast<int>(done.kind);
+        a.choice = done.settings();
+        break;
       default:
-        continue;  // no other kind is multi-select today
+        continue;  // no other kind is a multi-select
     }
-    a.carry(staged[i]);
+    a.carry(done.staged[i]);
     q.push_front(a);
   }
+}
 
+// Open a multi-select from the RequestChoice executor, mid-drain. A choice the
+// agent has no say in finishes here, onto the live queue, without pausing.
+void open_multi_select(CombatState& state, const PendingChoice& built,
+                       ActionQueue& q) {
+  state.pending_choice = built;
+  PendingChoice& pc = state.pending_choice;
+  // BetterDiscardPileToHandAction's shortcut: a pile holding no more cards
+  // than the choice must take is taken whole, in pile order, with no screen.
+  // Only a minimum above 1 reaches it — Liquid Memories under Sacred Bark —
+  // since every other multi-select's minimum is 0.
+  std::vector<Card> qualifying;
+  for (const Card& c : source_pile(state, pc.kind)) {
+    if (card_qualifies(pc.kind, c.card_id)) qualifying.push_back(c);
+  }
+  if (static_cast<int>(qualifying.size()) <= pc.min_picks) {
+    for (const Card& c : qualifying) stage_pick(state, pc, c);
+  } else if (settle_multi_select(state)) {
+    return;  // open: the drain suspends on it
+  }
+  const PendingChoice done = pc;
+  pc = PendingChoice{};
+  push_multi_select_finish(done, q);
+}
+
+// Finish a multi-select the agent ended, by Decline or by its last pick, and
+// resume the suspended drain.
+bool finish_multi_select(CombatState& state) {
+  const PendingChoice done = state.pending_choice;
+  // Clear the pause BEFORE resuming, for the same reason the single-pick path
+  // does: the resumed drain may request another choice.
+  state.pending_choice = PendingChoice{};
+  ActionQueue q = state.suspended_queue;
+  state.suspended_queue = ActionQueue{};
+  push_multi_select_finish(done, q);
   ResolutionContext ctx;
   drain(state, q, ctx);
   return true;
 }
 
 }  // namespace
+
+PendingChoice build_choice(const CombatState& state, ChoiceKind kind,
+                           CardId source_card) {
+  return build_choice_holding(state, kind, source_card, nullptr, 0);
+}
 
 bool resolve_choice(CombatState& state, int option_index) {
   PendingChoice& pc = state.pending_choice;
@@ -2810,34 +3036,21 @@ bool resolve_choice(CombatState& state, int option_index) {
   }
 
   // Multi-select: a pick STAGES a card and the choice stays open. Decline means
-  // "done", and reaching the limit — or running out of options — finishes it.
+  // "done" once the minimum is met, and reaching the limit — or running out of
+  // options — finishes it. The offer is rebuilt after every pick, which is
+  // what keeps a second copy of the same card selectable: three Strikes can be
+  // picked one at a time.
   if (pc.is_multi()) {
     if (!declining) {
-      const Card chosen = pc.options[option_index];
-      // Both multi-select cards pick from the HAND. Staging takes the copy out
-      // now, which is what StS's selection screen shows, and is what keeps a
-      // second copy of the same card selectable: the offer is rebuilt from what
-      // remains, so three Strikes can be picked one at a time.
-      if (!take_from_pile(state.current_hand, chosen)) return false;
-      pc.staged[pc.picks_made++] = chosen;
-      if (pc.picks_made < pc.max_picks) {
-        PendingChoice rebuilt = build_choice(state, pc.kind, pc.source_card);
-        if (rebuilt.num_options > 0) {
-          rebuilt.copies = pc.copies;
-          rebuilt.is_optional = true;
-          rebuilt.max_picks = pc.max_picks;
-          rebuilt.picks_made = pc.picks_made;
-          rebuilt.staged = pc.staged;
-          pc = rebuilt;
-          return true;  // still open — the drain stays suspended
-        }
-      }
+      if (!stage_pick(state, pc, pc.options[option_index])) return false;
+      rebuild_offer(state, pc);
+      if (settle_multi_select(state)) return true;  // still open
     }
     return finish_multi_select(state);
   }
 
   const ChoiceKind kind = pc.kind;
-  const int copies = pc.copies;
+  const ChoiceSettings settings = pc.settings();
   const Card chosen =
       declining ? Card{CardId::Strike} : pc.options[option_index];
 
@@ -2853,7 +3066,7 @@ bool resolve_choice(CombatState& state, int option_index) {
     a.kind = ActionKind::ApplyChoice;
     a.carry(chosen);
     a.amount = static_cast<int>(kind);
-    a.copies = copies;
+    a.choice = settings;
     q.push_front(a);  // the choice applies before the card's remaining actions
   }
 

@@ -51,7 +51,7 @@ consumes a room — where excluding it would change the run's distribution.
 | case | why it breaks | resolution |
 |---|---|---|
 | **Match and Keep!** (shrine) | duplicate entities, face-down, 5-step | engine picks at random; no agent decision |
-| **Gambling Chip** (rare relic) | multi-select subset | engine applies a fixed policy (discard nothing) |
+| ~~**Gambling Chip** (rare relic)~~ | ~~multi-select subset~~ | ~~engine applies a fixed policy (discard nothing)~~ — superseded 2026-10-10: a real choice on the multi-select path (`potion-effects.md` S5, §5.7) |
 | **Frozen Eye** (shop relic) | conditional observability — *informational*, so auto-resolve does not apply | **excluded from the shop pool.** The only true exclusion. |
 
 The cost: a human would make these choices and the agent does not, so it

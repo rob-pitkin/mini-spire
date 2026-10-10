@@ -202,15 +202,21 @@ rather than the number.
 Appended (existing feature indices never move):
 
 ```
-header (kChoiceHeaderSize = 5 floats)
+header (kChoiceHeaderSize = 8 floats)
   [0] choice_pending          0 / 1          ← R4, mandatory
   [1] choice_kind             which decision  (ChoiceKind enum)
   [2] source_pile             hand/draw/discard/exhaust/external
+                              (choice_pile in action.h)
   [3] source_card             the card that caused the pause (CardId), or
                               CardId::None (= kNumCardTypes) when no card did:
-                              a relic opened the menu (Toolbox), and later a
+                              a relic or a potion opened the menu (Toolbox,
+                              Gambling Chip, the choice potions), and later a
                               shop or event screen will
-  [4] choice_is_optional      0 / 1          ← is option_skip legal
+  [4] choice_is_optional      0 / 1          ← may the agent decline NOW:
+                              picks_made ≥ min_picks
+  [5] copies                  how many copies the chosen card adds
+  [6] arrives_free            0 / 1, the chosen card costs 0 this turn
+  [7] picks_left              max_picks − picks_made
 
 slots (kNumOptionSlots × kChoiceSlotStride = 4 floats)
   [0] occupied                0 / 1
@@ -219,8 +225,21 @@ slots (kNumOptionSlots × kChoiceSlotStride = 4 floats)
   [3] cost_column             the cost column the option's action names
                               (v2-spec.md §6.5, added 2026-10-04)
 
+staged (kChoiceStagedSize = kNumCardTypes floats)
+  count of each card type staged in an open multi-select
+
 obs: 523 → 523 + 5 + 306 = 834   [102-card pool, 3-float slots; read kObsSize for current]
 ```
+
+> **Header 5 → 8, and the staged plane (Rob, 2026-10-05 and 2026-10-09;
+> potion-effects.md S6, S7).** A potion's menu has no source card, and Sacred Bark is not in the
+> combat observation, so "add 2 copies", "it costs 0 this turn" and "choose 2
+> cards" had nowhere to come from. The staged plane closes #33: a hand pick
+> leaves the hand plane when staged, and the agent saw it vanish without
+> knowing it had picked it. A discard pick (Liquid Memories) stays in the
+> discard plane and appears in the staged plane too, as StS's grid screen shows
+> it (potion-effects.md §3.3). Both sit inside the choice block, so the potion
+> block after it moved; it is addressed through `kPotionObsIndex`.
 
 > **Slot stride 3 → 4 (Rob, 2026-10-04).** Card selection is indexed by
 > (`CardId`, cost) since `v2-spec.md` §6.5, so two options can share a

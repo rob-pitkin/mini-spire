@@ -245,7 +245,7 @@ per §1.
 
 ---
 
-## 7. Status: 118 of 140 wired
+## 7. Status: 119 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -264,7 +264,7 @@ tree appears only on a comment line, so the discrepancy is not comment noise.
 One of the two counts used a different rule and neither recorded which, which is
 the whole argument for pinning the command here.
 
-The 22 remaining are not one backlog. **Most are blocked on engine pieces that
+The 21 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
@@ -277,7 +277,7 @@ have nothing to do with relics**, and those blockers are shared:
 | **No events** | Neow's Lament, Odd Mushroom, Warped Tongs, Spirit Poop, and the 5 Face Trader masks | 10 of the special-tier relics |
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
-| **Needs a choice screen** | Gambling Chip, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed). **A run-layer deck choice now exists** (§6.23, `pending_deck_choices`) — Empty Cage (remove 2) and Astrolabe (transform 3) need a new purpose on it, not a new mechanism |
+| **Needs a choice screen** | ~~Gambling Chip~~, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. ✅ **Gambling Chip wired** with potion step 2 (2026-10-10): it is Gambler's Brew's discard-any-then-draw choice on turn 1's post-draw hook (`potion-effects.md` §5.7), and it left `v2-spec.md` §9's divergence table. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed). **A run-layer deck choice now exists** (§6.23, `pending_deck_choices`) — Empty Cage (remove 2) and Astrolabe (transform 3) need a new purpose on it, not a new mechanism |
 | ~~**Nothing blocking**~~ | **0** — ✅ **cleared.** The `~` this row once carried was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. All 17 shipped: Juzu Bracelet and Tiny Chest in §6.18, the three Eggs in §6.19, Matryoshka and Ancient Tea Set in §6.20, Chemical X and Pocketwatch in §6.21, Dead Branch in §6.22, the three Bottled relics in §6.23, Singing Bowl and Wing Boots in §6.25, Unceasing Top in §6.26, Snecko Eye in §6.28 (on the cost layers of §6.27). Every remaining relic waits on another row | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics did need a card-selection screen at pickup, which §6.23 built; the Eggs did not (§6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
 | **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
 

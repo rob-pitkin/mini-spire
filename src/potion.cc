@@ -114,9 +114,7 @@ bool potion_effect_implemented(PotionId id) {
     case PotionId::HeartOfIron:
     case PotionId::CultistPotion:
     case PotionId::FruitJuice:
-      return true;
-    // Later steps. Fairy in a Bottle is never drinkable at all (§5.4), so it
-    // stays false even once its death intercept lands.
+    // Step 2: the choice potions (§5.2, §5.7).
     case PotionId::AttackPotion:
     case PotionId::SkillPotion:
     case PotionId::PowerPotion:
@@ -124,6 +122,9 @@ bool potion_effect_implemented(PotionId id) {
     case PotionId::ElixirPotion:
     case PotionId::GamblersBrew:
     case PotionId::LiquidMemories:
+      return true;
+    // Later steps. Fairy in a Bottle is never drinkable at all (§5.4), so it
+    // stays false even once its death intercept lands.
     case PotionId::DuplicationPotion:
     case PotionId::DistilledChaos:
     case PotionId::SneckoOil:

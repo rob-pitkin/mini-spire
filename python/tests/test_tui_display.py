@@ -180,12 +180,18 @@ def test_hand_panel_prints_each_copys_own_cost():
 
 
 class _StubView:
-    def __init__(self, source_card, kind, options, option_costs=None):
+    def __init__(self, source_card, kind, options, option_costs=None,
+                 pool=None, staged=(), arrives_free=False):
         self.active = True
         self.kind = kind
         self.source_card = source_card
         self.is_optional = False
         self.copies = 1
+        self.arrives_free = arrives_free
+        self.picks_left = 1
+        self.staged = list(staged)
+        self.pool = pool if pool is not None else getattr(
+            _core.GenerationPool, "None")
         self.options = options
         self.option_damage = [0] * len(options)
         self.option_costs = (
@@ -227,6 +233,48 @@ def test_a_relic_opened_choice_names_no_card():
     assert "Choose a Colorless card" in text, "the kind fell back to the generic prompt"
     assert "Strike" not in text
     assert "(none)" not in text, "the sentinel leaked into the header"
+
+
+def test_a_typed_discover_menu_names_its_card_type():
+    # potion-effects.md S2: the Attack, Skill and Power Potions share
+    # DiscoverCard with Discovery, so the prompt names the type from the pool.
+    view = _StubView(
+        screen.NO_SOURCE_CARD,
+        _core.ChoiceKind.DiscoverCard,
+        [_core.CardId.Inflame, _core.CardId.Metallicize],
+        pool=_core.GenerationPool.ClassPower,
+        arrives_free=True,
+    )
+    text = _render(screen.build_choice(_StubChoiceEnv(view))[0])
+    assert "Choose a Power to add to your hand" in text
+    assert "costs 0 this turn" in text
+
+
+def test_an_untyped_discover_menu_keeps_the_kind_prompt():
+    # The control: Discovery's whole-class pool has no type to name.
+    view = _StubView(
+        _core.CardId.Discovery,
+        _core.ChoiceKind.DiscoverCard,
+        [_core.CardId.Inflame, _core.CardId.Bludgeon],
+        pool=_core.GenerationPool.ClassAny,
+    )
+    text = _render(screen.build_choice(_StubChoiceEnv(view))[0])
+    assert "Choose a card to add to your hand" in text
+
+
+def test_staged_picks_are_listed():
+    # A staged hand pick has left both the hand and the offer, so the panel is
+    # the only place the player can see it (#33).
+    view = _StubView(
+        screen.NO_SOURCE_CARD,
+        _core.ChoiceKind.DiscardForDraw,
+        [_core.CardId.Defend],
+        staged=[_core.CardId.Strike, _core.CardId.Bash],
+    )
+    view.is_optional = True
+    text = _render(screen.build_choice(_StubChoiceEnv(view))[0])
+    assert "Selected: Strike, Bash" in text
+    assert "(s) done" in text
 
 
 def test_a_card_opened_choice_still_names_its_card():

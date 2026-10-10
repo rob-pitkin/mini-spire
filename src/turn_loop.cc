@@ -545,6 +545,14 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     a.kind = ActionKind::RequestChoice;
     a.amount = static_cast<int>(data.requests_choice);
     a.card = card_id;
+    // The card's own settings (potion-effects.md S1). A card's multi-select is
+    // "up to N" (Purity, Forethought+), and its single pick is mandatory: no
+    // card offers a skippable choice, so the minimum follows from the maximum.
+    a.choice.copies = data.choice_copies;
+    a.choice.max_picks = data.choice_max_picks;
+    a.choice.min_picks = data.choice_max_picks > 1 ? 0 : 1;
+    a.choice.arrives_free = data.choice_arrives_free;
+    a.choice.pool = data.choice_pool;
     q.push_back(a);
     // The deferred pile move lands after the choice — the card was in flight
     // for the whole of its own resolution.
@@ -648,7 +656,7 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     a.card_bonus_damage = played.bonus_damage;
     a.card_upgrades = played.upgrades;
     a.target = target;
-    a.copies = x;  // reuse the first play's RAW X — the replay adds Chemical X itself
+    a.replay_x = x;  // the first play's RAW X — the replay adds Chemical X itself
     q.push_back(a);
   }
   // The card's choice (Stage 4c) normally queues LAST, after draw: Warcry draws

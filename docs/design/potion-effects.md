@@ -1,9 +1,12 @@
 # Potion effects — design
 
-**Status:** rulings agreed with Rob on 2026-10-04 (§1). Steps in §8 are
-implemented in order; each lands as its own commit. **Step 1 done**
-(2026-10-05): 20 of 33 potions drinkable, every potion discardable, the
-observation block, Toy Ornithopter, Sacred Bark, debuff-typed powers (#30).
+**Status:** rulings agreed with Rob on 2026-10-04 (§1) and 2026-10-05/09
+(§1.1, step 2). Steps in §8 are implemented in order; each lands as its own
+commit. **Step 1 done** (2026-10-05): 20 of 33 potions drinkable, every potion
+discardable, the observation block, Toy Ornithopter, Sacred Bark, debuff-typed
+powers (#30). **Step 2 done** (2026-10-10): 27 of 33 drinkable — the four
+Discovery potions, Elixir, Gambler's Brew, Liquid Memories — plus Gambling Chip,
+minimum picks, and the choice header and staged plane (#33).
 
 Potions are first-class combat state (`v2-spec.md` §3.0.1): held in
 `CombatState::potions`, observable, and usable through the combat action space.
@@ -43,6 +46,18 @@ name and targeting already in `src/potion.cc`.
 | Q8 | Potion use during a pending choice | **Forbidden**, use and discard both. StS may allow it; Rob judges it changes no outcome or strategy, so it is not listed as a divergence. |
 | Q9 | Observation | Potions are observed in combat (§3.2). Outside combat, discard is always an available action and the belt is observed — a requirement on the run env (task #9). |
 | Q10 | TUI | A potion belt display with use (with targeting) and discard. Sequenced last; manual play-testing waits for a larger milestone. |
+
+### 1.1 Step 2 rulings (Rob, 2026-10-05; S7 2026-10-09)
+
+| # | question | ruling |
+|---|---|---|
+| S1 | Where a potion's choice gets its settings | On the `RequestChoice` action: copies, maximum picks, minimum picks, optional, the generation pool, and whether the chosen card costs 0 this turn. Cards fill them from `CARD_DATABASE` as before; potions fill them from potency. A potion's menu has no source card, like Toolbox's. |
+| S2 | Menu kinds for the Discovery potions | **No new kinds.** `DiscoverCard` serves Discovery and the Attack, Skill and Power Potions; `DiscoverColorlessCard` serves Toolbox and the Colorless Potion. The pool, skippability, cost-0 and copies are settings (S1). New: a class-Power pool, and a TUI prompt that names the card type. |
+| S3 | Liquid Memories with Sacred Bark ("choose exactly 2") | A **minimum-picks** setting: Decline is legal only once that many cards are picked. 0 for every other multi-select. |
+| S4 | Elixir and Gambler's Brew | Elixir reuses `ExhaustCardInHand`. Gambler's Brew gets a new kind, `DiscardForDraw`: discard every pick, then draw that many. Both allow 0 to a full hand. |
+| S5 | Gambling Chip | Becomes a real choice (it is Gambler's Brew at the start of combat) and leaves the `v2-spec.md` §9 divergence table. |
+| S6 | Staged picks are not observed (#33) | Fixed in step 2: a per-card-type count of staged picks in the choice block (§3.3). |
+| S7 | What the menu tells a human that the header does not (copies, cost 0 on arrival, picks left) | Three header floats (§3.3). A potion's menu has no source card, and Sacred Bark is not in the combat observation, so nothing else carries them. |
 
 ## 2. Using and discarding a potion
 
@@ -96,6 +111,34 @@ its position:
 | 33 | count held of each `PotionId` (`v2-spec.md` §5.6: a count vector, not slots) |
 | 1 | slot capacity (3, or 5 with Potion Belt); empty slots = capacity − sum of counts |
 
+### 3.3 The choice block (step 2)
+
+**Header (S7).** Three floats join the five-float header (pending, kind,
+source_pile, source_card, is_optional), each one something the screen tells a
+human:
+
+| float | content | why the agent cannot get it elsewhere |
+|---|---|---|
+| copies | how many copies the chosen card adds | "add 2 copies" is Sacred Bark's doubling, and relics are not observed in combat |
+| arrives free | 1 if the chosen card costs 0 this turn | Colorless Potion (free) and Toolbox (full price) share a kind and have no source card |
+| picks left | `max_picks − picks_made` | Liquid Memories' "choose 2" under Bark. Whether that many are required is `is_optional`, which now means "may stop now" (§5.7) |
+
+**Staged picks (S6, #33).** A plane of `kNumCardTypes` floats is appended to the
+choice block, after the option slots: how many cards of each type are staged in
+the open multi-select. A human sees the selected cards; until now the agent saw
+them vanish from the hand without knowing which it had picked. The potion block
+moves back by 270 floats; it is addressed through `kPotionObsIndex`, so nothing
+that reads the constant changes.
+
+What a staged pick looks like in the piles follows the StS screen:
+- **Hand choices** (Elixir, Gambler's Brew, Gambling Chip, Purity, Forethought+)
+  use `HandCardSelectScreen`, which removes a selected card from the hand
+  (`hand.removeCard`). The card leaves the hand plane and appears in the staged
+  plane.
+- **Discard choices** (Liquid Memories) use `GridCardSelectScreen`, which only
+  highlights a selected card. It stays in the discard pile and plane until the
+  choice finishes, and appears in the staged plane as well.
+
 ## 4. The potions
 
 "Bark" is the Sacred Bark value. "Exists" means the engine already has the
@@ -113,20 +156,20 @@ mechanism.
 | Swift Potion | Draw | 3 (6) | — | Exists |
 | Weak Potion | Weak on the target | 3 (6) | enemy | Exists |
 | Fear Potion | Vulnerable on the target | 3 (6) | enemy | Exists |
-| Attack / Skill / Power Potion | Choose 1 of 3 distinct class cards of that type (HEALING-tagged excluded), from `card_rng`; **skippable**; the card costs 0 this turn; Bark adds 2 copies | 1 (2) | — | Exists: DiscoverCard. **New**: typed pools, optional, copies (§5.2) |
-| Colorless Potion | As above from the colorless pool; **not skippable** | 1 (2) | — | As above |
+| Attack / Skill / Power Potion | Choose 1 of 3 distinct class cards of that type (HEALING-tagged excluded), from `card_rng`; **skippable**; the card costs 0 this turn; Bark adds 2 copies | 1 (2) | — | `DiscoverCard` with settings (S1, S2, §5.2). **New**: the class-Power pool |
+| Colorless Potion | As above from the colorless pool; **not skippable** (§5.2) | 1 (2) | — | `DiscoverColorlessCard` with settings (S2) |
 | Flex Potion | Strength + Strength Down | 5 (10) | — | Exists; debuff-typed per Q4 |
 | Speed Potion | Dexterity + Dexterity Down (end of turn: lose it, remove) | 5 (10) | — | **New**: Dexterity Down, debuff-typed (Q4) |
 | Blessing of the Forge | Upgrade every card in hand | — | — | Exists: UpgradeHand |
-| Elixir | Exhaust any number of cards in hand (zero allowed) | — | — | **New** ChoiceKind on the multi-select path |
+| Elixir | Exhaust any number of cards in hand (zero allowed) | — | — | `ExhaustCardInHand`, multi-select, 0 to a full hand (S4, §5.7) |
 | Regen Potion | End of the player's turn: heal p if alive, then p −= 1; removed at 0 | 5 (10) | — | **New**: Power::Regen (Q2) |
 | Ancient Potion | Artifact | 1 (2) | — | Exists |
 | Liquid Bronze | Thorns | 3 (6) | — | Exists |
-| Gambler's Brew | If the hand is non-empty: discard any number (zero allowed), then draw that many (the draw goes to the queue's front) | — | — | **New** ChoiceKind on the multi-select path |
+| Gambler's Brew | If the hand is non-empty: discard any number (zero allowed), then draw that many (the draw goes to the queue's front) | — | — | **New** `DiscardForDraw`, multi-select (S4, §5.7) |
 | Essence of Steel | Plated Armor | 4 (8) | — | Exists |
 | Duplication Potion | The next p cards of any type are played twice; expiry per Q3 | 1 (2) | — | **New**: Power::Duplication |
 | Distilled Chaos | Play the top p cards of the draw pile, not exhausting; each target is a random living enemy from `card_rng`, **all rolled at use** | 3 (6) | — | Exists: top-of-draw play (Mayhem). **New**: pre-rolled targets |
-| Liquid Memories | Discard pile → hand, costing 0 this turn. Empty discard: nothing. Discard size ≤ p: all of it, hand limit permitting. Else choose p, not optional | 1 (2) | — | **New** ChoiceKind: DiscardToHand |
+| Liquid Memories | Discard pile → hand, costing 0 this turn. Empty discard: nothing. Discard size ≤ p: all of it, hand limit permitting. Else choose exactly p | 1 (2) | — | **New** `DiscardToHand`; minimum picks (S3, §5.7) |
 | Heart of Iron | Metallicize | 6 (12) | — | Exists |
 | Cultist Potion | Ritual on the player: gain p Strength at the end of each of its turns, starting this one | 1 (2) | — | Q5 |
 | Fruit Juice | +p Max HP, healing the same amount | 5 (10) | — | Exists: GainMaxHp. Also out of combat (§6) |
@@ -156,13 +199,34 @@ key on HP loss, so they do see it.
 
 ### 5.2 Discovery potions
 
-The existing DiscoverCard machinery (three distinct cards from three fixed draws on
-`card_rng`, `colorless-effects.md` batch notes) gains a pool per card type, an
-optional flag, and a copy count. With 2 copies (Sacred Bark): both go to hand if
-they fit; at 9 cards one goes to hand and one to the discard; at 10 both go to the
-discard (`DiscoveryAction`). StS regenerates the choices on every frame of the
-action's update, so its draw count depends on frame rate; the fixed three draws are
-the reproducible model, as already ruled for Discovery.
+All four potions are `DiscoveryAction`, the action behind the Discovery card. Its
+constructors and `customCombatOpen(choices, text, skippable)` give the settings:
+
+| opened by | kind | pool | skippable | costs 0 this turn | copies |
+|---|---|---|---|---|---|
+| Discovery (card) | `DiscoverCard` | class, any type | no | yes | 1 |
+| Attack / Skill / Power Potion | `DiscoverCard` | class, that type | **yes** | yes | p (Bark: 2) |
+| Colorless Potion | `DiscoverColorlessCard` | colorless | **no** | yes | p (Bark: 2) |
+| Toolbox (relic) | `DiscoverColorlessCard` | colorless | no | **no** | 1 |
+
+Skippability is `customCombatOpen`'s third argument, which `DiscoveryAction`
+passes as `this.cardType != null`. The colorless constructor never sets a card
+type, so the Colorless Potion's screen has no skip button, the same as
+Discovery's. (Toolbox is not `DiscoveryAction`; its row is unchanged.) The pools
+come from `returnTrulyRandomCardInCombat(type)` and
+`returnTrulyRandomColorlessCardInCombat`: the obtainable rarity pools filtered to
+the type, HEALING-tagged cards excluded. The engine has every pool but the
+class Powers (14 cards); step 2 adds it.
+
+The existing machinery is unchanged: three distinct cards from three fixed draws
+on `card_rng` (`colorless-effects.md` batch notes). StS regenerates the choices
+on every frame of the action's update, so its draw count depends on frame rate;
+the fixed three draws are the reproducible model, as already ruled for Discovery.
+
+With 2 copies (Sacred Bark), each copy costs 0 this turn and goes to hand while
+it fits: at 8 cards or fewer both go to hand, at 9 one goes to hand and one to the
+discard, at 10 both go to the discard (`DiscoveryAction`). Adding the copies one
+at a time through `add_card_to_hand` gives exactly that table.
 
 ### 5.3 Debuff-typed powers (Q4, task #30)
 
@@ -208,6 +272,68 @@ obtains each into the first empty slot: Sozu or a full belt drops it, but the ro
 happen regardless. Out of combat it rolls with `limited=false`, and with Sozu rolls
 nothing at all.
 
+### 5.7 Multi-select choices: Elixir, Gambler's Brew, Gambling Chip, Liquid Memories
+
+These extend the sequential single-pick model (`colorless-effects.md` D1): each
+pick stages a card, Decline means "done", and every staged card resolves together
+when the choice finishes.
+
+**Minimum picks (S3).** Decline is legal once `picks_made ≥ min_picks`, so
+`is_optional` is recomputed on every rebuild instead of being fixed at `true` for
+a multi-select. When declining is illegal and exactly one option remains, the
+engine stages it without pausing. A single-pick choice already applies a lone
+mandatory option without pausing, and the reason carries over: a step with one
+legal action has no decision in it.
+
+| choice | kind | source | min | max | finish |
+|---|---|---|---|---|---|
+| Elixir | `ExhaustCardInHand` | hand | 0 | full hand | exhaust each, through `ExhaustCard` (Feel No Pain, Dark Embrace, Sentinel see it) |
+| Gambler's Brew | `DiscardForDraw` | hand | 0 | full hand | discard each, then draw that many at the front of the queue |
+| Gambling Chip | `DiscardForDraw` | hand | 0 | full hand | as Gambler's Brew |
+| Liquid Memories | `DiscardToHand` | discard | p | p | in pick order: to hand costing 0 this turn while it fits; otherwise left in the discard pile |
+
+"Full hand" is `kMaxMultiSelectPicks` (10, the hand limit). StS passes 99
+(`ExhaustAction(false, true, true)`, `GamblingChipAction`), which the hand bounds
+the same way.
+
+**Elixir** (`ExhaustAction(isRandom=false, anyNumber=true, canPickZero=true)`):
+an empty hand ends it. `anyNumber` skips the "exhaust the whole hand when it holds
+no more than `amount`" shortcut, so every non-empty hand opens the screen.
+
+**Gambler's Brew and Gambling Chip** (`GamblingChipAction`): `handCardSelectScreen`
+with 99 picks, any number, zero allowed. On confirm, if anything was picked it
+queues `DrawCardAction(n)` with `addToTop`, then moves each pick to the discard
+pile. Gambler's Brew opens it only if the hand is non-empty; Gambling Chip does not
+check, but an empty hand offers nothing, which the engine already skips. Each
+discard also calls `incrementDiscard` and `triggerOnManualDiscard`. The relics
+that react (Tingsha, Tough Bandages, Hovering Kite) and the cards (Reflex,
+Tactician, Eviscerate) are all Silent's, so neither has an Ironclad effect.
+
+**Gambling Chip's timing**: `atTurnStartPostDraw`, once per combat (its `activated`
+flag is reset in `atBattleStartPreDraw`). That is turn 1's `Hook::TurnStartPostDraw`,
+which `CombatStartPostDraw` already fires. The wiki agrees: it waits until the
+opening hand and the start-of-combat relics that add cards (Ring of the Snake,
+the Bottled relics) have resolved, so those cards can be discarded.
+
+**Liquid Memories** (`BetterDiscardPileToHandAction(p, newCost=0)`, not optional):
+- Empty discard pile: nothing.
+- Discard size ≤ p: no screen. Every card is taken in pile order, each to hand
+  costing 0 this turn while the hand has room; a card that does not fit stays in
+  the discard pile.
+- Otherwise `gridSelectScreen` for exactly p cards. The 4-argument `open` it uses
+  shows no cancel button outside upgrade, transform, purge or the shop, and the
+  screen closes only when p cards are selected. On close, each selected card in
+  turn goes to hand costing 0 if it fits, and otherwise stays where it is.
+
+A grid-selected card never leaves the discard pile while the screen is open
+(§3.3), so the engine does not take a staged discard card out of its pile. It
+leaves it in place and excludes it from the rebuilt offer. A card that does not
+fit in the hand at the finish therefore stays at its original position, as in
+StS.
+
+**Sacred Bark** doubles Liquid Memories' p (1 → 2). Elixir, Gambler's Brew and
+Gambling Chip read no potency.
+
 ## 6. Run layer
 
 - Out-of-combat use: Blood Potion (direct heal), Fruit Juice, Entropic Brew (§5.6),
@@ -231,7 +357,9 @@ nothing at all.
    them, §5.1); debuff-typed powers and Speed Potion (§5.3); Regen (Q2); Cultist
    (Q5).
 2. **Choice potions:** Attack, Skill, Power, Colorless (§5.2); Liquid Memories;
-   Elixir; Gambler's Brew.
+   Elixir; Gambler's Brew (§5.7). With them: choice settings on `RequestChoice`
+   (S1), minimum picks (S3), Gambling Chip as a real choice (S5), and the
+   staged-picks plane (S6, §3.3).
 3. **Card-play potions:** Duplication, Distilled Chaos, Snecko Oil.
 4. **Fairy in a Bottle and Lizard Tail** (§5.4, task #5).
 5. **Smoke Bomb** (§5.5).

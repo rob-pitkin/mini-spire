@@ -57,6 +57,14 @@ struct ChoiceView {
   CardId source_card = CardId::None;
   bool is_optional = false;
   int copies = 1;
+  // The rest of what the menu tells a human (potion-effects.md §3.3): whether
+  // the chosen card costs 0 this turn, how many more picks may be made, the
+  // cards staged so far, and the pool a Discover menu rolled from — the TUI
+  // names the card type from it ("Choose a Power card").
+  bool arrives_free = false;
+  int picks_left = 0;
+  std::vector<CardId> staged;
+  GenerationPool pool = GenerationPool::None;
   std::vector<CardId> options;
   // Per-option effective damage, parallel to `options`. Lets the TUI show two
   // Rampages apart ("Rampage (8)" vs "Rampage (13)"); 0 for non-attacks.
@@ -130,18 +138,28 @@ class CombatEnv {
   static constexpr int kNumPilePlanes = 4 + kNumCostPlanes;
   static constexpr int kPileObsSize = kNumPilePlanes * kNumCardTypes;
 
-  // Choice block (Stage 4c; docs/design/decision-points.md §5.2). A 5-float
-  // header plus one 4-float descriptor per option slot. Appended last so every
-  // existing feature index keeps its position.
-  //   header: pending, kind, source_pile, source_card, is_optional
+  // Choice block (Stage 4c; docs/design/decision-points.md §5.2). An 8-float
+  // header, one 4-float descriptor per option slot, then the staged picks.
+  //   header: pending, kind, source_pile, source_card, is_optional,
+  //           copies, arrives_free, picks_left
   //   slot:   occupied, card id, instance damage, cost column
+  //   staged: count of each card type staged in an open multi-select
   // The cost column is the one the option's CardSelect action names (v2-spec.md
   // §6.5). Without it a pile choice — Exhume, Headbutt — offers actions whose
   // costs the agent cannot see: the mask is not an observation.
-  static constexpr int kChoiceHeaderSize = 5;
+  //
+  // The last three header floats and the staged plane are what the menu shows
+  // a human (potion-effects.md §3.3, S6/S7): "add 2 copies", "it costs 0 this
+  // turn", "choose 2 cards", and the cards already selected. A potion's menu has
+  // no source card, and Sacred Bark is not observed in combat, so nothing else
+  // carries them. is_optional means "may stop now", so with picks_left it also
+  // says how many picks are still required.
+  static constexpr int kChoiceHeaderSize = 8;
   static constexpr int kChoiceSlotStride = 4;
-  static constexpr int kChoiceObsSize =
-      kChoiceHeaderSize + kNumOptionSlots * kChoiceSlotStride;
+  static constexpr int kChoiceStagedSize = kNumCardTypes;
+  static constexpr int kChoiceObsSize = kChoiceHeaderSize +
+                                        kNumOptionSlots * kChoiceSlotStride +
+                                        kChoiceStagedSize;
 
   // Index of the turn-number float. Exposed because it is NOT kObsSize - 1:
   // the choice block sits after it. The TUI computed it that way and spent

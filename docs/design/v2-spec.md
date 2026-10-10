@@ -67,7 +67,7 @@ it exists. Sections not listed here have no code behind them yet.
 | 4.2 | potion drops, elite relics, treasure chests | ✅ `run_state.cc` |
 | 4.3 | shops: 5 class cards + 2 colorless + 3 relics + 3 potions, pricing, sale slot, removal | ✅ **complete** — the colorless slots landed with the colorless card effects |
 | 5.1 | `RelicId` (140) and `PotionId` (33) vocabularies | ✅ `relic.{h,cc}`, `potion.{h,cc}` |
-| 3.0.1 | relics/potions as first-class `CombatState` | ✅ held, observed and usable; relic effects 118/140 (`relic-effects.md` §7), potion effects 20/33 (`potion-effects.md` §8 step 1) |
+| 3.0.1 | relics/potions as first-class `CombatState` | ✅ held, observed and usable; relic effects 119/140 (`relic-effects.md` §7), potion effects 27/33 (`potion-effects.md` §8 steps 1–2) |
 | 4.4 | Neow | ❌ |
 | 8 | rest sites (rest / smith) | ✅ `run_state.cc` |
 | 5 | the v2 observation | ❌ — the env still emits v1.0.0's 1,772 floats |
@@ -1838,8 +1838,13 @@ would change the run's distribution.
 | case | policy |
 |---|---|
 | **Match and Keep!** (shrine: 12 face-down cards, 6 pairs, duplicate entities) | engine picks uniformly at random |
-| **Gambling Chip** (discard *any number* — a subset choice) | engine discards nothing |
 | **Frozen Eye** (shows draw-pile *order*; informational, so auto-resolve does not apply) | **excluded from the shop pool** — the only true exclusion |
+
+> **Gambling Chip left this table (Rob, 2026-10-05).** It was listed as "engine
+> discards nothing" because the engine could not express "discard any number".
+> Multi-select (`colorless-effects.md` D1) added that for Purity, and Gambling
+> Chip is now a real choice: Gambler's Brew's at the start of combat
+> (`potion-effects.md` S5, §5.7).
 
 **The cost:** a human makes these choices and the agent does not. A bounded,
 documented parity divergence, strictly smaller than removing the content.
@@ -1851,7 +1856,6 @@ footnote in a design doc. The full list to publish:
 | divergence | why |
 |---|---|
 | Match and Keep! resolved at random | subset choice over duplicate entities |
-| Gambling Chip discards nothing | subset choice |
 | Frozen Eye excluded from the shop pool | reveals draw-pile *order*; no way to show it |
 | Neow always offers 4 blessings | no cross-run state exists (§8) |
 | Relic order is insertion order | §5.4 — a real parity defect |
@@ -1907,6 +1911,12 @@ a real multi-select case arrives.
 > resolves together once the choice finishes. See `colorless-effects.md` D1.
 > This section's table still stands for any future subset choice that cannot be
 > framed that way.
+>
+> **Amended 2026-10-10:** two rows of that table are now built, inside the
+> sequential model. The "currently selected" plane is the choice block's staged
+> plane (`potion-effects.md` §3.3, #33), and a minimum-picks setting covers
+> "choose exactly N" (Liquid Memories under Sacred Bark, S3). Gambling Chip, the
+> case this section deferred, is a real choice.
 
 **Why this is not the mistake `decision-points.md` records making.** That mistake
 was shipping a *positional* channel that v2 then had to tear out — the shape was
@@ -2023,8 +2033,8 @@ a Linear board disagrees with it, the spec wins.
    design was built around). ⚠️ Lift/Toke/Dig need relics.
 7. Shops ✅ — all 14 slots stock, including the 2 colorless ones, which waited
    on the colorless card effects (`colorless-effects.md`). Relic and potion
-   effects are the remainder of this step: relics 118/140
-   (`relic-effects.md` §7), potions 20/33 (`potion-effects.md` §8).
+   effects are the remainder of this step: relics 119/140
+   (`relic-effects.md` §7), potions 27/33 (`potion-effects.md` §8).
    Events ❌.
 8. Bosses → **M5: an agent that completes a run**.
 

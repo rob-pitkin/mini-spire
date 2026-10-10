@@ -430,9 +430,14 @@ enum class ChoiceKind {
   DrawPileSkillToHand,      // Secret Technique: a Skill from the draw pile
   DrawPileAttackToHand,     // Secret Weapon: an Attack from the draw pile
   HandToBottomOfDraw,       // Forethought: hand -> BOTTOM of the draw pile
-  DiscoverColorlessCard,    // Toolbox: pick 1 of 3 generated COLORLESS cards.
-                            // Discovery's shape with the other pool, and no
-                            // cost discount — the relic just hands it over.
+  DiscoverColorlessCard,    // Toolbox, Colorless Potion: pick 1 of 3
+                            // generated COLORLESS cards. Discovery's shape
+                            // with the other pool; whether the card arrives
+                            // free is a setting (Toolbox: no, the potion: yes).
+  DiscardForDraw,           // Gambler's Brew, Gambling Chip: discard any
+                            // number from hand, then draw that many
+  DiscardToHand,            // Liquid Memories: discard pile -> hand, costing 0
+                            // this turn
   // v2.0.0 (map / shop / events) appends here — no encoding change.
 };
 
@@ -444,7 +449,7 @@ enum class ChoiceKind {
 // HandToBottomOfDraw, DiscoverColorlessCard) shipped UNBOUND: nothing counted
 // the enum, and the test that iterates the bound members could not see what
 // was missing from it. Bump this when adding a kind, and the test says where.
-inline constexpr int kNumChoiceKinds = 12;
+inline constexpr int kNumChoiceKinds = 14;
 
 // Which cards a card exhausts wholesale from the hand. Sever Soul's variant
 // (non-attacks, no scaling) predates this and stays on its own flag.
@@ -471,9 +476,15 @@ enum class GenerationPool : uint8_t {
   None,         // not a generator
   Colorless,    // Jack of All Trades, Transmutation, Magnetism
   ClassAny,     // Discovery — any type from the class pool
-  ClassAttack,  // Infernal Blade, Metamorphosis — class Attacks only
-  ClassSkill,   // Chrysalis — class Skills only
+  ClassAttack,  // Infernal Blade, Metamorphosis, Attack Potion — class Attacks
+  ClassSkill,   // Chrysalis, Skill Potion — class Skills only
+  ClassPower,   // Power Potion — class Powers only
 };
+
+// How many GenerationPools exist, INCLUDING None (which is bound, like
+// ChoiceKind::None). A Python test compares it with the bound members, so a
+// new pool cannot ship unbound.
+inline constexpr int kNumGenerationPools = 6;
 
 // Which of a card's three cost layers an effect writes (relic-effects.md
 // §6.27). The layers live on the CARD INSTANCE, because "this card costs 0" is a
@@ -805,6 +816,14 @@ struct CardData {
   // positional value in the 189 original CARD_DATABASE rows. The compiler
   // caught it that time; the next one might not.
   int choice_max_picks = 1;
+  // --- Choice settings that used to be implied by the kind (potion-effects.md
+  // S1). Appended, like every block above. ---
+  //
+  // Discovery: where its three options are rolled from, and whether the chosen
+  // card costs 0 this turn. The kind no longer implies either, because the
+  // Discovery potions and Toolbox share Discovery's kinds with other settings.
+  GenerationPool choice_pool = GenerationPool::None;
+  bool choice_arrives_free = false;
 };
 
 // What a card becomes when upgraded (Armaments; v2's rest-site smith).
@@ -1183,24 +1202,51 @@ inline constexpr int kNumOptionSlots = kNumCardTypes;
 // number", which the hand limit bounds.
 inline constexpr int kMaxMultiSelectPicks = 10;
 
+// What a choice may do, carried by the RequestChoice action that opens it and
+// by the ApplyChoice that answers it (potion-effects.md S1). A card fills it from
+// CARD_DATABASE, a potion from its potency, a relic from its own rule — one
+// executor for all three. It used to be read from the card that opened the
+// menu, and a potion is not a card.
+struct ChoiceSettings {
+  int copies = 1;     // Dual Wield+; a Discovery potion under Sacred Bark
+  int max_picks = 1;  // > 1 makes a multi-select (colorless-effects.md D1)
+  // Picks required before Decline is legal (S3): 1 for a mandatory single
+  // pick, 0 for a skippable one or an "up to N" multi-select, and Liquid
+  // Memories under Sacred Bark needs exactly 2.
+  int min_picks = 1;
+  // The chosen card costs 0 this turn: Discovery and the Discovery potions do
+  // this, Toolbox does not (potion-effects.md §5.2).
+  bool arrives_free = false;
+  // Where a Discover kind rolls its three options; None for a pile choice.
+  GenerationPool pool = GenerationPool::None;
+};
+
 struct PendingChoice {
   ChoiceKind kind = ChoiceKind::None;
   // The card that caused the pause, or None when no card did — a relic
-  // (Toolbox) or, later, a shop or event screen. Defaulting this to Strike
-  // meant a relic's menu reported Strike as its source, in the obs and on
-  // screen both.
+  // (Toolbox), a potion, or later a shop or event screen. Defaulting this to
+  // Strike meant a relic's menu reported Strike as its source, in the obs and
+  // on screen both.
   CardId source_card = CardId::None;
-  bool is_optional = false;             // may the agent decline?
+  // May the agent decline RIGHT NOW? picks_made >= min_picks, recomputed every
+  // time the offer is rebuilt — so a Liquid Memories that needs two picks is
+  // not optional until both are staged.
+  bool is_optional = false;
   int copies = 1;                       // Dual Wield+ adds 2
+  int min_picks = 1;                    // ChoiceSettings::min_picks
+  bool arrives_free = false;            // ChoiceSettings::arrives_free
+  GenerationPool pool = GenerationPool::None;  // for the TUI's prompt
   // Multi-select (colorless-effects.md D1): the choice stays open for up to
-  // `max_picks` SEQUENTIAL single picks, and Decline means "done" — which is
-  // why a multi-select choice is always optional.
+  // `max_picks` SEQUENTIAL single picks, and Decline means "done" once
+  // `min_picks` have been made.
   //
-  // A picked card is STAGED: it leaves its pile immediately, which is what StS
-  // shows (a selected card lifts out of the hand) and is what makes "it leaves
-  // the offer" fall out even when you hold three Strikes and pick two. Every
-  // staged card's effect resolves TOGETHER at the finish, so a Dark Embrace
-  // draw can never land between two picks.
+  // A picked card is STAGED, and where it sits while staged follows the StS
+  // screen (potion-effects.md §3.3). A HAND pick leaves the hand at once —
+  // HandCardSelectScreen lifts it out — which is what makes "it leaves the
+  // offer" fall out even when you hold three Strikes and pick two. A DISCARD
+  // pick (Liquid Memories' grid screen) stays in the pile and is excluded from
+  // the rebuilt offer instead. Every staged card's effect resolves TOGETHER at
+  // the finish, so a Dark Embrace draw can never land between two picks.
   int max_picks = 1;
   int picks_made = 0;
   std::array<Card, kMaxMultiSelectPicks> staged{};
@@ -1212,6 +1258,26 @@ struct PendingChoice {
 
   bool active() const { return kind != ChoiceKind::None; }
   bool is_multi() const { return max_picks > 1; }
+
+  // Take on a choice's settings, and derive whether it can be declined now.
+  // Set picks_made first: is_optional is read from it.
+  void apply(const ChoiceSettings& s) {
+    copies = s.copies;
+    max_picks = s.max_picks;
+    min_picks = s.min_picks;
+    arrives_free = s.arrives_free;
+    pool = s.pool;
+    is_optional = picks_made >= min_picks;
+  }
+  ChoiceSettings settings() const {
+    ChoiceSettings s;
+    s.copies = copies;
+    s.max_picks = max_picks;
+    s.min_picks = min_picks;
+    s.arrives_free = arrives_free;
+    s.pool = pool;
+    return s;
+  }
 };
 
 // The upgraded form of `id`, or `id` itself if it cannot be upgraded. Total —
@@ -1620,11 +1686,15 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
        CardData d = colorless("Discovery", 1, CardType::Skill);
        d.exhaust = true;
        d.requests_choice = ChoiceKind::DiscoverCard;
+       d.choice_pool = GenerationPool::ClassAny;
+       d.choice_arrives_free = true;
        return d;
      }()},
     {CardId::DiscoveryPlus, [] {
        CardData d = colorless("Discovery+", 1, CardType::Skill);
        d.requests_choice = ChoiceKind::DiscoverCard;
+       d.choice_pool = GenerationPool::ClassAny;
+       d.choice_arrives_free = true;
        return d;
      }()},
 
@@ -2479,6 +2549,19 @@ inline const std::vector<CardId>& generatable_class_skill_pool() {
   return pool;
 }
 
+// Power Potion's pool: the class pool filtered to Powers
+// (returnTrulyRandomCardInCombat(POWER)). No Ironclad Power is HEALING-tagged.
+inline const std::vector<CardId>& generatable_class_power_pool() {
+  static const std::vector<CardId> pool = [] {
+    std::vector<CardId> v;
+    for (CardId id : generatable_class_pool()) {
+      if (CARD_DATABASE.at(id).type == CardType::Power) v.push_back(id);
+    }
+    return v;
+  }();
+  return pool;
+}
+
 // The pool for one generator kind. Returned by reference — these are built once.
 inline const std::vector<CardId>& generation_pool(GenerationPool pool) {
   switch (pool) {
@@ -2490,6 +2573,8 @@ inline const std::vector<CardId>& generation_pool(GenerationPool pool) {
       return generatable_class_attack_pool();
     case GenerationPool::ClassSkill:
       return generatable_class_skill_pool();
+    case GenerationPool::ClassPower:
+      return generatable_class_power_pool();
     case GenerationPool::None:
       break;
   }

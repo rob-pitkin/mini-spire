@@ -48,6 +48,38 @@ void add_second_enemy(CombatState& s) {
   s.enemies.push_back(make_jaw_worm(s.rng));
 }
 
+// Answer option i of the open choice through the action space, as the agent
+// would: CardSelect at the option's (CardId, cost column).
+bool pick(CombatState& s, int i) {
+  const Card& o = s.pending_choice.options[i];
+  return apply_action(s, encode_action(ActionBlock::CardSelect,
+                                       static_cast<int>(o.card_id), 0,
+                                       cost_column(s, o)));
+}
+
+// The option index offering `id`, or -1.
+int option_of(const CombatState& s, CardId id) {
+  for (int i = 0; i < s.pending_choice.num_options; ++i) {
+    if (s.pending_choice.options[i].card_id == id) return i;
+  }
+  return -1;
+}
+
+bool decline(CombatState& s) {
+  return apply_action(s, encode_action(ActionBlock::Decline));
+}
+
+int count_of(const std::vector<Card>& pile, CardId id) {
+  return static_cast<int>(std::count_if(
+      pile.begin(), pile.end(), [id](const Card& c) { return c.card_id == id; }));
+}
+
+std::vector<Card> cards(std::initializer_list<CardId> ids) {
+  std::vector<Card> out;
+  for (CardId id : ids) out.push_back(Card{id});
+  return out;
+}
+
 // ============================================================================
 // Use and discard (§2, §3.1)
 // ============================================================================
@@ -86,7 +118,7 @@ TEST(PotionActions, OnlyHeldPotionsAreLit) {
 TEST(PotionActions, APotionNotYetBuiltCanBeDiscardedButNotDrunk) {
   // Potions land in steps (§8); until its step, a potion is masked off rather
   // than doing nothing. Fairy in a Bottle is never drinkable (§5.4).
-  for (PotionId p : {PotionId::AttackPotion, PotionId::FairyPotion,
+  for (PotionId p : {PotionId::DuplicationPotion, PotionId::FairyPotion,
                      PotionId::SmokeBomb, PotionId::EntropicBrew}) {
     CombatState s = fight_holding({p});
     const auto mask = valid_actions(s);
@@ -401,6 +433,349 @@ TEST(PotionEffects, OrangePelletsRemovesStrengthAndDexterityDown) {
 }
 
 // ============================================================================
+// Step 2: the Discovery potions (§5.2)
+//
+// The three offered cards are rolled, so these tests assert only what holds for
+// every roll — the type, distinctness, pool membership — or overwrite option 0
+// with a known card before answering.
+// ============================================================================
+
+TEST(DiscoveryPotions, TypedPotionsOfferThreeDistinctCardsOfTheirType) {
+  const struct {
+    PotionId potion;
+    CardType type;
+    GenerationPool pool;
+  } cases[] = {
+      {PotionId::AttackPotion, CardType::Attack, GenerationPool::ClassAttack},
+      {PotionId::SkillPotion, CardType::Skill, GenerationPool::ClassSkill},
+      {PotionId::PowerPotion, CardType::Power, GenerationPool::ClassPower},
+  };
+  for (const auto& c : cases) {
+    CombatState s = fight_holding({c.potion});
+    ASSERT_TRUE(apply_action(s, drink(c.potion))) << potion_name(c.potion);
+    const PendingChoice& pc = s.pending_choice;
+    ASSERT_EQ(pc.kind, ChoiceKind::DiscoverCard) << potion_name(c.potion);
+    EXPECT_EQ(pc.source_card, CardId::None) << "a potion opened it, not a card";
+    EXPECT_EQ(pc.pool, c.pool);
+    ASSERT_EQ(pc.num_options, 3);
+    const auto& pool = generation_pool(c.pool);
+    for (int i = 0; i < 3; ++i) {
+      const CardId id = pc.options[i].card_id;
+      EXPECT_EQ(CARD_DATABASE.at(id).type, c.type) << card_name(id);
+      EXPECT_NE(std::find(pool.begin(), pool.end(), id), pool.end())
+          << card_name(id) << " is not in the pool";
+      for (int j = 0; j < i; ++j) EXPECT_NE(pc.options[j].card_id, id);
+    }
+  }
+}
+
+TEST(DiscoveryPotions, ThePowerPoolIsExactlyTheClassPowers) {
+  // returnTrulyRandomCardInCombat(POWER): the obtainable class pools filtered
+  // to Powers, healing cards excluded. Checked over the whole class pool.
+  const auto& powers = generation_pool(GenerationPool::ClassPower);
+  for (CardId id : generation_pool(GenerationPool::ClassAny)) {
+    const bool is_power = CARD_DATABASE.at(id).type == CardType::Power;
+    const bool in_pool =
+        std::find(powers.begin(), powers.end(), id) != powers.end();
+    EXPECT_EQ(is_power, in_pool) << card_name(id);
+  }
+  EXPECT_GE(powers.size(), 3u) << "too few Powers to offer three distinct";
+}
+
+TEST(DiscoveryPotions, TheTypedPotionsMayBeSkipped) {
+  CombatState s = fight_holding({PotionId::SkillPotion});
+  s.current_hand = cards({CardId::Strike});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::SkillPotion)));
+  EXPECT_TRUE(s.pending_choice.is_optional);
+  EXPECT_TRUE(valid_actions(s)[encode_action(ActionBlock::Decline)]);
+  ASSERT_TRUE(decline(s));
+  EXPECT_FALSE(s.pending_choice.active());
+  EXPECT_EQ(s.current_hand.size(), 1u) << "skipping adds nothing";
+}
+
+TEST(DiscoveryPotions, TheColorlessPotionCannotBeSkipped) {
+  // DiscoveryAction passes skippable = (cardType != null), and the colorless
+  // constructor sets no type.
+  CombatState s = fight_holding({PotionId::ColorlessPotion});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::ColorlessPotion)));
+  const PendingChoice& pc = s.pending_choice;
+  ASSERT_EQ(pc.kind, ChoiceKind::DiscoverColorlessCard);
+  EXPECT_FALSE(pc.is_optional);
+  EXPECT_FALSE(valid_actions(s)[encode_action(ActionBlock::Decline)]);
+  EXPECT_FALSE(decline(s));
+  const auto& pool = generation_pool(GenerationPool::Colorless);
+  for (int i = 0; i < pc.num_options; ++i) {
+    EXPECT_NE(std::find(pool.begin(), pool.end(), pc.options[i].card_id),
+              pool.end());
+  }
+}
+
+TEST(DiscoveryPotions, TheChosenCardCostsZeroThisTurn) {
+  for (PotionId p : {PotionId::AttackPotion, PotionId::ColorlessPotion}) {
+    CombatState s = fight_holding({p});
+    ASSERT_TRUE(apply_action(s, drink(p)));
+    // A known 3-cost card in place of whatever was rolled.
+    s.pending_choice.options[0] = Card{CardId::Bludgeon};
+    ASSERT_TRUE(pick(s, 0)) << potion_name(p);
+    ASSERT_EQ(s.current_hand.size(), 1u);
+    EXPECT_EQ(s.current_hand[0].card_id, CardId::Bludgeon);
+    EXPECT_EQ(instance_effective_cost(s, s.current_hand[0]), 0)
+        << potion_name(p);
+  }
+}
+
+TEST(DiscoveryPotions, SacredBarkAddsTwoCopies) {
+  CombatState s = fight_holding({PotionId::PowerPotion}, {RelicId::SacredBark});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::PowerPotion)));
+  EXPECT_EQ(s.pending_choice.copies, 2);
+  s.pending_choice.options[0] = Card{CardId::DemonForm};
+  ASSERT_TRUE(pick(s, 0));
+  ASSERT_EQ(count_of(s.current_hand, CardId::DemonForm), 2);
+  for (const Card& c : s.current_hand) {
+    EXPECT_EQ(instance_effective_cost(s, c), 0) << "each copy is free";
+  }
+}
+
+TEST(DiscoveryPotions, TwoCopiesFollowDiscoveryActionsHandLimitTable) {
+  // DiscoveryAction with 2 copies: 8 or fewer in hand, both to hand; 9, one to
+  // hand and one to the discard; 10, both to the discard.
+  const struct {
+    int hand;
+    int to_hand;
+    int to_discard;
+  } cases[] = {{8, 2, 0}, {9, 1, 1}, {10, 0, 2}};
+  for (const auto& c : cases) {
+    CombatState s =
+        fight_holding({PotionId::AttackPotion}, {RelicId::SacredBark});
+    s.current_hand.assign(c.hand, Card{CardId::Defend});
+    ASSERT_TRUE(apply_action(s, drink(PotionId::AttackPotion)));
+    s.pending_choice.options[0] = Card{CardId::Bludgeon};
+    ASSERT_TRUE(pick(s, 0));
+    EXPECT_EQ(count_of(s.current_hand, CardId::Bludgeon), c.to_hand)
+        << "hand of " << c.hand;
+    EXPECT_EQ(count_of(s.discard_pile, CardId::Bludgeon), c.to_discard)
+        << "hand of " << c.hand;
+  }
+}
+
+// ============================================================================
+// Step 2: Elixir, Gambler's Brew, Liquid Memories (§5.7)
+// ============================================================================
+
+TEST(Elixir, OpensAnyNumberChoiceThatCanStopAtZero) {
+  CombatState s = fight_holding({PotionId::ElixirPotion});
+  s.current_hand = cards({CardId::Strike, CardId::Defend, CardId::Bash});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::ElixirPotion)));
+  const PendingChoice& pc = s.pending_choice;
+  ASSERT_EQ(pc.kind, ChoiceKind::ExhaustCardInHand);
+  EXPECT_EQ(pc.source_card, CardId::None);
+  EXPECT_EQ(pc.max_picks, kMaxMultiSelectPicks);
+  EXPECT_TRUE(pc.is_optional) << "zero cards is a legal answer";
+  ASSERT_TRUE(decline(s));
+  EXPECT_EQ(s.current_hand.size(), 3u);
+  EXPECT_TRUE(s.exhaust_pile.empty());
+}
+
+TEST(Elixir, ExhaustsEveryPickWhenTheChoiceEnds) {
+  CombatState s = fight_holding({PotionId::ElixirPotion});
+  s.character.powers[Power::FeelNoPain] = 3;
+  s.current_hand = cards({CardId::Strike, CardId::Defend, CardId::Bash});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::ElixirPotion)));
+  ASSERT_TRUE(pick(s, option_of(s, CardId::Strike)));
+  EXPECT_TRUE(s.exhaust_pile.empty()) << "staged, not exhausted yet";
+  ASSERT_TRUE(pick(s, option_of(s, CardId::Defend)));
+  ASSERT_TRUE(decline(s));
+  EXPECT_EQ(count_of(s.exhaust_pile, CardId::Strike), 1);
+  EXPECT_EQ(count_of(s.exhaust_pile, CardId::Defend), 1);
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].card_id, CardId::Bash);
+  EXPECT_EQ(s.character.current_block, 6) << "Feel No Pain saw both exhausts";
+}
+
+TEST(Elixir, TakingTheWholeHandEndsTheChoice) {
+  CombatState s = fight_holding({PotionId::ElixirPotion});
+  s.current_hand = cards({CardId::Strike, CardId::Defend});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::ElixirPotion)));
+  ASSERT_TRUE(pick(s, 0));
+  ASSERT_TRUE(pick(s, 0));
+  EXPECT_FALSE(s.pending_choice.active()) << "nothing left to offer";
+  EXPECT_TRUE(s.current_hand.empty());
+  EXPECT_EQ(s.exhaust_pile.size(), 2u);
+}
+
+TEST(Elixir, AnEmptyHandOpensNothing) {
+  CombatState s = fight_holding({PotionId::ElixirPotion});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::ElixirPotion)));
+  EXPECT_FALSE(s.pending_choice.active());
+  EXPECT_EQ(held(s, PotionId::ElixirPotion), 0) << "still drunk";
+}
+
+TEST(GamblersBrew, DiscardsThePicksThenDrawsThatMany) {
+  CombatState s = fight_holding({PotionId::GamblersBrew});
+  s.current_hand = cards({CardId::Strike, CardId::Defend, CardId::Bash});
+  // back() is the top of the draw pile.
+  s.draw_pile = cards({CardId::Bludgeon, CardId::Clothesline, CardId::Cleave});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::GamblersBrew)));
+  ASSERT_EQ(s.pending_choice.kind, ChoiceKind::DiscardForDraw);
+  EXPECT_TRUE(s.pending_choice.is_optional);
+  ASSERT_TRUE(pick(s, option_of(s, CardId::Strike)));
+  ASSERT_TRUE(pick(s, option_of(s, CardId::Defend)));
+  ASSERT_TRUE(decline(s));
+  EXPECT_EQ(count_of(s.discard_pile, CardId::Strike), 1);
+  EXPECT_EQ(count_of(s.discard_pile, CardId::Defend), 1);
+  ASSERT_EQ(s.current_hand.size(), 3u);
+  EXPECT_EQ(count_of(s.current_hand, CardId::Bash), 1);
+  EXPECT_EQ(count_of(s.current_hand, CardId::Cleave), 1);
+  EXPECT_EQ(count_of(s.current_hand, CardId::Clothesline), 1);
+  ASSERT_EQ(s.draw_pile.size(), 1u);
+  EXPECT_EQ(s.draw_pile[0].card_id, CardId::Bludgeon);
+}
+
+TEST(GamblersBrew, PickingNothingDrawsNothing) {
+  CombatState s = fight_holding({PotionId::GamblersBrew});
+  s.current_hand = cards({CardId::Strike});
+  s.draw_pile = cards({CardId::Bludgeon});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::GamblersBrew)));
+  ASSERT_TRUE(decline(s));
+  EXPECT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.draw_pile.size(), 1u);
+  EXPECT_TRUE(s.discard_pile.empty());
+}
+
+TEST(GamblersBrew, TheDiscardsLandBeforeTheDraw) {
+  // GamblingChipAction discards synchronously and draws after. With an empty
+  // draw pile the draw reshuffles the discard, so the cards just discarded
+  // come straight back. Drawing first would find nothing to draw.
+  CombatState s = fight_holding({PotionId::GamblersBrew});
+  s.current_hand = cards({CardId::Strike, CardId::Defend});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::GamblersBrew)));
+  ASSERT_TRUE(pick(s, 0));
+  ASSERT_TRUE(pick(s, 0));
+  EXPECT_FALSE(s.pending_choice.active());
+  EXPECT_EQ(count_of(s.current_hand, CardId::Strike), 1);
+  EXPECT_EQ(count_of(s.current_hand, CardId::Defend), 1);
+  EXPECT_TRUE(s.discard_pile.empty());
+}
+
+TEST(GamblersBrew, AnEmptyHandOpensNothing) {
+  CombatState s = fight_holding({PotionId::GamblersBrew});
+  s.draw_pile = cards({CardId::Bludgeon});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::GamblersBrew)));
+  EXPECT_FALSE(s.pending_choice.active());
+  EXPECT_EQ(s.draw_pile.size(), 1u);
+}
+
+TEST(LiquidMemories, AnEmptyDiscardDoesNothing) {
+  CombatState s = fight_holding({PotionId::LiquidMemories});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::LiquidMemories)));
+  EXPECT_FALSE(s.pending_choice.active());
+  EXPECT_TRUE(s.current_hand.empty());
+}
+
+TEST(LiquidMemories, ALoneCardReturnsWithoutAskingAndCostsZero) {
+  CombatState s = fight_holding({PotionId::LiquidMemories});
+  s.discard_pile = cards({CardId::Bludgeon});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::LiquidMemories)));
+  EXPECT_FALSE(s.pending_choice.active());
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(s.current_hand[0].card_id, CardId::Bludgeon);
+  EXPECT_EQ(instance_effective_cost(s, s.current_hand[0]), 0);
+  EXPECT_TRUE(s.discard_pile.empty());
+}
+
+TEST(LiquidMemories, OneMandatoryPickFromTheDiscard) {
+  CombatState s = fight_holding({PotionId::LiquidMemories});
+  s.discard_pile = cards({CardId::Strike, CardId::Bludgeon});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::LiquidMemories)));
+  const PendingChoice& pc = s.pending_choice;
+  ASSERT_EQ(pc.kind, ChoiceKind::DiscardToHand);
+  EXPECT_FALSE(pc.is_optional);
+  EXPECT_FALSE(pc.is_multi());
+  EXPECT_FALSE(decline(s));
+  ASSERT_TRUE(pick(s, option_of(s, CardId::Bludgeon)));
+  ASSERT_EQ(s.current_hand.size(), 1u);
+  EXPECT_EQ(instance_effective_cost(s, s.current_hand[0]), 0);
+  ASSERT_EQ(s.discard_pile.size(), 1u);
+  EXPECT_EQ(s.discard_pile[0].card_id, CardId::Strike);
+}
+
+TEST(LiquidMemories, AFullHandLeavesThePickInTheDiscard) {
+  CombatState s = fight_holding({PotionId::LiquidMemories});
+  s.current_hand.assign(HAND_SIZE_LIMIT, Card{CardId::Defend});
+  s.discard_pile = cards({CardId::Strike, CardId::Bludgeon});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::LiquidMemories)));
+  ASSERT_TRUE(pick(s, option_of(s, CardId::Strike)));
+  EXPECT_EQ(s.current_hand.size(), static_cast<std::size_t>(HAND_SIZE_LIMIT));
+  // Not moved and put back: still where it was, under the Bludgeon.
+  ASSERT_EQ(s.discard_pile.size(), 2u);
+  EXPECT_EQ(s.discard_pile[0].card_id, CardId::Strike);
+  EXPECT_EQ(s.discard_pile[1].card_id, CardId::Bludgeon);
+}
+
+TEST(LiquidMemories, SacredBarkRequiresExactlyTwoPicks) {
+  CombatState s =
+      fight_holding({PotionId::LiquidMemories}, {RelicId::SacredBark});
+  s.discard_pile = cards({CardId::Strike, CardId::Defend, CardId::Bludgeon});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::LiquidMemories)));
+  ASSERT_TRUE(s.pending_choice.is_multi());
+  EXPECT_EQ(s.pending_choice.min_picks, 2);
+  EXPECT_FALSE(s.pending_choice.is_optional);
+  EXPECT_FALSE(valid_actions(s)[encode_action(ActionBlock::Decline)]);
+  ASSERT_TRUE(pick(s, option_of(s, CardId::Bludgeon)));
+  EXPECT_FALSE(s.pending_choice.is_optional) << "one of two picked";
+  EXPECT_FALSE(decline(s));
+  ASSERT_TRUE(pick(s, option_of(s, CardId::Strike)));
+  EXPECT_FALSE(s.pending_choice.active()) << "two picked: finished";
+  EXPECT_EQ(count_of(s.current_hand, CardId::Bludgeon), 1);
+  EXPECT_EQ(count_of(s.current_hand, CardId::Strike), 1);
+  for (const Card& c : s.current_hand) {
+    EXPECT_EQ(instance_effective_cost(s, c), 0);
+  }
+  ASSERT_EQ(s.discard_pile.size(), 1u);
+  EXPECT_EQ(s.discard_pile[0].card_id, CardId::Defend);
+}
+
+TEST(LiquidMemories, AStagedPickStaysInTheDiscardButLeavesTheOffer) {
+  // The grid screen highlights a pick; it does not lift it out (§3.3).
+  CombatState s =
+      fight_holding({PotionId::LiquidMemories}, {RelicId::SacredBark});
+  s.discard_pile = cards({CardId::Strike, CardId::Defend, CardId::Bludgeon});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::LiquidMemories)));
+  ASSERT_TRUE(pick(s, option_of(s, CardId::Strike)));
+  EXPECT_EQ(s.discard_pile.size(), 3u);
+  EXPECT_EQ(option_of(s, CardId::Strike), -1);
+  EXPECT_EQ(s.pending_choice.picks_made, 1);
+  EXPECT_EQ(s.pending_choice.staged[0].card_id, CardId::Strike);
+}
+
+TEST(LiquidMemories, SacredBarkTakesASmallDiscardWholeInPileOrder) {
+  // BetterDiscardPileToHandAction: a discard of no more than p cards is taken
+  // without a screen, bottom card first. With one slot left, the bottom card
+  // gets it — the agent is not offered a choice StS does not give.
+  CombatState s =
+      fight_holding({PotionId::LiquidMemories}, {RelicId::SacredBark});
+  s.current_hand.assign(HAND_SIZE_LIMIT - 1, Card{CardId::Defend});
+  s.discard_pile = cards({CardId::Strike, CardId::Bludgeon});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::LiquidMemories)));
+  EXPECT_FALSE(s.pending_choice.active());
+  EXPECT_EQ(count_of(s.current_hand, CardId::Strike), 1);
+  ASSERT_EQ(s.discard_pile.size(), 1u);
+  EXPECT_EQ(s.discard_pile[0].card_id, CardId::Bludgeon);
+}
+
+TEST(LiquidMemories, PicksWithNoAlternativeAreMadeWithoutPausing) {
+  // Three identical Strikes and two required picks: every step would have one
+  // legal action, so none is shown.
+  CombatState s =
+      fight_holding({PotionId::LiquidMemories}, {RelicId::SacredBark});
+  s.discard_pile = cards({CardId::Strike, CardId::Strike, CardId::Strike});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::LiquidMemories)));
+  EXPECT_FALSE(s.pending_choice.active());
+  EXPECT_EQ(count_of(s.current_hand, CardId::Strike), 2);
+  EXPECT_EQ(count_of(s.discard_pile, CardId::Strike), 1);
+}
+
+// ============================================================================
 // Observation (§3.2)
 // ============================================================================
 
@@ -425,6 +800,102 @@ TEST(PotionObservation, AStandaloneFightHasThreeSlots) {
   CombatEnv env;
   env.reset(0);
   EXPECT_FLOAT_EQ(env.obs()[CombatEnv::kPotionObsIndex + kNumPotions], 3.0f);
+}
+
+// The choice block's offsets, from the published constants.
+constexpr int kChoiceBase = CombatEnv::kTurnObsIndex + 1;
+constexpr int kStagedBase = kChoiceBase + CombatEnv::kChoiceHeaderSize +
+                            kNumOptionSlots * CombatEnv::kChoiceSlotStride;
+constexpr int kPileBase =
+    CombatEnv::kPlayerObsSize + kMaxEnemies * CombatEnv::kEnemyObsStride;
+
+float staged_obs(const CombatEnv& env, CardId id) {
+  return env.obs()[kStagedBase + static_cast<int>(id)];
+}
+
+// Plane 0 is the hand, plane 2 the discard (combat_env.h).
+float pile_obs(const CombatEnv& env, int plane, CardId id) {
+  return env.obs()[kPileBase + plane * kNumCardTypes + static_cast<int>(id)];
+}
+
+TEST(ChoiceObservation, TheHeaderSaysCopiesCostZeroAndPicksLeft) {
+  // S7: what the menu tells a human. A Power Potion under Sacred Bark adds 2
+  // copies that cost 0, and it is one pick.
+  CombatState s = fight_holding({PotionId::PowerPotion}, {RelicId::SacredBark});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::PowerPotion)));
+  CombatEnv env(s);
+  EXPECT_FLOAT_EQ(env.obs()[kChoiceBase + 5], 2.0f) << "copies";
+  EXPECT_FLOAT_EQ(env.obs()[kChoiceBase + 6], 1.0f) << "arrives free";
+  EXPECT_FLOAT_EQ(env.obs()[kChoiceBase + 7], 1.0f) << "picks left";
+}
+
+TEST(ChoiceObservation, ToolboxsCardDoesNotArriveFree) {
+  // The colorless menu is shared with the Colorless Potion; only this float
+  // tells the two apart.
+  CombatSetup setup;
+  setup.seed = 1;
+  setup.deck = starter_deck();
+  setup.relics.push_back(HeldRelic{RelicId::Toolbox, 0});
+  CombatEnv env(start_combat(setup));
+  ASSERT_FLOAT_EQ(env.obs()[kChoiceBase + 0], 1.0f) << "Toolbox's menu is open";
+  EXPECT_FLOAT_EQ(env.obs()[kChoiceBase + 6], 0.0f);
+  EXPECT_FLOAT_EQ(env.obs()[kChoiceBase + 5], 1.0f);
+}
+
+TEST(ChoiceObservation, PicksLeftCountsDownAsCardsAreStaged) {
+  CombatState s = fight_holding({PotionId::ElixirPotion});
+  s.current_hand = cards({CardId::Strike, CardId::Strike, CardId::Defend});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::ElixirPotion)));
+  ASSERT_TRUE(pick(s, option_of(s, CardId::Strike)));
+  CombatEnv env(s);
+  EXPECT_FLOAT_EQ(env.obs()[kChoiceBase + 7],
+                  static_cast<float>(kMaxMultiSelectPicks - 1));
+  EXPECT_FLOAT_EQ(env.obs()[kChoiceBase + 6], 0.0f) << "Elixir adds no card";
+}
+
+TEST(ChoiceObservation, AStagedHandPickMovesFromTheHandPlaneToTheStagedPlane) {
+  // #33: the agent used to see the card vanish without knowing it had picked
+  // it. HandCardSelectScreen lifts a pick out of the hand.
+  CombatState s = fight_holding({PotionId::ElixirPotion});
+  s.current_hand = cards({CardId::Strike, CardId::Strike, CardId::Defend});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::ElixirPotion)));
+  {
+    CombatEnv env(s);
+    EXPECT_FLOAT_EQ(staged_obs(env, CardId::Strike), 0.0f);
+    EXPECT_FLOAT_EQ(pile_obs(env, 0, CardId::Strike), 2.0f);
+  }
+  ASSERT_TRUE(pick(s, option_of(s, CardId::Strike)));
+  ASSERT_TRUE(pick(s, option_of(s, CardId::Strike)));
+  CombatEnv env(s);
+  EXPECT_FLOAT_EQ(staged_obs(env, CardId::Strike), 2.0f);
+  EXPECT_FLOAT_EQ(staged_obs(env, CardId::Defend), 0.0f);
+  EXPECT_FLOAT_EQ(pile_obs(env, 0, CardId::Strike), 0.0f);
+  EXPECT_FLOAT_EQ(pile_obs(env, 0, CardId::Defend), 1.0f);
+}
+
+TEST(ChoiceObservation, AStagedDiscardPickStaysInTheDiscardPlane) {
+  // The grid screen leaves a pick in the pile, so the agent sees it in both.
+  CombatState s =
+      fight_holding({PotionId::LiquidMemories}, {RelicId::SacredBark});
+  s.discard_pile = cards({CardId::Strike, CardId::Defend, CardId::Bludgeon});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::LiquidMemories)));
+  ASSERT_TRUE(pick(s, option_of(s, CardId::Bludgeon)));
+  CombatEnv env(s);
+  EXPECT_FLOAT_EQ(staged_obs(env, CardId::Bludgeon), 1.0f);
+  EXPECT_FLOAT_EQ(pile_obs(env, 2, CardId::Bludgeon), 1.0f);
+  EXPECT_FLOAT_EQ(env.obs()[kChoiceBase + 4], 0.0f) << "not optional yet";
+  EXPECT_FLOAT_EQ(env.obs()[kChoiceBase + 7], 1.0f) << "one pick left";
+}
+
+TEST(ChoiceObservation, TheChoiceViewCarriesTheSameFacts) {
+  CombatState s = fight_holding({PotionId::AttackPotion}, {RelicId::SacredBark});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::AttackPotion)));
+  const ChoiceView view = CombatEnv(s).choice_view();
+  EXPECT_EQ(view.copies, 2);
+  EXPECT_TRUE(view.arrives_free);
+  EXPECT_EQ(view.picks_left, 1);
+  EXPECT_EQ(view.pool, GenerationPool::ClassAttack);
+  EXPECT_TRUE(view.staged.empty());
 }
 
 }  // namespace

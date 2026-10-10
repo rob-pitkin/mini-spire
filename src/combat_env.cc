@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "action.h"  // choice_pile
 #include "card.h"
 #include "enemy.h"
 #include "query.h"  // instance_card_damage (per-instance cards)
@@ -90,33 +91,6 @@ static_assert(kObsPlayerPowerOrder.size() == kNumPlayerPowers,
 static_assert(kObsEnemyPowerOrder[kNumEnemyPowers - 1] ==
                   kObsPlayerPowerOrder[kNumEnemyPowers - 1],
               "enemy power order must prefix the player power order");
-
-// Which pile a choice draws from, as a small int for the obs header (Stage
-// 4c). 0 = hand, 1 = draw, 2 = discard, 3 = exhaust, 4 = external (v2's card
-// rewards / shop, which come from outside the deck).
-int choice_source_pile(ChoiceKind kind) {
-  switch (kind) {
-    case ChoiceKind::UpgradeCardInHand:
-    case ChoiceKind::HandToTopOfDraw:
-    case ChoiceKind::CopyAttackOrPowerInHand:
-    case ChoiceKind::ExhaustCardInHand:
-    case ChoiceKind::HandToBottomOfDraw:
-      return 0;  // hand
-    case ChoiceKind::DrawPileSkillToHand:
-    case ChoiceKind::DrawPileAttackToHand:
-      return 1;  // draw
-    case ChoiceKind::DiscardToTopOfDraw:
-      return 2;  // discard
-    case ChoiceKind::ExhaustToHand:
-      return 3;  // exhaust
-    case ChoiceKind::DiscoverCard:
-    case ChoiceKind::DiscoverColorlessCard:
-      return 4;  // external — these three are generated, not from a pile
-    case ChoiceKind::None:
-      break;
-  }
-  return 0;
-}
 
 template <typename Effect>
 float status_stacks(const std::unordered_map<Effect, int>& effects, Effect e) {
@@ -374,12 +348,18 @@ void CombatEnv::compute_obs() {
   if (pc.active()) {
     o[kChoiceBase + 0] = 1.0f;
     o[kChoiceBase + 1] = static_cast<float>(static_cast<int>(pc.kind));
-    o[kChoiceBase + 2] = static_cast<float>(choice_source_pile(pc.kind));
+    // 0 hand, 1 draw, 2 discard, 3 exhaust, 4 external (generated options).
+    // The engine's own mapping, which also decides where a staged pick waits.
+    o[kChoiceBase + 2] = static_cast<float>(choice_pile(pc.kind));
     // Enum ordinal, like the two floats above it — including CardId::None,
     // which encodes as kNumCardTypes and means "no card opened this menu"
     // (a relic did). No special case: one rule for the whole header.
     o[kChoiceBase + 3] = static_cast<float>(static_cast<int>(pc.source_card));
     o[kChoiceBase + 4] = pc.is_optional ? 1.0f : 0.0f;
+    // What the menu says that nothing above does (potion-effects.md S7).
+    o[kChoiceBase + 5] = static_cast<float>(pc.copies);
+    o[kChoiceBase + 6] = pc.arrives_free ? 1.0f : 0.0f;
+    o[kChoiceBase + 7] = static_cast<float>(pc.max_picks - pc.picks_made);
     const int slots = kChoiceBase + kChoiceHeaderSize;
     for (int i = 0; i < pc.num_options; ++i) {
       const int base = slots + i * kChoiceSlotStride;
@@ -393,6 +373,13 @@ void CombatEnv::compute_obs() {
           static_cast<float>(instance_card_damage(state_, pc.options[i]));
       // The cost column this option's action names (§6.5).
       o[base + 3] = static_cast<float>(cost_column(state_, pc.options[i]));
+    }
+    // Staged picks (S6, #33): the cards a human sees as already selected. A
+    // hand pick has left the hand plane; a discard pick (Liquid Memories) is
+    // still counted in the discard plane, because it is still in the pile.
+    const int staged = slots + kNumOptionSlots * kChoiceSlotStride;
+    for (int i = 0; i < pc.picks_made; ++i) {
+      o[staged + static_cast<int>(pc.staged[i].card_id)] += 1.0f;
     }
   }
 
@@ -456,6 +443,11 @@ ChoiceView CombatEnv::choice_view() const {
   out.source_card = pc.source_card;
   out.is_optional = pc.is_optional;
   out.copies = pc.copies;
+  out.arrives_free = pc.arrives_free;
+  out.picks_left = pc.max_picks - pc.picks_made;
+  out.pool = pc.pool;
+  out.staged.reserve(pc.picks_made);
+  for (int i = 0; i < pc.picks_made; ++i) out.staged.push_back(pc.staged[i].card_id);
   out.options.reserve(pc.num_options);
   out.option_damage.reserve(pc.num_options);
   out.option_costs.reserve(pc.num_options);

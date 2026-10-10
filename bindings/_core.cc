@@ -410,13 +410,29 @@ PYBIND11_MODULE(_core, m) {
       .value("DrawPileSkillToHand", ChoiceKind::DrawPileSkillToHand)
       .value("DrawPileAttackToHand", ChoiceKind::DrawPileAttackToHand)
       .value("HandToBottomOfDraw", ChoiceKind::HandToBottomOfDraw)
-      .value("DiscoverColorlessCard", ChoiceKind::DiscoverColorlessCard);
+      .value("DiscoverColorlessCard", ChoiceKind::DiscoverColorlessCard)
+      // The choice potions (potion-effects.md §5.7).
+      .value("DiscardForDraw", ChoiceKind::DiscardForDraw)
+      .value("DiscardToHand", ChoiceKind::DiscardToHand);
+  // Where a Discover menu rolled its options — the TUI names the card type
+  // from it ("Choose a Power card"). None for every pile choice.
+  py::enum_<GenerationPool>(m, "GenerationPool")
+      .value("None", GenerationPool::None)
+      .value("Colorless", GenerationPool::Colorless)
+      .value("ClassAny", GenerationPool::ClassAny)
+      .value("ClassAttack", GenerationPool::ClassAttack)
+      .value("ClassSkill", GenerationPool::ClassSkill)
+      .value("ClassPower", GenerationPool::ClassPower);
   py::class_<ChoiceView>(m, "ChoiceView")
       .def_readonly("active", &ChoiceView::active)
       .def_readonly("kind", &ChoiceView::kind)
       .def_readonly("source_card", &ChoiceView::source_card)
       .def_readonly("is_optional", &ChoiceView::is_optional)
       .def_readonly("copies", &ChoiceView::copies)
+      .def_readonly("arrives_free", &ChoiceView::arrives_free)
+      .def_readonly("picks_left", &ChoiceView::picks_left)
+      .def_readonly("staged", &ChoiceView::staged)
+      .def_readonly("pool", &ChoiceView::pool)
       .def_readonly("options", &ChoiceView::options)
       .def_readonly("option_damage", &ChoiceView::option_damage)
       .def_readonly("option_costs", &ChoiceView::option_costs);
@@ -683,7 +699,9 @@ PYBIND11_MODULE(_core, m) {
       .def_readonly_static("NUM_OPTION_SLOTS", &kNumOptionSlots)
       .def_readonly_static("CHOICE_HEADER_SIZE", &CombatEnv::kChoiceHeaderSize)
       .def_readonly_static("CHOICE_SLOT_STRIDE", &CombatEnv::kChoiceSlotStride)
+      .def_readonly_static("CHOICE_STAGED_SIZE", &CombatEnv::kChoiceStagedSize)
       .def_readonly_static("CHOICE_OBS_SIZE", &CombatEnv::kChoiceObsSize)
+      .def_readonly_static("NUM_GENERATION_POOLS", &kNumGenerationPools)
       // The potion block (potion-effects.md §3.2): a count per PotionId, then
       // the slot capacity, after the choice block.
       .def_readonly_static("POTION_OBS_INDEX", &CombatEnv::kPotionObsIndex)

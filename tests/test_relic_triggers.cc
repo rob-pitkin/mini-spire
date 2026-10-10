@@ -1110,6 +1110,74 @@ TEST(RelicTriggers, PocketwatchDrawsNothingAfterFourCards) {
   }
 }
 
+// ------------------------------------------------------------ Gambling Chip
+//
+// Gambler's Brew at the start of combat (potion-effects.md §5.7). The opening
+// hand is whatever the seed deals, so these pick "option 0" and assert about
+// the card that turned out to be, never about which card it was.
+
+bool pick_option(CombatState& s, int i) {
+  const Card& o = s.pending_choice.options[i];
+  return apply_action(s, encode_action(ActionBlock::CardSelect,
+                                       static_cast<int>(o.card_id), 0,
+                                       cost_column(s, o)));
+}
+
+TEST(RelicTriggers, GamblingChipAsksOnceTheOpeningHandIsDealt) {
+  const CombatState s = fight_with({RelicId::GamblingChip});
+  const PendingChoice& pc = s.pending_choice;
+  ASSERT_EQ(pc.kind, ChoiceKind::DiscardForDraw);
+  EXPECT_EQ(pc.source_card, CardId::None) << "a relic opened it";
+  EXPECT_TRUE(pc.is_optional) << "keeping the whole hand is allowed";
+  EXPECT_EQ(pc.max_picks, kMaxMultiSelectPicks);
+  EXPECT_EQ(s.current_hand.size(), static_cast<size_t>(STARTING_HAND_SIZE));
+}
+
+TEST(RelicTriggers, GamblingChipDiscardsThePicksAndDrawsAsMany) {
+  CombatState s = fight_with({RelicId::GamblingChip});
+  const std::size_t draw0 = s.draw_pile.size();
+  const CardId first = s.pending_choice.options[0].card_id;
+  ASSERT_TRUE(pick_option(s, 0));
+  const CardId second = s.pending_choice.options[0].card_id;
+  ASSERT_TRUE(pick_option(s, 0));
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::Decline)));
+
+  EXPECT_FALSE(s.pending_choice.active());
+  EXPECT_EQ(s.current_hand.size(), static_cast<size_t>(STARTING_HAND_SIZE));
+  EXPECT_EQ(s.draw_pile.size(), draw0 - 2);
+  ASSERT_EQ(s.discard_pile.size(), 2u);
+  const int want_first = 1 + (first == second ? 1 : 0);
+  EXPECT_EQ(std::count_if(s.discard_pile.begin(), s.discard_pile.end(),
+                          [&](const Card& c) { return c.card_id == first; }),
+            want_first);
+}
+
+TEST(RelicTriggers, GamblingChipAsksOnlyOnTurnOne) {
+  CombatState s = fight_with({RelicId::GamblingChip});
+  one_durable_enemy(s);
+  ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::Decline)));
+  ASSERT_TRUE(end_turn(s));
+  EXPECT_EQ(s.turn_number, 2);
+  EXPECT_FALSE(s.pending_choice.active());
+}
+
+TEST(RelicTriggers, GamblingChipComesAfterToolboxSoItsCardCanBeDiscarded) {
+  // Toolbox asks before the opening hand, Gambling Chip after it — so the
+  // colorless card Toolbox adds is in hand when Gambling Chip asks (wiki).
+  CombatState s = fight_with({RelicId::Toolbox, RelicId::GamblingChip});
+  ASSERT_EQ(s.pending_choice.kind, ChoiceKind::DiscoverColorlessCard);
+  const CardId tool = s.pending_choice.options[0].card_id;
+  ASSERT_TRUE(pick_option(s, 0));
+  ASSERT_EQ(s.pending_choice.kind, ChoiceKind::DiscardForDraw);
+  EXPECT_EQ(s.current_hand.size(),
+            static_cast<size_t>(STARTING_HAND_SIZE + 1));
+  bool offered = false;
+  for (int i = 0; i < s.pending_choice.num_options; ++i) {
+    offered |= s.pending_choice.options[i].card_id == tool;
+  }
+  EXPECT_TRUE(offered) << "Toolbox's card can be discarded";
+}
+
 // -------------------------------------------------------------- Dead Branch
 
 // Exhaust one card through the real executor, the single path every exhaust

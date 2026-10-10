@@ -518,6 +518,18 @@ CHOICE_PROMPTS = {
     "DrawPileSkillToHand": "Choose a Skill from your draw pile",
     "DrawPileAttackToHand": "Choose an Attack from your draw pile",
     "HandToBottomOfDraw": "Put a card from your hand on the bottom of your draw pile",
+    "DiscardForDraw": "Discard any number of cards, then draw that many",
+    "DiscardToHand": "Return a card from your discard pile to your hand",
+}
+
+# A Discover menu's prompt names what it rolled from (potion-effects.md S2):
+# the Attack, Skill and Power Potions offer one card type, and the kind alone
+# cannot say which. Keyed by GenerationPool name; the kind's prompt stands for
+# any pool not listed.
+DISCOVER_PROMPTS = {
+    "ClassAttack": "Choose an Attack to add to your hand",
+    "ClassSkill": "Choose a Skill to add to your hand",
+    "ClassPower": "Choose a Power to add to your hand",
 }
 
 #: The "no source card" sentinel: the choice was opened by a relic (Toolbox)
@@ -537,7 +549,7 @@ def build_choice(env, *, focus: int | None = None) -> tuple[Panel, int]:
     bounds-checked against, and it must describe the panel actually shown.
     """
     view = env.choice_view()
-    prompt = CHOICE_PROMPTS.get(
+    prompt = DISCOVER_PROMPTS.get(view.pool.name) or CHOICE_PROMPTS.get(
         view.kind.name, f"Choose a card ({view.kind.name})"
     )
 
@@ -550,6 +562,8 @@ def build_choice(env, *, focus: int | None = None) -> tuple[Panel, int]:
     header.append(prompt, style="bold white")
     if view.copies > 1:
         header.append(f"  (x{view.copies} copies)", style="yellow")
+    if view.arrives_free:
+        header.append("  (costs 0 this turn)", style="yellow")
 
     # Full card boxes, not a name list. This is the screen where the player has
     # stopped to decide, and choosing which card to Exhume or upgrade is not
@@ -560,8 +574,16 @@ def build_choice(env, *, focus: int | None = None) -> tuple[Panel, int]:
     ])
 
     body: list = [header, Text(""), table]
+    # A multi-select's staged picks have left the offer (and, from the hand,
+    # the hand), so they are listed here or nowhere.
+    if len(view.staged) > 0:
+        names = ", ".join(_core.card_name(c) for c in view.staged)
+        body.append(Text(f"\nSelected: {names}", style="cyan"))
     if view.is_optional:
-        body.append(Text(f"\n(s) skip", style="dim"))
+        # Decline ends a multi-select once anything is picked; before that, and
+        # for a single pick, it skips.
+        label = "done" if len(view.staged) > 0 else "skip"
+        body.append(Text(f"\n(s) {label}", style="dim"))
 
     return Panel(Group(*body), border_style="yellow", title="CHOOSE"), len(view.options)
 

@@ -96,6 +96,11 @@ screen, so nothing is drawn until the whole selection is confirmed.
 **Observation requirement, for when the obs is sequenced:** the set picked so far
 must be visible, because a human sees the highlighted cards.
 
+> **Done (2026-10-10, #33):** the choice block's staged plane counts the picks
+> per card type (`potion-effects.md` §3.3). The choice potions extended D1 the
+> same way: a minimum-picks setting (Decline is legal once it is met), and a
+> discard pick that stays in its pile while staged (§5.7).
+
 ### D2 — Per-instance cost with a duration (Rob, 2026-09-15)
 
 Madness makes **one copy** cost 0. Enlightenment changes **only the cards in hand

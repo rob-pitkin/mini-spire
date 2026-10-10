@@ -83,7 +83,12 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
       mask[kCardSelectBlock + card * kNumCostColumns +
            oracle_column(state, option)] = true;
     }
-    if (state.pending_choice.is_optional) mask[kDeclineAction] = true;
+    // Decline once the minimum is met (potion-effects.md S3) — derived here
+    // from the counts, not read off is_optional, which is the engine's own
+    // derivation and the thing this checks.
+    if (state.pending_choice.picks_made >= state.pending_choice.min_picks) {
+      mask[kDeclineAction] = true;
+    }
     return mask;
   }
 
@@ -158,9 +163,9 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
 
   // Potions (potion-effects.md §3.1), restated rather than asked of the
   // engine. Every held potion can be discarded. It can be drunk if its effect
-  // is built — the step-1 list, restated here on purpose and widened as each
-  // step lands — at a living enemy if it targets one, else at slot 0. Raw
-  // arithmetic: use is potion × target, discard one per potion.
+  // is built — the list of steps 1 and 2, restated here on purpose and widened
+  // as each step lands — at a living enemy if it targets one, else at slot 0.
+  // Raw arithmetic: use is potion × target, discard one per potion.
   static const PotionId kBuilt[] = {
       PotionId::BloodPotion,     PotionId::BlockPotion,
       PotionId::DexterityPotion, PotionId::EnergyPotion,
@@ -171,7 +176,12 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
       PotionId::BlessingOfTheForge, PotionId::RegenPotion,
       PotionId::AncientPotion,   PotionId::LiquidBronze,
       PotionId::EssenceOfSteel,  PotionId::HeartOfIron,
-      PotionId::CultistPotion,   PotionId::FruitJuice};
+      PotionId::CultistPotion,   PotionId::FruitJuice,
+      // Step 2: the choice potions.
+      PotionId::AttackPotion,    PotionId::SkillPotion,
+      PotionId::PowerPotion,     PotionId::ColorlessPotion,
+      PotionId::ElixirPotion,    PotionId::GamblersBrew,
+      PotionId::LiquidMemories};
   for (PotionId p : state.potions) {
     const int id = static_cast<int>(p);
     mask[kPotionDiscardBlock + id] = true;
@@ -202,7 +212,7 @@ TEST(MaskOracle, EngineMaskMatchesAnIndependentDerivation) {
   // vacuously, which is exactly how the free-cost branch went unexercised for
   // as long as it did.
   long long saw_choice = 0, saw_free = 0, saw_entangle = 0, saw_rung = 0,
-            saw_potion = 0;
+            saw_potion = 0, saw_staged = 0, saw_required = 0;
 
   for (uint32_t seed = 0; seed < 300; ++seed) {
     for (EncounterPool pool : {EncounterPool::Weak, EncounterPool::Strong,
@@ -259,16 +269,37 @@ TEST(MaskOracle, EngineMaskMatchesAnIndependentDerivation) {
             s.current_hand[rng() % s.current_hand.size()].free_once = true;
           }
         }
-        // Choice mode, including the optional/decline variant.
+        // Choice mode, including the optional/decline variant and the
+        // multi-select one, whose picks stage across the steps that follow.
         if (rng() % 8 == 0) {
           static const ChoiceKind kinds[] = {
               ChoiceKind::UpgradeCardInHand, ChoiceKind::HandToTopOfDraw,
               ChoiceKind::DiscardToTopOfDraw, ChoiceKind::ExhaustToHand,
               ChoiceKind::CopyAttackOrPowerInHand,
-              ChoiceKind::ExhaustCardInHand};
-          s.pending_choice = build_choice(s, kinds[rng() % 6], CardId::Strike);
-          if (rng() % 3 == 0) s.pending_choice.is_optional = true;
-          if (s.pending_choice.active()) ++saw_choice;
+              ChoiceKind::ExhaustCardInHand, ChoiceKind::DiscardForDraw,
+              ChoiceKind::DiscardToHand};
+          s.pending_choice = build_choice(s, kinds[rng() % 8], CardId::Strike);
+          PendingChoice& pc = s.pending_choice;
+          switch (rng() % 3) {
+            case 0:  // skippable
+              pc.min_picks = 0;
+              pc.is_optional = true;
+              break;
+            case 1:  // a multi-select, sometimes with picks it must make
+              pc.max_picks = 2 + static_cast<int>(rng() % 3);
+              pc.min_picks = static_cast<int>(rng() % 3);
+              pc.is_optional = pc.min_picks == 0;
+              break;
+            default:  // a mandatory single pick, as built
+              break;
+          }
+          if (pc.active()) ++saw_choice;
+        }
+        if (s.pending_choice.active() && s.pending_choice.picks_made > 0) {
+          ++saw_staged;
+          if (s.pending_choice.picks_made < s.pending_choice.min_picks) {
+            ++saw_required;
+          }
         }
 
         const std::vector<bool> got = valid_actions(s);
@@ -305,4 +336,6 @@ TEST(MaskOracle, EngineMaskMatchesAnIndependentDerivation) {
   EXPECT_GT(saw_entangle, 100) << "entangle branch barely exercised";
   EXPECT_GT(saw_rung, 50) << "rung ladder cards barely exercised";
   EXPECT_GT(saw_potion, 100) << "potions barely exercised";
+  EXPECT_GT(saw_staged, 100) << "multi-select staging barely exercised";
+  EXPECT_GT(saw_required, 20) << "required picks barely exercised";
 }

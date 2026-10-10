@@ -130,7 +130,8 @@ enum class ActionKind {
   DiscardHand,     // end of turn: ethereal cards exhaust, the rest discard
                    // (routed through the executors so Feel No Pain / Dark
                    // Embrace see the exhausts)
-  RequestChoice,   // PAUSES the drain: build the candidate list for `choice`
+  RequestChoice,   // PAUSES the drain: build the candidate list for the
+                   // ChoiceKind in `amount`, with the settings in `choice`,
                    // and suspend until resolve_choice() supplies an answer
                    // (Stage 4c; docs/design/decision-points.md)
   ApplyChoice,     // apply the answered choice — pushed by resolve_choice(),
@@ -181,7 +182,14 @@ struct Action {
   CostLayer discount_layer = CostLayer::None;
   MoveName move = MoveName::None;  // RewriteIntent payload
   bool card_block = false;  // GainBlock from a played card: apply Dex/Frail
-  int copies = 1;  // ApplyChoice: how many copies to add (Dual Wield+ = 2)
+  // RequestChoice: what the choice may do; ApplyChoice: the copies and cost-0
+  // it applies with (potion-effects.md S1). Replaced a bare `copies`, which was
+  // the only setting back when a choice's other settings came from its card.
+  ChoiceSettings choice{};
+  // PlayCard (Double Tap's replay): the first play's RAW X, so the replay
+  // "uses the same value of X as the first". It used to ride in `copies`,
+  // which named something else entirely.
+  int replay_x = 0;
   // Per-instance card state for card-moving kinds (ExhaustCard, DiscardCard,
   // AddCardToPile). Carried alongside `card` so a Rampage returning to the
   // discard pile keeps its accumulated bonus, and an upgraded Searing Blow

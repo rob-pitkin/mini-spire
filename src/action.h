@@ -271,6 +271,13 @@ bool apply_power(CombatState& state, const PowerApplication& app,
 PendingChoice build_choice(const CombatState& state, ChoiceKind kind,
                            CardId source_card);
 
+// Where a choice's options come from. The observation's source_pile float is
+// this value (decision-points.md §5.2), and it decides where a staged
+// multi-select pick waits: a hand pick leaves the hand, a pick from any other
+// pile stays in it (potion-effects.md §3.3).
+enum class ChoicePile { Hand = 0, Draw = 1, Discard = 2, Exhaust = 3, External = 4 };
+ChoicePile choice_pile(ChoiceKind kind);
+
 // Answer a pending choice and resume the suspended drain. `option_index` is an
 // index into pending_choice.options; pass kDeclineChoice to decline an optional
 // choice. Returns false (leaving the state untouched) if there is no active

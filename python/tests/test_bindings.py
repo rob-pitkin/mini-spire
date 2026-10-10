@@ -88,6 +88,14 @@ def test_choice_kind_values_are_dense_and_contiguous():
     assert values == list(range(_core.CombatEnv.NUM_CHOICE_KINDS))
 
 
+def test_every_generation_pool_is_bound():
+    # The TUI names a Discover menu's card type from its pool, so an unbound
+    # pool would render with the generic prompt and nothing would fail.
+    # GenerationPool::None is bound, so it is counted.
+    values = sorted(int(v) for v in _members(_core.GenerationPool).values())
+    assert values == list(range(_core.CombatEnv.NUM_GENERATION_POOLS))
+
+
 def test_obs_and_action_sizes_match_the_layout_constants():
     # Guards against a stale extension as much as a layout slip: scikit-build-core
     # caches the built module, and a cached build makes a shape change look green
@@ -105,9 +113,11 @@ def test_obs_size_matches_its_component_blocks():
     env_cls = _core.CombatEnv
     # 4 piles + one hand plane per effective cost (relic-effects.md §6.28)
     piles = (4 + env_cls.NUM_COST_PLANES) * env_cls.NUM_CARD_TYPES
-    # Header, then per option slot: occupied, card id, damage, cost column
-    # (v2-spec.md §6.5).
-    choice = 5 + env_cls.NUM_CARD_TYPES * 4
+    # An 8-float header (potion-effects.md §3.3), then per option slot:
+    # occupied, card id, damage, cost column (v2-spec.md §6.5), then a count of
+    # staged picks per card type.
+    choice = 8 + env_cls.NUM_CARD_TYPES * 4 + env_cls.NUM_CARD_TYPES
+    assert env_cls.CHOICE_OBS_SIZE == choice
     # A count per potion, then the belt's slot capacity
     # (docs/design/potion-effects.md §3.2).
     potions = 33 + 1
