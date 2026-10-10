@@ -904,7 +904,8 @@ void handle_end_turn(CombatState& state) {
     // and a Move& into enemy.moves would dangle.
     assert(state.enemies[slot].last_move.has_value() &&
            "enemy.last_move must be primed by start_v1_combat or prior turn");
-    const Move move = state.enemies[slot].moves.at(*state.enemies[slot].last_move);
+    const MoveName executed = *state.enemies[slot].last_move;
+    const Move move = state.enemies[slot].moves.at(executed);
     ActionQueue q;
     ResolutionContext ctx;
     fire_enemy_power_hooks(state, static_cast<int>(slot), Hook::TurnStartEnemy,
@@ -942,8 +943,19 @@ void handle_end_turn(CombatState& state) {
     // 2e. Tick this enemy's debuffs (powers never tick).
     tick_debuffs(state.enemies[slot].debuffs);
 
-    // 2f. Advance this enemy's Markov chain to set its next intent.
-    select_next_move(state.enemies[slot], state.rng);
+    // 2f. Advance this enemy's Markov chain to set its next intent — unless an
+    // interrupt rewrote it during this very turn, in which case the rewrite IS
+    // the next intent. A Large slime that Thorns or Flame Barrier drops to half
+    // HP while it attacks: AcidSlime_L.damage() queues SetMoveAction(SPLIT) with
+    // addToBottom, behind the RollMoveAction its takeTurn already queued, so the
+    // split is the move that stands. Rolling from Split instead found no
+    // transition and asserted (#38).
+    //
+    // Only a RewriteIntent changes last_move mid-turn, and none of today's
+    // interrupts rewrites a move to itself, so "changed" means "interrupted".
+    if (state.enemies[slot].last_move == executed) {
+      select_next_move(state.enemies[slot], state.rng);
+    }
   }
 
   // 2g. All enemies gone? An escape (ROB-74) can clear the last living enemy,

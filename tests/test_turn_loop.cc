@@ -1531,6 +1531,52 @@ TEST(TurnLoop, SlimeSplitSpawnsTwoChildrenAtInheritedHp) {
   EXPECT_EQ(s.outcome, Outcome::InProgress);  // children still alive
 }
 
+// #38: Thorns drops a Large slime to half HP DURING its own attack. The split
+// interrupt lands after the slime has acted, and StS keeps it as the next move
+// (AcidSlime_L.damage queues SetMoveAction(SPLIT) behind takeTurn's
+// RollMoveAction). The engine rolled a next move from Split instead, found no
+// transition, and asserted.
+TEST(TurnLoop, ThornsSplitDuringTheSlimesOwnTurnSplitsNextTurn) {
+  for (bool acid : {true, false}) {
+    CombatState s = make_minimal_state(0);
+    s.enemies.clear();
+    std::mt19937 rng(0);
+    Enemy slime = acid ? make_acid_slime_l(rng) : make_spike_slime_l(rng);
+    slime.hp = slime.max_hp / 2 + 3;  // one Thorns hit crosses the threshold
+    slime.last_move = acid ? MoveName::Tackle : MoveName::FlameTackle;
+    slime.consecutive_count = 1;
+    s.enemies.push_back(std::move(slime));
+    s.character.powers[Power::Thorns] = 10;
+    s.character.hp = 200;
+    s.character.max_hp = 200;
+
+    ASSERT_TRUE(apply_action(s, end_turn_action())) << (acid ? "acid" : "spike");
+    ASSERT_EQ(s.enemies.size(), 1u);
+    EXPECT_EQ(*s.enemies[0].last_move, MoveName::Split)
+        << "the interrupt is next turn's intent, not re-rolled";
+
+    ASSERT_TRUE(apply_action(s, end_turn_action()));
+    int living = 0;
+    for (const auto& e : s.enemies) living += e.hp > 0 ? 1 : 0;
+    EXPECT_EQ(living, 2) << "it split";
+  }
+}
+
+// The control: an attack the player survives without an interrupt still rolls
+// a fresh intent, so the guard above does not freeze the Markov chain.
+TEST(TurnLoop, AnUninterruptedEnemyStillRollsItsNextMove) {
+  CombatState s = make_minimal_state(0);
+  s.enemies.clear();
+  std::mt19937 rng(0);
+  Enemy slime = make_acid_slime_l(rng);
+  slime.last_move = MoveName::Tackle;  // Tackle may not repeat: (Tackle, 1)
+  slime.consecutive_count = 1;         // forbids a second Tackle
+  s.enemies.push_back(std::move(slime));
+
+  ASSERT_TRUE(apply_action(s, end_turn_action()));
+  EXPECT_NE(*s.enemies[0].last_move, MoveName::Tackle);
+}
+
 // ============================================================================
 // Gremlins — full-fight behavior (ROB-64)
 // ============================================================================

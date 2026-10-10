@@ -30,6 +30,13 @@ hits*. Queued responses land at the back, after the card's pre-queued actions.
   identical. The existing Lagavulin tests all pass unchanged.
 - **Angry (Mad Gremlin), split HP-threshold interrupt** — Strength stacks and
   intent rewrites are only read at the enemy phase. Unobservable.
+  - **A rewrite during the enemy's OWN turn** (Thorns or Flame Barrier drops a
+    Large slime to half HP while it attacks) lands after its move has run. It
+    stands as the next intent, and the end-of-turn roll is skipped: StS's
+    `AcidSlime_L.damage()` queues `SetMoveAction(SPLIT)` with `addToBottom`,
+    behind the `RollMoveAction` its `takeTurn` already queued. Rolling from
+    Split asserted for lack of a transition (#38, fixed 2026-10-10). Pinned by
+    `TurnLoop.ThornsSplitDuringTheSlimesOwnTurnSplitsNextTurn`.
 
 ### 2. On-death responses resolve after the card's draw
 
