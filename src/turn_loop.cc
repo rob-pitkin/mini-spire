@@ -642,21 +642,23 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     a.cost_cap_for_combat = data.caps_hand_cost_for_combat;
     q.push_back(a);
   }
-  // Havoc: play the top card of the draw pile and force-exhaust it. Pushed as
-  // a PlayCard action (the kind the effects-architecture doc specced for
-  // exactly this) so the nested play is a flat queue step, not a nested call.
-  // Its target is rolled NOW, as Havoc is played — Havoc.use passes
-  // getRandomMonster(null, true, cardRandomRng) to PlayTopCardAction (T4).
+  // Havoc: take the top card of the draw pile into the card queue, to be
+  // played — and exhausted — once this card's actions have all run
+  // (card-queue.md). Its target is rolled NOW, as Havoc is played: Havoc.use
+  // passes getRandomMonster(null, true, cardRandomRng) to PlayTopCardAction
+  // (potion-effects.md T4).
   if (data.plays_top_of_draw) {
     Action a;
-    a.kind = ActionKind::PlayCard;
-    a.amount = kPlayFromDrawPile;
+    a.kind = ActionKind::TakeTopCard;
+    a.amount = 1;  // "and Exhaust it"
     a.target = roll_card_target(state);
     q.push_back(a);
   }
   // Double Tap (an Attack) and Duplication (any card): each replays this card
-  // once, free, at the same target with the same X. Queued LAST so a replay
-  // resolves after the first play's effects.
+  // once, free, at the same target with the same X — a copy put at the FRONT
+  // of the card queue, played once this card's actions have all run. StS's
+  // addCardQueueItem(copy, true) inserts right behind the card being played,
+  // and the engine's card in flight is not in the queue, so that is the front.
   //
   // The charge is spent HERE, as the card is played, not when the replay
   // resolves (potion-effects.md T1): DoubleTapPower and DuplicationPower
@@ -664,9 +666,8 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
   // the replay resolves finds the charge already gone.
   //
   // A replay is never replayed itself (StS's purgeOnUse); enters_pile is false
-  // only for a replay. With both powers up an Attack is played three times.
-  // Double Tap goes first, in Power enum order — StS uses the order the powers
-  // were applied, but the two replays are identical, so the order cannot show.
+  // only for a replay. With both powers up an Attack is played three times;
+  // the two copies are identical, so their order cannot show.
   if (ctx_play.enters_pile) {
     int replays = 0;
     if (data.type == CardType::Attack &&
@@ -677,15 +678,12 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
       ++replays;
     }
     for (int i = 0; i < replays; ++i) {
-      Action a;
-      a.kind = ActionKind::PlayCard;
-      a.amount = kPlayReplay;
-      a.card = card_id;
-      a.card_bonus_damage = played.bonus_damage;
-      a.card_upgrades = played.upgrades;
-      a.target = target;
-      a.replay_x = x;  // the first play's RAW X — the replay adds Chemical X
-      q.push_back(a);
+      QueuedPlay copy;
+      copy.instance = Card{card_id, played.bonus_damage, played.upgrades};
+      copy.target = target;
+      copy.replay = true;
+      copy.replay_x = x;  // the first play's RAW X — the replay adds Chemical X
+      state.card_queue.push_front(copy);
     }
   }
   // The card's choice (Stage 4c) normally queues LAST, after draw: Warcry draws
@@ -1025,13 +1023,22 @@ void handle_end_turn(CombatState& state) {
   state.turn_number += 1;
   state.character_turn = true;
   {
+    // The queue is built in the order of StS's turn-start block
+    // (GameActionManager, the `turnHasEnded` branch): relics' atTurnStart,
+    // then powers' atStartOfTurn, then the draw, then the post-draw relics.
+    // Every hook fires as the queue is BUILT, and what each one queues
+    // resolves later, in that order (card-queue.md §3, Q2).
+    //
+    // Relics before powers (Rob, 2026-10-10, Q2). It became observable with
+    // Mayhem, which rolls its target when its action runs: Mercury Hourglass's
+    // damage now lands first, so the roll skips an enemy it killed. Turn 1 is
+    // deliberately not handled here: start_combat's CombatStart sub-phase is
+    // turn 1's start, so firing both would double-count anything that counts
+    // turns.
     ActionQueue q;
     ResolutionContext ctx;
-    fire_player_power_hooks(state, Hook::TurnStartPlayer, q);
-    // Relics fire on the same hook, AFTER the powers. Turn 1 is deliberately
-    // not handled here: start_combat's CombatStart sub-phase is turn 1's start,
-    // so firing both would double-count anything that counts turns.
     fire_relic_hooks(state, Hook::TurnStartPlayer, q);
+    fire_player_power_hooks(state, Hook::TurnStartPlayer, q);
     // Cleared AFTER the hooks have read them: Art of War grants its energy on
     // the strength of the turn that just ended, and Orange Pellets needs all
     // three to have been played within ONE turn. Cleared for every fight, not
@@ -1043,9 +1050,12 @@ void handle_end_turn(CombatState& state) {
     draw.kind = ActionKind::DrawCards;
     draw.amount = hand_size(state);  // 7 with Snecko Eye
     q.push_back(draw);
-    // Queued, not called: a hook fired here would run before the draw above
-    // resolves. Riding behind it in the queue is what makes it POST-draw.
-    q.push_back(Action{ActionKind::TurnStartPostDraw});
+    // Post-draw relics (Pocketwatch), fired now as StS's
+    // applyStartOfTurnPostDrawRelics is — their actions land behind the draw,
+    // which is what makes them post-draw. This used to be an action that ran
+    // after the draw, which put its actions behind anything the draw itself
+    // triggered (Evolve) and behind Mayhem's take; StS puts them in front.
+    fire_relic_hooks(state, Hook::TurnStartPostDraw, q);
     drain(state, q, ctx);
     // Brutality's HP loss can kill; Fire Breathing can clear the room.
     check_character_terminal(state);
@@ -1479,15 +1489,78 @@ void use_potion(CombatState& state, PotionId p, int target) {
   check_enemy_terminal(state);
 }
 
+// One card from the card queue — GameActionManager's card branch for a card
+// the player did not pick (card-queue.md §3). It is played only if
+// canUse(player, its target) holds: is_playable, and for a single-target card a
+// target that is not dying (AbstractCard.cardPlayable). The target was rolled,
+// or inherited, when the card was queued, and may have died since.
+void resolve_queued_play(CombatState& state, const QueuedPlay& p) {
+  const CardId id = p.instance.card_id;
+  const CardData& data = CARD_DATABASE.at(id);
+  const bool usable =
+      is_playable(state, id) &&
+      (!card_targets_enemy(data) ||
+       (p.target >= 0 && p.target < static_cast<int>(state.enemies.size()) &&
+        state.enemies[p.target].hp > 0));
+  if (!usable) {
+    // A replay is purgeOnUse: it simply vanishes.
+    if (p.replay) return;
+    // UseCardAction with dontTriggerOnUseCard: no effect, no on-play
+    // triggers, only the pile move (potion-effects.md T5). It exhausts under
+    // Havoc or by its own Exhaust and is discarded otherwise. An exhaust goes
+    // through the ExhaustCard ACTION, the one place Feel No Pain, Dark Embrace,
+    // Sentinel and Charon's Ashes fire (ROB-85), and Strange Spoon applies, as
+    // it does in UseCardAction.
+    bool exhausts = p.exhausts || data.exhaust;
+    if (exhausts && strange_spoon_spares(state)) exhausts = false;
+    ActionQueue q;
+    ResolutionContext ctx;
+    Action move;
+    move.kind = exhausts ? ActionKind::ExhaustCard : ActionKind::DiscardCard;
+    move.carry(p.instance);
+    q.push_back(move);
+    drain(state, q, ctx);
+    process_deaths(state, ctx);  // Charon's Ashes can kill
+    check_character_terminal(state);
+    if (state.outcome != Outcome::InProgress) return;
+    check_enemy_terminal(state);
+    return;
+  }
+  PlayContext pc;
+  pc.pay_energy = false;      // every queued card is a free play
+  pc.take_from_hand = false;  // it is in limbo, not in hand
+  pc.instance = p.instance;
+  if (p.replay) {
+    pc.enters_pile = false;     // the original already went to its pile
+    pc.forced_x = p.replay_x;  // "uses the same value of X as the first"
+  } else {
+    pc.force_exhaust = p.exhausts;
+    pc.forced_x = 0;  // an autoplayed X-cost card gets X = 0 — pending #42
+  }
+  handle_play_card(state, id, std::max(p.target, 0), pc);
+}
+
 bool apply_action_inner(CombatState& state, int action);
 
 }  // namespace
 
+void play_queued_cards(CombatState& state) {
+  while (!state.card_queue.empty() && !state.pending_choice.active() &&
+         state.outcome == Outcome::InProgress) {
+    resolve_queued_play(state, state.card_queue.pop_front());
+  }
+  // A fight that ends with cards still waiting leaves them unplayed.
+  if (state.outcome != Outcome::InProgress) state.card_queue.clear();
+}
+
 bool apply_action(CombatState& state, int action) {
   // Every exit of the action — a card, the end of the turn, a resolved choice
   // — returns control to the player here, which is where StS refreshes the
-  // hand. One call rather than one per exit.
+  // hand. One call rather than one per exit. The card queue is played out
+  // first: StS reads it only once every action has run, and hands control
+  // back only once it is empty (card-queue.md).
   if (!apply_action_inner(state, action)) return false;
+  play_queued_cards(state);
   refresh_hand(state);
   return true;
 }

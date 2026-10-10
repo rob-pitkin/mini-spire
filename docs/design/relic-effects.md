@@ -571,9 +571,9 @@ inferred from a green suite:
 | `Hook::CardPlayed` → `.at(card).type` | fired only from `CardPlayedHook`, which always sets the id |
 | `Hook::CardDrawn` → `.at(card).type` | fired with the drawn card |
 | `Hook::PlayerAttacked` | never reads `card` — keys on `attacker_slot`. This is the cardless path: an ENEMY attack |
-| `PlayCard` (Havoc, Mayhem) | uses the drawn card's own id; `a.card` is unread on that branch |
+| `TakeTopCard` (Havoc, Mayhem, Distilled Chaos) | takes the drawn card's own instance; `a.card` is unread. Replaced `PlayCard` with the card queue (`card-queue.md`) |
 | `AddCardToPile` | guarded by `generated_count > 0` |
-| `ExhaustCard`, `DiscardCard`, `PlaceOnBottomOfDraw`, `ArmBomb`, Double Tap's replay | every push site sets the card, via `carry()` or directly |
+| `ExhaustCard`, `DiscardCard`, `PlaceOnBottomOfDraw`, `ArmBomb` | every push site sets the card, via `carry()` or directly. A Double Tap replay is no longer an action at all: it is a `QueuedPlay` carrying its own instance |
 
 The remaining hazard is a NEW read added to a cardless path, which now throws
 instead of silently using Strike's row. `TurnLoop.AnEnemyAttackCarriesNoCard`

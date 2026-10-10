@@ -937,21 +937,18 @@ TEST(DistilledChaos, EveryTargetIsRolledAtUseFromTheCardStream) {
 }
 
 TEST(TopOfDrawPlay, ACardWhoseTargetDiedGoesToTheDiscardUnplayed) {
-  // Constructed directly: a queued top-of-draw play whose rolled target is
-  // dead. No damage anywhere, no on-play triggers, the card in the discard.
+  // Constructed directly: a card waiting in the card queue whose rolled target
+  // is dead. No damage anywhere, no on-play triggers, the card in the discard.
   CombatState s = fight_holding({}, {RelicId::InkBottle});
   add_second_enemy(s);
   s.enemies[0].hp = 0;
   const int hp1 = s.enemies[1].hp;
-  s.draw_pile = cards({CardId::Strike});
-  ActionQueue q;
-  ResolutionContext ctx;
-  Action a;
-  a.kind = ActionKind::PlayCard;
-  a.amount = kPlayTopOfDrawKeeping;
-  a.target = 0;
-  q.push_back(a);
-  drain(s, q, ctx);
+  QueuedPlay p;
+  p.instance = Card{CardId::Strike};
+  p.target = 0;
+  s.card_queue.push_back(p);
+  play_queued_cards(s);
+  EXPECT_TRUE(s.card_queue.empty());
   EXPECT_EQ(s.enemies[1].hp, hp1);
   EXPECT_EQ(count_of(s.discard_pile, CardId::Strike), 1);
   EXPECT_EQ(counter_of(s, RelicId::InkBottle), 0) << "no on-play triggers";

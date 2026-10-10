@@ -354,9 +354,10 @@ StS plays a card that the player did not pick through its card queue
 **The target is fixed when the play is queued.** Havoc, Mayhem and Distilled
 Chaos all use `PlayTopCardAction(target, exhausts)`, and each caller passes
 `getRandomMonster(null, true, cardRandomRng)` as it queues the action. Distilled
-Chaos rolls all p targets in `use()`; Mayhem rolls one per stack at the start of
-the turn; Havoc rolls as it is played. The engine carries the slot on the
-`PlayCard` action (`roll_card_target`). A replay (Double Tap, Duplication) reuses
+Chaos rolls all p targets in `use()`; Mayhem rolls one per stack when its
+start-of-turn wrapper runs; Havoc rolls as it is played. The engine carries the
+slot on the `TakeTopCard` action and then on the card's `QueuedPlay`
+(`roll_card_target`; `card-queue.md`). A replay (Double Tap, Duplication) reuses
 the original play's target.
 
 **A card that cannot be used is not played.** The card queue checks
@@ -379,14 +380,14 @@ enemy that has already escaped.
 copy. Double Tap replays an Attack, Duplication any card, and with both up an
 Attack is played three times. Neither replays a replay.
 
-**Two known gaps, open as tasks.**
-- **#41, no card queue.** StS moves each autoplayed card into a card queue
-  that runs only once the action queue is empty. So Distilled Chaos takes all
-  p cards off the draw pile before playing any. The engine plays each before
-  taking the next, which differs when a played card draws or shuffles. The
-  same root cause makes Mayhem play before the turn's draw instead of after it.
-- **#42, X under autoplay.** The engine plays an X-cost card at X = 0. The
-  wiki's Mayhem page says it uses the full energy without spending it.
+**The card queue (#41, fixed 2026-10-10).** StS moves each autoplayed card
+into a card queue that runs only once the action queue is empty, so Distilled
+Chaos takes all p cards off the draw pile before playing any. The engine now
+does the same (`card-queue.md`).
+
+**One known gap, open as a task: #42, X under autoplay.** The engine plays an
+X-cost card at X = 0. The wiki's Mayhem page says it uses the full energy
+without spending it.
 
 ## 6. Run layer
 

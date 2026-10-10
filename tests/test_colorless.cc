@@ -1622,17 +1622,30 @@ TEST(Colorless, SadisticNatureFiresOnceForDarkShackles) {
 
 // ---------------------------------------------------------------- Mayhem
 
-TEST(Colorless, MayhemPlaysTheTopCardOfTheDrawPileEachTurn) {
+// AFTER the turn's draw (card-queue.md §2.1; the wiki: "Mayhem activates after
+// drawing cards"). Five Defends sit on the Strike: the draw takes the Defends,
+// and Mayhem plays the Strike now on top. It used to play the card on top
+// BEFORE the draw — here, a Defend.
+TEST(Colorless, MayhemPlaysTheTopCardAfterTheTurnsDraw) {
   CombatState s = fight_holding(CardId::Mayhem);
   ASSERT_TRUE(apply_action(s, card_action(CardId::Mayhem)));
   ASSERT_EQ(get_status(s.character.powers, Power::Mayhem), 1);
   s.draw_pile.clear();
   s.draw_pile.push_back(Card{CardId::Strike});  // back() is the top
+  for (int i = 0; i < STARTING_HAND_SIZE; ++i) {
+    s.draw_pile.push_back(Card{CardId::Defend});
+  }
+  s.discard_pile.clear();
   const int hp_before = s.enemies[0].hp;
 
   ASSERT_TRUE(apply_action(s, encode_action(ActionBlock::EndTurn)));
 
-  EXPECT_LT(s.enemies[0].hp, hp_before) << "the top card was played for free";
+  EXPECT_LT(s.enemies[0].hp, hp_before) << "the Strike was played for free";
+  ASSERT_EQ(s.current_hand.size(), static_cast<size_t>(STARTING_HAND_SIZE));
+  for (const Card& c : s.current_hand) {
+    EXPECT_EQ(c.card_id, CardId::Defend) << "the draw came first";
+  }
+  EXPECT_TRUE(s.draw_pile.empty());
 }
 
 // The one difference from Havoc: Mayhem does NOT exhaust the card it plays.

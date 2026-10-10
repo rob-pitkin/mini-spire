@@ -939,8 +939,8 @@ void fire_card_played_relic(CombatState& state, HeldRelic& relic, CardType type,
     case RelicId::Pocketwatch:
       // Every card played this turn, the same set Ink Bottle counts: StS's
       // onPlayCard fires for each card that resolves from the card queue,
-      // Havoc and Double Tap copies included. Read and cleared at the next
-      // TurnStartPostDraw.
+      // Havoc and Double Tap copies included. Read and cleared by the next
+      // turn's Hook::TurnStartPostDraw.
       ++relic.counter;
       break;
 
@@ -1524,11 +1524,11 @@ void push_potion_effects(CombatState& state, PotionId id, int target,
       break;
     case PotionId::DistilledChaos:
       // `for i < potency: addToBot(PlayTopCardAction(getRandomMonster(null,
-      // true, cardRandomRng), false))` — every target rolled NOW, before any
-      // card is played (T3), and no forced exhaust (Mayhem's mode).
+      // true, cardRandomRng), false))` — every target rolled NOW (T3), and no
+      // forced exhaust. The takes run back to back, so all p cards are off the
+      // pile before the first is played (card-queue.md §2.2).
       for (int i = 0; i < p; ++i) {
-        Action a = make_action(ActionKind::PlayCard);
-        a.amount = kPlayTopOfDrawKeeping;
+        Action a = make_action(ActionKind::TakeTopCard);
         a.target = roll_card_target(state);
         q.push_back(a);
       }
@@ -1601,19 +1601,14 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
         a.gen_pile = GeneratedPile::Hand;
         q.push_back(a);
       }
-      // Mayhem: play the top card of the draw pile, once per stack. These hooks
-      // run BEFORE the turn's draw is queued, which is the correct order: the
-      // card played is the one already on top, not one just drawn.
-      //
-      // Every stack's target is rolled now, before any card plays —
-      // MayhemPower.atStartOfTurn passes getRandomMonster(null, true,
-      // cardRandomRng) to each PlayTopCardAction (T4). So with two stacks the
-      // first card can kill the second one's target.
+      // Mayhem: play the top card of the draw pile, once per stack — AFTER the
+      // turn's draw (card-queue.md §2.1; the wiki: "Mayhem activates after
+      // drawing cards"). MayhemPower.atStartOfTurn queues a wrapper per stack
+      // that, when it runs, rolls the target and queues the take at the
+      // bottom, behind the draw and the post-draw relics already queued. This
+      // used to take the card on top before the draw.
       for (int i = 0; i < mayhem; ++i) {
-        Action a = make_action(ActionKind::PlayCard);
-        a.amount = kPlayTopOfDrawKeeping;
-        a.target = roll_card_target(state);
-        q.push_back(a);
+        q.push_back(make_action(ActionKind::MayhemRoll));
       }
       // Self-Forming Clay's block, banked by last turn's HP losses. Granted
       // then cleared, exactly as StS's NextTurnBlockPower does in
@@ -2239,11 +2234,6 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       fire_relic_hooks(state, Hook::CombatStart, q);
       fire_relic_hooks(state, Hook::TurnStartPostDraw, q);
       break;
-    case ActionKind::TurnStartPostDraw:
-      // Every later turn's post-draw hook. Until Pocketwatch this hook fired on
-      // turn 1 only, with nothing listening — the §6.10 shape again.
-      fire_relic_hooks(state, Hook::TurnStartPostDraw, q);
-      break;
     case ActionKind::PlaceOnBottomOfDraw: {
       // front() is the BOTTOM: draw_one pops the back. Cards placed in
       // selection order therefore come back in that order, which is what StS
@@ -2353,67 +2343,30 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       }
       break;
     }
-    case ActionKind::PlayCard: {
-      // Re-entrant card resolution — the case the action queue was built for
-      // (effects-architecture §2.4). The nested play happens as a flat queue
-      // step, so no resolution is open while it mutates state.
-      PlayContext pc;
-      pc.pay_energy = false;      // both cases are free plays
-      pc.take_from_hand = false;  // the card is not in hand
-      // Every card played this way is AUTOPLAYED in StS, and the card queue
-      // plays one only if canUse(player, its target): is_playable, and for a
-      // single-target card a target that is not dying (cardPlayable). A card
-      // that fails is not played at all — no effect and no on-play triggers
-      // (potion-effects.md T3, T5).
-      auto can_use = [&state](CardId id, int target) {
-        if (!is_playable(state, id)) return false;
-        if (!card_targets_enemy(CARD_DATABASE.at(id))) return true;
-        return valid_enemy_slot(state, target) && state.enemies[target].hp > 0;
-      };
-      if (a.amount == kPlayFromDrawPile || a.amount == kPlayTopOfDrawKeeping) {
-        // Havoc, Mayhem and Distilled Chaos: StS's PlayTopCardAction. Reshuffle
-        // first if the draw pile is empty ("it will shuffle your discard pile
-        // into your draw pile and target the new top card").
-        if (state.draw_pile.empty()) reshuffle_discard_into_draw(state, q);
-        if (state.draw_pile.empty()) break;
-        const Card top = state.draw_pile.back();
-        state.draw_pile.pop_back();
-        // Havoc says "and Exhaust it" (exhaustOnUseOnce); Mayhem and Distilled
-        // Chaos do not, so their card takes its normal fate and can come round
-        // again. That is the only difference, and why they share this branch.
-        const bool havoc = a.amount == kPlayFromDrawPile;
-        // The target was rolled when the play was queued (T3, T4), and may
-        // have died since — Distilled Chaos's first card killing the second's.
-        if (!can_use(top.card_id, a.target)) {
-          // Not played: UseCardAction with dontTriggerOnUseCard, so the card
-          // only goes to its pile. It exhausts under Havoc or by its own
-          // Exhaust and is discarded otherwise — Mayhem's Wound is discarded,
-          // which this branch used to get wrong by exhausting every unplayable
-          // card. An exhaust goes through the ExhaustCard ACTION, the one place
-          // Feel No Pain, Dark Embrace and Sentinel fire (ROB-85), and Strange
-          // Spoon applies, as it does in UseCardAction.
-          bool exhausts = havoc || CARD_DATABASE.at(top.card_id).exhaust;
-          if (exhausts && strange_spoon_spares(state)) exhausts = false;
-          Action move = make_action(exhausts ? ActionKind::ExhaustCard
-                                             : ActionKind::DiscardCard);
-          move.carry(top);
-          q.push_back(move);
-          break;
-        }
-        pc.force_exhaust = havoc;
-        pc.instance = top;
-        pc.forced_x = 0;  // an X-cost card played this way gets X = 0
-        handle_play_card(state, top.card_id, std::max(a.target, 0), pc);
-        break;
-      }
-      // A replay — Double Tap or Duplication, its charge already spent when the
-      // original was played (T1). The copy is purgeOnUse in StS, so one that
-      // cannot be used (its target died to the first play) simply vanishes.
-      if (!can_use(a.card, a.target)) break;
-      pc.enters_pile = false;  // the first copy already went to its pile
-      pc.instance = a.as_card();
-      pc.forced_x = a.replay_x;  // "uses the same value of X as the first"
-      handle_play_card(state, a.card, std::max(a.target, 0), pc);
+    case ActionKind::TakeTopCard: {
+      // Havoc, Mayhem, Distilled Chaos — StS's PlayTopCardAction. The card
+      // leaves the draw pile NOW and waits at the back of the card queue, in
+      // no pile, until every action has run (card-queue.md). Reshuffle first if
+      // the draw pile is empty ("it will shuffle your discard pile into your
+      // draw pile and target the new top card").
+      if (state.draw_pile.empty()) reshuffle_discard_into_draw(state, q);
+      if (state.draw_pile.empty()) break;
+      QueuedPlay p;
+      p.instance = state.draw_pile.back();
+      state.draw_pile.pop_back();
+      p.target = a.target;      // rolled when this was queued (T3, T4)
+      p.exhausts = a.amount == 1;  // Havoc's "and Exhaust it"
+      state.card_queue.push_back(p);
+      break;
+    }
+    case ActionKind::MayhemRoll: {
+      // MayhemPower's wrapper: roll the target when this runs — after the
+      // turn-start relics' actions, so Mercury Hourglass's kills are already
+      // dead (Q2) — and queue the take at the BACK, behind the turn's draw and
+      // the post-draw relics' actions.
+      Action take = make_action(ActionKind::TakeTopCard);
+      take.target = roll_card_target(state);
+      q.push_back(take);
       break;
     }
     case ActionKind::MultiplyStrength: {
@@ -3083,6 +3036,7 @@ bool finish_multi_select(CombatState& state) {
   push_multi_select_finish(done, q);
   ResolutionContext ctx;
   drain(state, q, ctx);
+  play_queued_cards(state);  // as for a single pick, in resolve_choice
   return true;
 }
 
@@ -3142,6 +3096,10 @@ bool resolve_choice(CombatState& state, int option_index) {
 
   ResolutionContext ctx;
   drain(state, q, ctx);
+  // The resumed resolution may have been a queued card's; the rest of the
+  // queue plays now (card-queue.md). apply_action would do it too — this is
+  // for callers that answer a choice directly.
+  play_queued_cards(state);
   return true;
 }
 
@@ -3152,9 +3110,10 @@ void drain(CombatState& state, ActionQueue& q, ResolutionContext& ctx) {
     if (state.outcome != Outcome::InProgress) {
       // Terminal short-circuit. A fight that ended mid-resolution discards any
       // pending choice: death takes precedence, and answering a choice on a
-      // finished fight is meaningless.
+      // finished fight is meaningless. Cards waiting to be played go with it.
       state.pending_choice = PendingChoice{};
       state.suspended_queue = ActionQueue{};
+      state.card_queue.clear();
       return;
     }
     if (state.pending_choice.active()) {

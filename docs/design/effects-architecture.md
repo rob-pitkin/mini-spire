@@ -138,6 +138,8 @@ enum class ActionKind {
   ExhaustCard, MoveCard,   // pile manipulation
   // Structure
   PlayCard,        // resolve a card (Double Tap, Havoc re-entry)
+                   // — superseded 2026-10-10: replays and top-of-draw plays
+                   // wait in a card queue instead (card-queue.md)
   EnemyMove,       // one enemy's turn action
   ChooseCard,      // PAUSES the drain; see §4.6
   // Bookkeeping

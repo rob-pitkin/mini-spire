@@ -294,11 +294,18 @@ struct PlayContext {
   int cost_column = -1;
 };
 
-// Resolve one card. Public because the PlayCard ACTION re-enters it: a
-// meta-card (Double Tap, Havoc) pushes a PlayCard action rather than calling
-// this directly, so the nested play is a flat queue step like everything else.
+// Resolve one card. Public for the card queue, which plays the cards Havoc,
+// Mayhem and Distilled Chaos take and the Double Tap / Duplication replays
+// through it (docs/design/card-queue.md).
 void handle_play_card(CombatState& state, CardId card_id, int target,
                       const PlayContext& ctx_play = PlayContext{});
+
+// Play the card queue out: each waiting card in turn, front first, until the
+// queue is empty, a choice pauses, or the fight ends. StS reads its card queue
+// only once every action has run, so this is called after a top-level
+// resolution — by apply_action, and by resolve_choice for callers that answer a
+// choice directly. A fight that ends with cards waiting clears them.
+void play_queued_cards(CombatState& state);
 
 // Apply a player action. Returns false (silently, no exception) if the
 // action is invalid; state is not mutated in that case. Combat must be

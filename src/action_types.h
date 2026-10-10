@@ -21,15 +21,6 @@ namespace minispire {
 inline constexpr int kPlayerSlot = -1;
 inline constexpr int kNoSlot = -2;
 
-// PlayCard modes (Action::amount). Which re-entrant play this is.
-inline constexpr int kPlayFromDrawPile = 0;  // Havoc
-// A free replay of the card just played: Double Tap and Duplication. The charge
-// was spent when the original was played (potion-effects.md T1).
-inline constexpr int kPlayReplay = 1;
-// Mayhem. Havoc's sibling, and the difference is the whole distinction between
-// the two cards: Havoc reads "and Exhaust it", Mayhem does not, so a card
-// Mayhem plays goes to the discard and can come round again.
-inline constexpr int kPlayTopOfDrawKeeping = 2;
 
 // Helper: look up a stack count in a debuff/power map, returning 0 if absent.
 template <typename Effect>
@@ -74,9 +65,15 @@ enum class ActionKind {
                // Stage-1 mutators until ROB-91 — an undocumented hole in the
                // single-write-path rule, which is how a fourth one appears.
   // Structure
-  PlayCard,       // resolve a card from inside a resolution (Double Tap's free
-                  // replay, Havoc playing off the draw pile). `amount` selects
-                  // which, via the kPlay* constants below.
+  TakeTopCard,    // Havoc, Mayhem, Distilled Chaos (StS's PlayTopCardAction):
+                  // take the top card of the draw pile, reshuffling first if it
+                  // is empty, and put it at the BACK of the card queue to be
+                  // played once every action has run (card-queue.md). `target`
+                  // is the slot rolled when this was queued; `amount` is 1 for
+                  // Havoc's "and Exhaust it".
+  MayhemRoll,     // Mayhem, once per stack: roll the target NOW and queue the
+                  // TakeTopCard at the back — behind the turn's draw and its
+                  // post-draw actions (MayhemPower's wrapper action).
   UpgradeHand,    // Armaments+: upgrade every card in hand
   UpgradeAllPiles,  // Apotheosis: upgrade every upgradable card in hand, draw,
                     // discard AND exhaust. Queued BEFORE the card's own pile
@@ -102,10 +99,9 @@ enum class ActionKind {
                         // by it — the decision must be made without seeing the
                         // opening hand.
   CombatStartPostDraw,  // the two relic hooks that follow the opening draw,
-                        // queued so they ride behind a parked draw
-  TurnStartPostDraw,    // turns 2+: fire Hook::TurnStartPostDraw once the
-                        // turn's draw has resolved (Pocketwatch). Turn 1 fires
-                        // the same hook from CombatStartPostDraw.
+                        // queued so they ride behind a parked draw. Turns 2+
+                        // fire Hook::TurnStartPostDraw as the turn-start queue
+                        // is built, as StS does (card-queue.md §3).
   PlaceOnBottomOfDraw,  // Forethought: the carried card goes UNDER the draw
                         // pile, costing 0 until played. An action rather than
                         // an inline move so the multi-select path and the
@@ -149,10 +145,10 @@ enum class ActionKind {
 struct Action {
   ActionKind kind;
   int actor = kNoSlot;   // damage source: kPlayerSlot or an enemy slot
-  // Recipient: kPlayerSlot or an enemy slot. A top-of-draw PlayCard (Havoc,
-  // Mayhem, Distilled Chaos) carries the slot rolled when the play was QUEUED,
-  // from the card-random stream — StS's PlayTopCardAction takes its monster as
-  // an argument (potion-effects.md T3, T4). kNoSlot when no enemy was alive.
+  // Recipient: kPlayerSlot or an enemy slot. TakeTopCard (Havoc, Mayhem,
+  // Distilled Chaos) carries the slot rolled when it was QUEUED, from the
+  // card-random stream — StS's PlayTopCardAction takes its monster as an
+  // argument (potion-effects.md T3, T4). kNoSlot when no enemy was alive.
   int target = kNoSlot;
   int amount = 0;
   // For card-carrying kinds. None means "this action carries no card", which
@@ -195,10 +191,6 @@ struct Action {
   // it applies with (potion-effects.md S1). Replaced a bare `copies`, which was
   // the only setting back when a choice's other settings came from its card.
   ChoiceSettings choice{};
-  // PlayCard replay (Double Tap, Duplication): the first play's RAW X, so the
-  // replay "uses the same value of X as the first". It used to ride in
-  // `copies`, which named something else entirely.
-  int replay_x = 0;
   // Per-instance card state for card-moving kinds (ExhaustCard, DiscardCard,
   // AddCardToPile). Carried alongside `card` so a Rampage returning to the
   // discard pile keeps its accumulated bonus, and an upgraded Searing Blow
@@ -268,6 +260,67 @@ class ActionQueue {
  private:
   static constexpr int kCapacity = 128;
   std::array<Action, kCapacity> buf_;
+  int head_ = 0;
+  int count_ = 0;
+};
+
+// One card waiting in the card queue (docs/design/card-queue.md): a card that
+// something other than the player is playing. StS's CardQueueItem.
+struct QueuedPlay {
+  Card instance{CardId::Strike};  // the copy to play, with its instance state
+  int target = kNoSlot;           // enemy slot, rolled or inherited
+  // A Double Tap / Duplication copy — StS's purgeOnUse: it enters no pile and
+  // is never replayed itself. Its X is the original play's raw X.
+  bool replay = false;
+  int replay_x = 0;
+  // Havoc's exhaustOnUseOnce: the card exhausts whether or not it is played.
+  bool exhausts = false;
+};
+
+// The card queue (card-queue.md): cards waiting to be played once every
+// pending action has run, which is when StS's GameActionManager reads its
+// cardQueue. A replay goes to the FRONT, right behind the card that spawned it
+// (addCardQueueItem(copy, true)); a card taken off the draw pile goes to the
+// BACK (NewQueueCardAction). Fixed-capacity and POD, so clone() stays a plain
+// copy, as for ActionQueue.
+class CardQueue {
+ public:
+  bool empty() const { return count_ == 0; }
+  int size() const { return count_; }
+  void clear() { count_ = 0; head_ = 0; }
+
+  void push_back(const QueuedPlay& p) {
+    assert(count_ < kCapacity && "CardQueue overflow");
+    buf_[(head_ + count_) % kCapacity] = p;
+    ++count_;
+  }
+
+  void push_front(const QueuedPlay& p) {
+    assert(count_ < kCapacity && "CardQueue overflow");
+    head_ = (head_ + kCapacity - 1) % kCapacity;
+    buf_[head_] = p;
+    ++count_;
+  }
+
+  QueuedPlay pop_front() {
+    assert(count_ > 0 && "pop from empty CardQueue");
+    QueuedPlay p = buf_[head_];
+    head_ = (head_ + 1) % kCapacity;
+    --count_;
+    return p;
+  }
+
+  // The i-th waiting card, front first.
+  const QueuedPlay& at(int i) const {
+    assert(i >= 0 && i < count_);
+    return buf_[(head_ + i) % kCapacity];
+  }
+
+ private:
+  // Distilled Chaos under Sacred Bark takes 6; Mayhem stacks and replays add a
+  // few more. Overflow is a bug.
+  static constexpr int kCapacity = 16;
+  std::array<QueuedPlay, kCapacity> buf_{};
   int head_ = 0;
   int count_ = 0;
 };

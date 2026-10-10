@@ -373,12 +373,12 @@ Toolbox, and update `relic-effects.md` §7.
   > be used is not played; it is discarded, or exhausted under Havoc or by its
   > own Exhaust. Mayhem used to exhaust an unplayable card.
   >
-  > ⚠️ **The timing above is wrong (found 2026-10-10, task #41).**
-  > `MayhemPower.atStartOfTurn` queues a wrapper action that queues the
-  > `PlayTopCardAction` at the BOTTOM when it runs, which is after the turn's
-  > `DrawCardAction`. The wiki says the same: "Mayhem activates *after* drawing
-  > cards at the start of the turn". The engine still plays the card that was
-  > on top before the draw.
+  > ⚠️ **The timing above was wrong; fixed 2026-10-10 (#41,
+  > `card-queue.md`).** `MayhemPower.atStartOfTurn` queues a wrapper action
+  > that queues the `PlayTopCardAction` at the BOTTOM when it runs, which is
+  > after the turn's `DrawCardAction`. The wiki says the same: "Mayhem
+  > activates *after* drawing cards at the start of the turn". Mayhem now takes
+  > the card on top after the draw and the post-draw draws.
 - **The Bomb's blast is unmodifiable, not unblockable.** It lands at the end of
   the player's turn, before the enemies act, so block an enemy gained on its
   previous turn is still standing and absorbs part of it. That is correct, and

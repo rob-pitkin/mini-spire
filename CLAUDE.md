@@ -349,6 +349,11 @@ What is worth knowing that a header does not tell you:
   changes. Design: `docs/design/effects-architecture.md`. Deliberate ordering
   divergences from StS are logged in `docs/design/ordering-notes.md` — read it
   before "fixing" an ordering, several are intentional and tested.
+- **A card the player did not pick waits in a card queue** (Havoc, Mayhem,
+  Distilled Chaos, Double Tap / Duplication replays) and is played only once
+  every action has run, as in StS's `GameActionManager`. It is never played
+  inline from inside another card's resolution. Design:
+  `docs/design/card-queue.md`.
 - **`Card` is an instance, `CardData` is the type.** A card in a pile carries
   only what distinguishes that copy; everything else is looked up by id.
 - **Enemy AI is a Markov table**, not a cycle: transitions keyed on

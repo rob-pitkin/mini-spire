@@ -137,6 +137,14 @@ struct CombatState {
   PendingChoice pending_choice;
   ActionQueue suspended_queue;
 
+  // Cards waiting to be played: Double Tap and Duplication replays, and cards
+  // Havoc, Mayhem and Distilled Chaos took off the draw pile
+  // (docs/design/card-queue.md). Read only once every pending action has run,
+  // by play_queued_cards. Empty at every decision point except a choice opened
+  // by a queued card, whose followers wait here — in no pile — until it is
+  // answered.
+  CardQueue card_queue;
+
   // Relics and potions are FIRST-CLASS combat state, not run-layer hooks
   // reaching in (v2-spec.md §3.0.1). A player sees their relic bar and potion
   // belt during a fight and can drink mid-combat, so §1's parity rule puts both
