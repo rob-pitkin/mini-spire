@@ -1791,7 +1791,10 @@ TEST(IntangiblePower, DirectHpLossIsAlsoCappedAtOne) {
   EXPECT_EQ(s.character.hp, hp - 1);
 }
 
-// THE exception: it ticks at end of turn, and it is the only power that does.
+// A named exception to "powers never tick", with Regen and Duplication: one
+// stack a round. It ticks at the end of the ROUND, after the enemy phase it
+// protects (debuff-timing.md; DebuffTiming tests pin the protection), so the
+// count at each decision point is what this checks.
 TEST(IntangiblePower, TicksDownAtEndOfTurn) {
   CombatState s = bare_fight();
   s.character.powers[Power::Intangible] = 2;

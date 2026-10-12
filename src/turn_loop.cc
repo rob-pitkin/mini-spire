@@ -17,13 +17,14 @@ namespace minispire {
 
 namespace {
 
-// Debuffs decrement by 1 at end of the bearer's turn; remove at 0. Powers never
-// tick — decrement-ness is now the TYPE, so no per-effect denylist — with three
-// named exceptions, each losing one stack at the end of the player's turn:
-// Intangible, Regen (Rob, 2026-10-04; potion-effects.md Q2) and Duplication
-// (potion-effects.md Q3). Everything
-// else is either permanent for the fight or removed wholesale at a named hook
-// (Flame Barrier, Rage).
+// Debuffs decrement by 1 and are removed at 0 — an enemy's at the end of its
+// own turn, the player's split between the end of the turn and the end of the
+// round as StS does (debuff-timing.md). Powers never tick — decrement-ness is
+// now the TYPE, so no per-effect denylist — with three named exceptions:
+// Intangible and Duplication at the end of the round, Regen at the end of the
+// player's turn (potion-effects.md Q2, Q3). Everything else is either
+// permanent for the fight or removed wholesale at a named hook (Flame Barrier,
+// Rage).
 void tick_one_power(std::unordered_map<Power, int>& powers, Power p) {
   auto it = powers.find(p);
   if (it == powers.end()) return;
@@ -39,6 +40,33 @@ bool spend_one_charge(std::unordered_map<Power, int>& powers, Power p) {
   return true;
 }
 
+// The player's debuffs StS removes at the end of the PLAYER's turn
+// (atEndOfTurn(isPlayer)): Entangle and No Draw.
+void tick_end_of_turn_debuffs(std::unordered_map<Debuff, int>& debuffs) {
+  for (Debuff d : {Debuff::Entangle, Debuff::NoDraw}) {
+    auto it = debuffs.find(d);
+    if (it != debuffs.end() && --it->second <= 0) debuffs.erase(it);
+  }
+}
+
+// The player's debuffs StS ticks at the end of the ROUND (atEndOfRound):
+// Vulnerable, Weak, Frail, No Block. One an enemy has just applied clears its
+// flag instead of losing a stack (debuff-timing.md §1). Confusion never ticks.
+void tick_end_of_round_debuffs(Character& c) {
+  for (Debuff d : {Debuff::Vulnerable, Debuff::Weak, Debuff::Frail,
+                   Debuff::NoBlock}) {
+    bool& just = c.debuff_just_applied[static_cast<int>(d)];
+    auto it = c.debuffs.find(d);
+    if (it == c.debuffs.end() || just) {
+      just = false;
+      continue;
+    }
+    if (--it->second <= 0) c.debuffs.erase(it);
+  }
+}
+
+// An ENEMY's debuffs, at the end of its own turn. StS ticks them at the end of
+// the round, after every enemy has acted; nothing between the two reads them.
 void tick_debuffs(std::unordered_map<Debuff, int>& debuffs) {
   for (auto it = debuffs.begin(); it != debuffs.end();) {
     // Confusion is a debuff that never wears off (StS's ConfusionPower has no
@@ -808,6 +836,7 @@ void translate_enemy_move(CombatState& state, const Move& move, int actor_slot,
   for (const auto& app : move.applies_debuffs) {
     Action a;
     a.kind = ActionKind::ApplyDebuff;
+    a.actor = actor_slot;  // the enemy is the source (debuff-timing.md)
     a.target = (app.target == Target::Character) ? kPlayerSlot : actor_slot;
     a.debuff = app.effect;
     a.amount = app.amount;
@@ -874,26 +903,14 @@ void handle_end_turn(CombatState& state) {
     check_enemy_terminal(state);
     if (state.outcome != Outcome::InProgress) return;
   }
-  // 1b. Tick character debuffs, and the THREE powers that tick.
-  //
-  // Intangible (Rob, 2026-09-12), Regen (Rob, 2026-10-04) and Duplication
-  // (potion-effects.md Q3) are deliberate, named exceptions to "powers never
-  // tick" (see status_effect.h). All are BUFFs in StS — beneficial, so none can
-  // live in the debuff map, which would put it in the wrong observation block
-  // and route it through Artifact. Named here one by one rather than by a
-  // per-power tick list, so each exception stays one line and one name instead
-  // of becoming a general mechanism.
+  // 1b. End of the player's turn: what StS ticks in atEndOfTurn(isPlayer) —
+  // Entangle and No Draw come off, Regen loses a stack. Everything else that
+  // ticks waits for the end of the ROUND, step 2h (debuff-timing.md).
   //
   // Regen ticks AFTER the drain above, which healed by its current stacks —
   // StS's RegenAction heals, then decrements.
-  //
-  // Duplication's StS tick is atEndOfRound, after the enemy phase. Here it is
-  // indistinguishable: no card is played during the enemy phase, which is the
-  // only thing a charge could be spent on. (Intangible's is not — task #39.)
-  tick_debuffs(state.character.debuffs);
-  tick_one_power(state.character.powers, Power::Intangible);
+  tick_end_of_turn_debuffs(state.character.debuffs);
   tick_one_power(state.character.powers, Power::Regen);
-  tick_one_power(state.character.powers, Power::Duplication);
   // 1c. Leftover energy is NOT discarded here. The turn-start refill is the
   // single authority on what energy a turn begins with (query.cc's
   // energy_after_turn_start), and it replaces the total for everyone who does
@@ -994,6 +1011,25 @@ void handle_end_turn(CombatState& state) {
   // which ends the fight as a Win even though nothing was killed this turn.
   check_enemy_terminal(state);
   if (state.outcome != Outcome::InProgress) return;
+
+  // 2h. End of the round: the player's atEndOfRound, after every enemy has
+  // acted (MonsterGroup.applyEndOfTurnPowers; debuff-timing.md). Vulnerable,
+  // Weak, Frail and No Block lose a stack unless just applied; then
+  // Intangible and Duplication. So a player's Vulnerable covers the enemy
+  // phase it is still up for, and Incense Burner's Intangible protects the
+  // enemy phase of the turn it was granted — at the end of the player's turn,
+  // as this used to be, both were gone before the enemies acted.
+  //
+  // Intangible (Rob, 2026-09-12), Regen (Rob, 2026-10-04) and Duplication
+  // (potion-effects.md Q3) are deliberate, named exceptions to "powers never
+  // tick" (see status_effect.h). All are BUFFs in StS — beneficial, so none can
+  // live in the debuff map, which would put it in the wrong observation block
+  // and route it through Artifact. Named one by one rather than by a per-power
+  // tick list, so each exception stays one line and one name instead of
+  // becoming a general mechanism.
+  tick_end_of_round_debuffs(state.character);
+  tick_one_power(state.character.powers, Power::Intangible);
+  tick_one_power(state.character.powers, Power::Duplication);
 
   // 3. Start new player turn. Block reset and the energy refill are upkeep;
   // the start-of-turn powers (Demon Form, Brutality, Berserk, Flame Barrier

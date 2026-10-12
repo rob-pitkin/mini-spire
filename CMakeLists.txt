@@ -66,6 +66,7 @@ if(MINISPIRE_BUILD_TESTS AND NOT SKBUILD)
     tests/test_turn_loop.cc
     tests/test_combat_env.cc
     tests/test_card_queue.cc
+    tests/test_debuff_timing.cc
     tests/test_encounter.cc
     tests/test_mask_oracle.cc
     tests/test_map.cc

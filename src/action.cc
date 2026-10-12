@@ -311,6 +311,29 @@ bool apply_debuff(CombatState& state, const DebuffApplication& app,
       return false;  // debuff negated
     }
   }
+  // StS's justApplied (debuff-timing.md §1). A NEW debuff on the player takes
+  // the flag its power's constructor would: Weak and Frail whenever an enemy
+  // applies them, Vulnerable and No Block only when an enemy applies them
+  // after the player's turn has ended. Stacking onto one already held keeps
+  // its flag — ApplyPowerAction calls stackPower and drops the new object.
+  if (app.target == Target::Character && m->find(app.effect) == m->end()) {
+    bool just = false;
+    if (app.from_enemy) {
+      switch (app.effect) {
+        case Debuff::Weak:
+        case Debuff::Frail:
+          just = true;
+          break;
+        case Debuff::Vulnerable:
+        case Debuff::NoBlock:
+          just = !state.character_turn;
+          break;
+        default:
+          break;
+      }
+    }
+    state.character.debuff_just_applied[static_cast<int>(app.effect)] = just;
+  }
   // Entangle is non-stacking: SET to the applied amount, not accumulated. It's
   // 1-turn and boolean (ROB-75); stacking to 2 would wrongly last two turns.
   if (app.effect == Debuff::Entangle) {
@@ -483,6 +506,7 @@ void push_trigger_response(CombatState& state, int slot,
     }
     case TriggeredAction::ApplyPlayerDebuff: {
       Action a = make_action(ActionKind::ApplyDebuff);
+      a.actor = slot;  // the enemy is the source (debuff-timing.md)
       a.target = kPlayerSlot;
       a.debuff = fx.debuff;
       a.amount = fx.amount;
@@ -790,9 +814,10 @@ void fire_turn_start_relic(CombatState& state, HeldRelic& relic,
 
     case RelicId::IncenseBurner:
       // Same shape as Happy Flower: a run-scoped turn counter that fires on
-      // reaching its threshold and resets. 1 Intangible, which then ticks away
-      // at the end of that same turn — so it protects the enemy phase that
-      // follows, which is the point of it.
+      // reaching its threshold and resets. 1 Intangible, which ticks away at
+      // the end of that ROUND — after the enemy phase it protects, which is
+      // the point of it. (Until #39 it ticked at the end of the player's turn
+      // and protected nothing; debuff-timing.md.)
       if (++relic.counter >= kIncenseBurnerTurns) {
         relic.counter = 0;
         push_player_power(q, Power::Intangible, 1);
@@ -2002,8 +2027,10 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       break;
     case ActionKind::ApplyDebuff:
       if (a.target == kPlayerSlot) {
+        // An enemy actor makes it StS's isSourceMonster (debuff-timing.md).
         apply_debuff(state,
-                     DebuffApplication{a.debuff, a.amount, Target::Character},
+                     DebuffApplication{a.debuff, a.amount, Target::Character,
+                                       /*from_enemy=*/a.actor >= 0},
                      kNoSlot);
       } else if (apply_debuff(state,
                               DebuffApplication{a.debuff, a.amount,

@@ -7,7 +7,11 @@ namespace minispire {
 // self-decrement. Keeping them as separate types makes "does this tick" a
 // property of the type, not a maintained denylist.
 
-// Debuffs — decrement by 1 at end of the bearer's turn, expire at 0. `None` is a
+// Debuffs — decrement by 1 and expire at 0. An enemy's tick at the end of its
+// own turn; the player's as StS does it (docs/design/debuff-timing.md):
+// Vulnerable, Weak, Frail and No Block at the end of the ROUND, after the
+// enemies act, skipping one tick when an enemy has just applied them; Entangle
+// and No Draw at the end of the player's turn; Confusion never. `None` is a
 // sentinel default (not tracked in the obs); keep the real values first so their
 // enumerator order matches kObsDebuffOrder.
 enum class Debuff {
@@ -188,6 +192,9 @@ struct DebuffApplication {
   Debuff effect;
   int amount;
   Target target;
+  // An enemy applied it — StS's isSourceMonster, which decides whether a
+  // debuff on the player starts "just applied" (debuff-timing.md §1).
+  bool from_enemy = false;
 };
 
 struct PowerApplication {

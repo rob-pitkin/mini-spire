@@ -45,6 +45,11 @@ struct Character {
   int current_block;
   std::unordered_map<Debuff, int> debuffs;
   std::unordered_map<Power, int> powers;
+  // StS's justApplied, per debuff (docs/design/debuff-timing.md): a debuff an
+  // enemy has just applied skips its next end-of-round tick. Set by
+  // apply_debuff, cleared by that tick. Not observed (Q2): in Act 1 it is never
+  // set at a decision point, which a test pins.
+  std::array<bool, kNumDebuffs> debuff_just_applied{};
   // Combust's second counter (Stage 4a): HP lost at end of turn = casts, while
   // Power::Combust stacks = accumulated damage (5/7 per cast — one stack count
   // can't hold both once upgrades mix). Bumped by the ApplyPower executor.
