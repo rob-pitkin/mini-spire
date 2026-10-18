@@ -149,6 +149,9 @@ struct CombatState {
   // by a queued card, whose followers wait here — in no pile — until it is
   // answered.
   CardQueue card_queue;
+  // The last lineage number handed to a set of replays (QueuedPlay::lineage).
+  // Combat-scoped and only ever compared for equality.
+  int replay_lineage = 0;
 
   // Relics and potions are FIRST-CLASS combat state, not run-layer hooks
   // reaching in (v2-spec.md §3.0.1). A player sees their relic bar and potion

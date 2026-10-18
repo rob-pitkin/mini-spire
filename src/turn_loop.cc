@@ -31,6 +31,12 @@ void tick_one_power(std::unordered_map<Power, int>& powers, Power p) {
   if (--it->second <= 0) powers.erase(it);
 }
 
+// Rampage's growth on one copy: up the rung ladder (ROB-87), or past its top
+// on the instance counter.
+void grow_copy(Card& c, const CardData& data) {
+  if (!grow_card_in_place(c)) c.bonus_damage += data.bonus_damage_per_play;
+}
+
 // Spend one charge of a counted power (Double Tap, Duplication), removing it
 // at 0. False, with nothing spent, if there is no charge.
 bool spend_one_charge(std::unordered_map<Power, int>& powers, Power p) {
@@ -300,9 +306,7 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
   // that is what makes a grown copy visible in the observation and selectable
   // as its own action. Only past the top rung does it fall back to the
   // instance counter, so damage stays exact where the encoding saturates.
-  if (data.bonus_damage_per_play > 0 && !grow_card_in_place(played)) {
-    played.bonus_damage += data.bonus_damage_per_play;
-  }
+  if (data.bonus_damage_per_play > 0) grow_copy(played, data);
   if (card_damage > 0) {
     // One DealDamage per hit per target; a multi-hit AoE (Whirlwind) sweeps
     // all targets each swing. Damage math runs at execution (Strength per hit).
@@ -705,12 +709,24 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
     if (spend_one_charge(state.character.powers, Power::Duplication)) {
       ++replays;
     }
+    // The copy is the card AFTER this play's growth (#44). In StS it sits in
+    // limbo sharing the original's uuid while Rampage's ModifyDamageAction
+    // runs, which reaches every instance with that uuid, so a replayed Rampage
+    // plays at 13, not 8. `played` has already grown above; card_id has not.
+    const int lineage = replays > 0 ? ++state.replay_lineage : 0;
+    const OriginPile origin =
+        !has_pile_move ? OriginPile::None
+        : pile_move.kind == ActionKind::ExhaustCard ? OriginPile::Exhaust
+                                                    : OriginPile::Discard;
     for (int i = 0; i < replays; ++i) {
       QueuedPlay copy;
-      copy.instance = Card{card_id, played.bonus_damage, played.upgrades};
+      copy.instance = Card{played.card_id, played.bonus_damage, played.upgrades};
       copy.target = target;
       copy.replay = true;
       copy.replay_x = x;  // the first play's RAW X — the replay adds Chemical X
+      copy.lineage = lineage;
+      copy.original = copy.instance;
+      copy.original_pile = origin;
       state.card_queue.push_front(copy);
     }
   }
@@ -1525,6 +1541,52 @@ void use_potion(CombatState& state, PotionId p, int target) {
   check_enemy_terminal(state);
 }
 
+// A replayed Rampage's ModifyDamageAction reaches every in-battle copy sharing
+// its uuid (GetAllInBattleInstances, which searches every pile and limbo):
+// the original, wherever it now is, and any sibling replay still waiting
+// (#44). So Rampage + Double Tap plays 8 then 13 and leaves the original at
+// 18; with Duplication too, the second replay plays at 18 and the original
+// ends at 23.
+//
+// The engine has no uuid. The original is found by identity — id, bonus,
+// upgrades — searching the pile it went to first, then the rest, in case a
+// reshuffle moved it. Identical copies are interchangeable, so growing one
+// that is not the original changes nothing anyone can see. Siblings share the
+// replay's lineage number.
+void spread_replay_growth(CombatState& state, const QueuedPlay& p,
+                          const CardData& data) {
+  auto same_identity = [&p](const Card& c) {
+    return c.card_id == p.original.card_id &&
+           c.bonus_damage == p.original.bonus_damage &&
+           c.upgrades == p.original.upgrades;
+  };
+  std::vector<std::vector<Card>*> piles;
+  if (p.original_pile == OriginPile::Discard) piles.push_back(&state.discard_pile);
+  if (p.original_pile == OriginPile::Exhaust) piles.push_back(&state.exhaust_pile);
+  for (std::vector<Card>* pile : {&state.current_hand, &state.draw_pile,
+                                  &state.discard_pile, &state.exhaust_pile}) {
+    piles.push_back(pile);
+  }
+  Card grown_original = p.original;
+  bool found = false;
+  for (std::vector<Card>* pile : piles) {
+    for (Card& c : *pile) {
+      if (!same_identity(c)) continue;
+      grow_copy(c, data);
+      grown_original = c;
+      found = true;
+      break;
+    }
+    if (found) break;
+  }
+  for (int i = 0; i < state.card_queue.size(); ++i) {
+    QueuedPlay& sibling = state.card_queue.at(i);
+    if (sibling.lineage != p.lineage) continue;
+    grow_copy(sibling.instance, data);
+    sibling.original = grown_original;
+  }
+}
+
 // One card from the card queue — GameActionManager's card branch for a card
 // the player did not pick (card-queue.md §3). It is played only if
 // canUse(player, its target) holds: is_playable, and for a single-target card a
@@ -1574,6 +1636,9 @@ void resolve_queued_play(CombatState& state, const QueuedPlay& p) {
     pc.forced_x = 0;  // an autoplayed X-cost card gets X = 0 — pending #42
   }
   handle_play_card(state, id, std::max(p.target, 0), pc);
+  if (p.replay && p.lineage != 0 && data.bonus_damage_per_play > 0) {
+    spread_replay_growth(state, p, data);
+  }
 }
 
 bool apply_action_inner(CombatState& state, int action);

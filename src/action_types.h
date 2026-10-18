@@ -264,6 +264,9 @@ class ActionQueue {
   int count_ = 0;
 };
 
+// Which pile a replayed card's original went to when it was played.
+enum class OriginPile : uint8_t { None, Discard, Exhaust };
+
 // One card waiting in the card queue (docs/design/card-queue.md): a card that
 // something other than the player is playing. StS's CardQueueItem.
 struct QueuedPlay {
@@ -275,6 +278,14 @@ struct QueuedPlay {
   int replay_x = 0;
   // Havoc's exhaustOnUseOnce: the card exhausts whether or not it is played.
   bool exhausts = false;
+  // A replay shares its original's uuid in StS (makeSameInstanceOf), so
+  // Rampage's growth reaches the original and every sibling replay
+  // (GetAllInBattleInstances; task #44). The engine has no uuid, so a replay
+  // carries the link: a lineage number shared with its siblings, and the
+  // original's identity and the pile it went to. 0 = no lineage.
+  int lineage = 0;
+  Card original{CardId::Strike};
+  OriginPile original_pile = OriginPile::None;
 };
 
 // The card queue (card-queue.md): cards waiting to be played once every
@@ -312,6 +323,10 @@ class CardQueue {
 
   // The i-th waiting card, front first.
   const QueuedPlay& at(int i) const {
+    assert(i >= 0 && i < count_);
+    return buf_[(head_ + i) % kCapacity];
+  }
+  QueuedPlay& at(int i) {
     assert(i >= 0 && i < count_);
     return buf_[(head_ + i) % kCapacity];
   }

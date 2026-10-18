@@ -188,6 +188,64 @@ TEST(CardQueue, AReplayWaitsForTheOriginalsActions) {
   EXPECT_EQ(s.current_hand.size(), 3u);
 }
 
+// ------------------------------------------- Rampage's shared growth (#44)
+
+// The damage of every Rampage in the discard pile, ascending.
+std::vector<int> rampage_damages(const CombatState& s) {
+  std::vector<int> out;
+  for (const Card& c : s.discard_pile) {
+    if (CARD_DATABASE.at(c.card_id).bonus_damage_per_play > 0) {
+      out.push_back(instance_card_damage(s, c));
+    }
+  }
+  std::sort(out.begin(), out.end());
+  return out;
+}
+
+TEST(CardQueue, ADoubleTappedRampagePlaysGrownAndGrowsTheOriginalAgain) {
+  // The copy shares the original's uuid, so the original's +5 reaches it in
+  // limbo (it plays at 13), and its own +5 reaches the original in the
+  // discard (which ends at 18).
+  CombatState s = one_enemy_fight();
+  s.character.powers[Power::DoubleTap] = 1;
+  s.current_hand = cards({CardId::Rampage});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Rampage)));
+
+  EXPECT_EQ(s.enemies[0].hp, 100 - 8 - 13);
+  EXPECT_EQ(rampage_damages(s), std::vector<int>{18});
+}
+
+TEST(CardQueue, TwoReplaysOfOneRampageGrowEachOther) {
+  // Double Tap and Duplication: the second copy has taken the original's and
+  // the first copy's growth by the time it plays — 8, 13, 18 — and the
+  // original ends at 23.
+  CombatState s = one_enemy_fight();
+  s.character.powers[Power::DoubleTap] = 1;
+  s.character.powers[Power::Duplication] = 1;
+  s.current_hand = cards({CardId::Rampage});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Rampage)));
+
+  EXPECT_EQ(s.enemies[0].hp, 100 - 8 - 13 - 18);
+  EXPECT_EQ(rampage_damages(s), std::vector<int>{23});
+}
+
+TEST(CardQueue, AnIdenticalRampageAlreadyDiscardedIsInterchangeable) {
+  // A different Rampage, already at 13, sits in the discard. The replay's
+  // growth may land on either 13 — they are identical — and the pile ends
+  // {13, 18} either way.
+  CombatState s = one_enemy_fight();
+  s.character.powers[Power::DoubleTap] = 1;
+  s.discard_pile = cards({CardId::Rampage5});
+  s.current_hand = cards({CardId::Rampage});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Rampage)));
+
+  EXPECT_EQ(s.enemies[0].hp, 100 - 8 - 13);
+  EXPECT_EQ(rampage_damages(s), (std::vector<int>{13, 18}));
+}
+
 // ---------------------------------------------------------------- Choices
 
 TEST(CardQueue, AQueuedCardsChoicePausesTheRestUntilAnswered) {

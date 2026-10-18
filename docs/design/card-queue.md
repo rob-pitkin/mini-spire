@@ -128,6 +128,25 @@ pause needs the opening draw to be an action.
 **Removed.** The `PlayCard` action and its three modes. Card plays from inside a
 resolution all go through the queue.
 
+### 3.1 A replay shares its original's identity (#44, Rob 2026-10-12)
+
+StS builds a replay with `makeSameInstanceOf`, so it shares the original's
+uuid. Rampage's `ModifyDamageAction(uuid)` reaches every in-battle instance with
+that uuid (`GetAllInBattleInstances`: every pile and limbo):
+- the replay, while it waits in limbo, takes the original's growth: Rampage +
+  Double Tap plays 8 then 13;
+- the replay's own growth reaches the original in its pile, which ends at 18;
+- with Double Tap and Duplication, the second replay takes both earlier
+  growths: it plays at 18, and the original ends at 23.
+
+The engine has no uuid. A replay is built from the grown copy, and it carries a
+lineage number shared with its siblings, plus the original's identity (id,
+bonus, upgrades) and the pile it went to. When a replay grows, it grows one copy
+of that identity, looking in that pile first and then the others in case a
+reshuffle moved it. It also grows every queued sibling. Identical copies are
+interchangeable, so growing a copy that is not the original cannot be seen.
+Rampage is the only card in the pool that grows itself.
+
 ## 4. Rulings (Rob, 2026-10-10)
 
 | # | ruling |
