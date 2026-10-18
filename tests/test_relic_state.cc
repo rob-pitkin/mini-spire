@@ -295,6 +295,20 @@ TEST(RelicState, AnElitesOwnRelicCannotAlterThatFightsPotionRoll) {
   }
 }
 
+// The potion roll counts gold and relics, not the card reward, which StS
+// creates only afterwards (v2-spec.md §4.2, correction #26). A Black Star
+// elite therefore counts 3 and still drops: counting the card made it 4 and
+// suppressed every one.
+TEST(PotionState, ABlackStarElitesTwoRelicsDoNotSuppressItsPotion) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::BlackStar);
+  run.potion_chance_bonus = 60;  // 40 + 60 = 100%: certain unless suppressed
+  run.begin_combat(EncounterPool::Elite);
+  run.end_combat();
+  EXPECT_EQ(run.potions.size(), 1u) << "the drop was suppressed";
+  EXPECT_EQ(run.potion_chance_bonus, 50) << "the roll missed";
+}
+
 // A suppressed reward screen still MISSES, and a miss drifts the chance up. The
 // spec sets the chance to zero and rolls; returning early instead would skip the
 // drift and quietly lower the drop rate of any run that hit full screens.

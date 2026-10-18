@@ -769,17 +769,25 @@ boss gold to 75% — not reachable at our pinned A0, §3.0.)
 ```
 chance = 40 + potionChance          // potionChance starts at 0
 if White Beast Statue: chance = 100
-if (potionCount + relicCount + goldRewardCount + cardRewardCount) >= 4: chance = 0
+if (rewards already on the room's list) >= 4: chance = 0
+    // gold + the elite's relic(s) (+ stolen gold, keys) — NOT the card reward
 
 if potionRng.random(99) >= chance:  potionChance += 10      // no drop
 else:                               drop a potion; potionChance -= 10
 ```
 
-⚠️ **Two things a naive implementation gets wrong.** The drift is **±10 and
+⚠️ **Three things a naive implementation gets wrong.** The drift is **±10 and
 symmetric** — it goes *down* on a successful drop, so it is not a one-way pity
-counter. And **a reward screen already holding 4 items suppresses potions
-entirely**, which couples potion drops to relic and card rewards rather than
-being independent.
+counter. **A reward list already holding 4 items suppresses potions
+entirely**, which couples potion drops to the gold and relic rewards. And the
+**card reward is not on that list yet**: StS rolls the potion
+(`AbstractRoom.update`: `dropReward()`, then `addPotionToRewards()`) before
+the reward screen opens, and the card reward is created only then, in
+`CombatRewardScreen.setupItemReward`. `sts_lightspeed` agrees: its formula
+includes `cardRewardCount`, but every combat reward calls `addPotionRewards`
+before `addCardReward`, so that term is 0 there. In Act 1 the list holds at
+most gold and two relics (Black Star), so the suppression cannot happen; it
+needs stolen gold (#49) or Act 4's keys. Correction #26.
 
 #### Card reward rarity
 
@@ -2193,6 +2201,7 @@ implement the spec.
 | 23 | Chest gold and relic tier described only in code, with the correlation asserted as "the game's" and no source | **§4.0.1**, wiki-confirmed: gold only accompanies the **lowest rarity available to that chest size** | Taken from `sts_lightspeed` without the wiki cross-check the corollary requires — the one place in this phase where the standing rule was skipped. The mechanic turned out correct; the *comment* was wrong (it said "more likely to hold a common", which is impossible for a large chest), and there was no spec section to check either against. |
 | 24 | Elite relic granted *before* the same screen's potion and card rolls | **all reward contents rolled, then granted** (§4.2) | An elite dropping White Beast Statue had `roll_potion_drop` see it already held and force that very fight's drop chance to 100. Question Card and Prayer Wheel are the same shape against the card reward. A screen in StS is rolled as a unit and then collected. |
 | 25 | Potion drop suppressed by a full reward screen returned early | **chance set to 0, roll still taken** (§4.2) | The miss branch drifts `potionChance` up by 10. Returning early skipped the drift, so any run hitting several full screens ended with a materially lower cumulative drop rate. The spec had it right; the implementation shortcut it. |
+| 26 | The potion drop's "4 on screen" count included the card reward (and Prayer Wheel's) | **gold and relics only** (§4.2) | `sts_lightspeed`'s formula names `cardRewardCount`, and was copied without its call order, where that count is always 0. The decompiled order agrees. The effect: every Black Star elite counted 4 and never dropped a potion, where StS counts 3. Logged as a source disagreement (#47) until the call order was read. |
 
 ### Standing traps
 
@@ -2205,6 +2214,7 @@ source, would "correct" the spec into being wrong.
 | **Juzu Bracelet reset** | Converting MONSTER→EVENT still resets `monsterChance` to 0.10, because the conversion happens *inside* the `choice == MONSTER` branch. Checking room type after the swap increments instead. Invisible in any single-room test. |
 | **Neow's no-op draw** | `getOptions` ends with `r.random(0, 0)` — consumes a draw, changes nothing. Skip it and every later Neow-stream draw desynchronises. |
 | **Read arithmetic, not names** | Three of four defects found by cross-checking `sts_lightspeed` were mislabelled-but-correct code (#11, #12, and the rarity sign). Treat every identifier and display string there as a comment. |
+| **A formula without its call order** | A term can be in a formula and always be zero at the one place it is read. `addPotionRewards` counts `cardRewardCount`, but runs before any card reward exists (#26). Read where a function is called before transcribing what it computes. |
 | **Chest 50/33/17 ≠ elite 50/33/17** | The same three numbers mean *sizes* for a chest and *tiers* for an elite. Sharing one constant makes a correction to either silently reassign the other. Kept separate on purpose (§4.0.1). |
 | **Chest gold is not independent of tier** | One roll decides both, and for a large chest that is a hard exclusion — a rare never comes with gold. Both marginals look correct under two independent rolls, so nothing short of a joint-distribution check catches the "fix". |
 | **Smiling Mask vs the discount relics — sources DISAGREE** | `sts_lightspeed`'s `Shop::getRemoveCost` sets removal to 50 and *then* multiplies by the Courier/Membership factors, giving **25** with Membership Card. The wiki says the opposite, explicitly: *"Price-reduction effects will not affect the price of card removals if the player possesses Smiling Mask. It will always set the price of the card removal service to 50 Gold even if its price would otherwise be lower."* Per rule 2's corollary the wiki is the check, so **50** ships, pinned by `ShopDiscounts.SmilingMaskOverridesTheDiscountRelics`. This is the first outright contradiction between the two sources rather than a mislabelling, and it is unresolved — if anyone verifies in-game, that test is where the answer goes. |

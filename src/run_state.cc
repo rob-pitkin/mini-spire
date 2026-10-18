@@ -1541,10 +1541,10 @@ void RunState::end_combat() {
     // trap against the card reward. Rolling first removes the class, rather than
     // each relic separately.
     //
-    // The count is every entry the screen will hold, card reward included (§4.2)
-    // — gold, the elite's relic, and the card. Miscounting it moves the
-    // four-item suppression threshold by a fight. (Whether StS counts the card
-    // is an open question, task #47.)
+    // The potion roll counts what is ON THE ROOM'S LIST when it runs (§4.2,
+    // correction #26): gold and the elite's relics. Not the card reward —
+    // StS creates that afterwards, when the screen opens, and sts_lightspeed
+    // adds it after its potion roll too.
     //
     // A Smoke Bomb escape (potion-effects.md §5.5, Rob V2) runs StS's same
     // reward block and then opens a screen that grants nothing. Rolls that
@@ -1590,11 +1590,11 @@ void RunState::end_combat() {
              ? 1
              : 0);
 
-    // Counted as for an unsmoked screen even when smoked: StS rolls the potion
-    // before it opens the screen that turns out to show nothing.
-    const int on_screen = 1 /* gold */ + 1 /* card */ +
-                          static_cast<int>(elite_relics.size()) +
-                          extra_card_rewards;
+    // Counted the same when smoked: StS rolls the potion before it opens the
+    // screen that turns out to show nothing. (A thief's stolen gold would
+    // count too, once Thievery exists — task #49.)
+    const int on_screen =
+        1 /* gold */ + static_cast<int>(elite_relics.size());
     roll_potion_drop(on_screen, /*grant=*/!smoked);
 
     if (smoked) {
