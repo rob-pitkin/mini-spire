@@ -85,6 +85,10 @@ not encode at all.
 it. Fetch with
 `gh api repos/aeubanks/sts/contents/<path> -H "Accept: application/vnd.github.raw"`;
 the repo root is the package root (`relics/`, `cards/`, `screens/`, `rooms/`, …).
+Find every reference to a name, not only its class, with
+`gh api -X GET search/code -f q='<Name> repo:aeubanks/sts'`. Filenames do not
+always match IDs: `ChampionsBelt.java` has ID `"Champion Belt"`, so fetching the
+ID-shaped name returns 404.
 
 It is not a free pass, and the failure mode is specific: **read the call chain,
 not the one method.** Tiny House's `onEquip` adds no card reward, and the relic
@@ -92,6 +96,10 @@ grants a card anyway — `combatRewardScreen.open` does it, one call further dow
 That shipped as a confident "the game does not grant a card", in bold, in a
 design doc. An absent line is not an absent effect, which is the same rule as
 "only reading proves absence" applied to a call graph instead of a grep.
+
+A relic's effect can also sit entirely outside its own class. Prismatic Shard's
+`onEquip` only sets `masterMaxOrbs`; the card-reward color change is one line in
+`AbstractDungeon`'s reward loop, and only the code search finds it.
 
 Where two sources disagree, that is a flag rather than an answer — resolution has
 gone both ways. Audit table and the standing policy:
@@ -142,6 +150,13 @@ pattern"* — and say what the pattern couldn't have seen.
 This matters most for **review and audit work**, where the whole deliverable is
 a claim about what isn't there. It applies to subagents too: an agent that
 greps will produce confident, wrong all-clears at scale.
+
+**A number next to an enumerable list is counted, never estimated.** Four
+numbers were once published uncounted: ~600 card ids (the count was ~456), the
+relic-effects §7 wired count (off by one), a test-comment probability (17/32;
+the pool is 16/31), and a "~18" beside a list of 17. Each passed a green build
+and a green suite, and only reading the diff caught it. If the list is in the
+repo, count it, and record the command when the number will be quoted again.
 
 **No test may depend on which card a random draw produced.**
 
@@ -495,9 +510,13 @@ only, so training does not pull a rendering stack. `minispire.render.require_tui
 turns a missing extra into an instruction rather than an ImportError.
 
 Editable install caveat: with scikit-build-core, the C++ extension is built
-once and cached. After C++ changes, re-run `uv pip install -e .` to rebuild,
-or install once with `--config-settings=editable.rebuild=true` to rebuild
-on import (slower per-import, automatic).
+once and cached, and `uv run pytest` does **not** pick up C++ changes. After
+touching `src/`, run `uv pip install -e .` before trusting any Python result;
+stale-extension results have been reported as verification before.
+`editable.rebuild=true` does not work here: alone it errors ("requires
+build-dir"), and with `--config-settings=build-dir=_skbuild/{wheel_tag}` it
+installs but never rebuilds (checked by `_core*.so` mtimes after touching a
+source file). If retrying, use `_skbuild/`; `.skbuild/` is not gitignored.
 
 The standalone C++ build (GoogleTest) is unchanged:
 
