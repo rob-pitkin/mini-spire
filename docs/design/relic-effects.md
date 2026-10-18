@@ -1233,7 +1233,13 @@ Double Tap replay's `copies`. **The replay keeps the RAW X.** StS's replay
 builds a fresh action from the same `energyOnUse`, and that action adds its
 own +2; carrying `x_effect` would make the replay X+4.
 `ChemicalXAppliesOnceToEachDoubleTapPlay` pins it — with X = 1, 6 hits rather
-than 8. A Havoc play has `forced_x = 0` and gets 2 hits, as the wiki says.
+than 8.
+
+**Correction (#42, 2026-10-17).** This section used to end "A Havoc play has
+`forced_x = 0` and gets 2 hits, as the wiki says." The wiki says no such thing:
+its "no Energy is spent on them" is about what the card costs. A Havoc,
+Mayhem or Distilled Chaos play has X = the energy when the card was taken, plus
+Chemical X's 2, and spends nothing (`card-queue.md` §3.2).
 
 **Pocketwatch** (decompiled; wiki.gg gives only the description). The counter
 is cards played this turn, raised in `fire_card_played_relic` beside Ink

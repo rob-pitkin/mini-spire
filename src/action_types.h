@@ -273,9 +273,12 @@ struct QueuedPlay {
   Card instance{CardId::Strike};  // the copy to play, with its instance state
   int target = kNoSlot;           // enemy slot, rolled or inherited
   // A Double Tap / Duplication copy — StS's purgeOnUse: it enters no pile and
-  // is never replayed itself. Its X is the original play's raw X.
+  // is never replayed itself.
   bool replay = false;
-  int replay_x = 0;
+  // The raw X an X-cost card plays at — StS's energyOnUse. A replay's is the
+  // original play's X; a card taken off the draw pile's is the player's energy
+  // when it was taken (card-queue.md §3.2). Chemical X is added at play.
+  int x = 0;
   // Havoc's exhaustOnUseOnce: the card exhausts whether or not it is played.
   bool exhausts = false;
   // A replay shares its original's uuid in StS (makeSameInstanceOf), so

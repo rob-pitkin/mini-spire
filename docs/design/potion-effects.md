@@ -385,9 +385,9 @@ into a card queue that runs only once the action queue is empty, so Distilled
 Chaos takes all p cards off the draw pile before playing any. The engine now
 does the same (`card-queue.md`).
 
-**One known gap, open as a task: #42, X under autoplay.** The engine plays an
-X-cost card at X = 0. The wiki's Mayhem page says it uses the full energy
-without spending it.
+**X under autoplay (#42, fixed 2026-10-17).** An X-cost card Distilled Chaos
+plays has X = the player's energy when the card is taken, and spends no energy
+(`card-queue.md` §3.2). The engine used to play it at X = 0.
 
 ## 6. Run layer
 

@@ -84,7 +84,7 @@ wiki agrees: "Mayhem activates *after* drawing cards at the start of the turn".
 | `int target` | enemy slot, or `kNoSlot` |
 | `bool replay` | a Double Tap / Duplication copy: StS's `purgeOnUse`, so it enters no pile and is never replayed |
 | `bool exhausts` | Havoc's `exhaustOnUseOnce` |
-| `int replay_x` | a replay's X (an autoplayed X-cost card's X is #42) |
+| `int x` | the raw X it plays at: a replay's is the original's, a taken card's is the energy when it was taken (§3.2). Chemical X is added at play |
 
 Capacity 16, asserted. The largest realistic load: Distilled Chaos under Sacred
 Bark (6), plus Mayhem stacks, plus replays.
@@ -147,6 +147,55 @@ reshuffle moved it. It also grows every queued sibling. Identical copies are
 interchangeable, so growing a copy that is not the original cannot be seen.
 Rampage is the only card in the pool that grows itself.
 
+### 3.2 An autoplayed X-cost card's X (#42, Rob 2026-10-17)
+
+A card Havoc, Mayhem or Distilled Chaos plays has X = the player's energy when
+the card is taken off the draw pile, and it spends no energy. Chemical X adds 2,
+and a replay of it uses the same X.
+
+The decompiled chain, read to the end:
+- `PlayTopCardAction` queues `NewQueueCardAction(card, target, false,
+  autoplay = true)`. When that runs, it builds the `CardQueueItem` with
+  `energyOnUse = EnergyPanel.getCurrentEnergy()`. The reading is taken here, as
+  the card enters the card queue, not when it is played.
+- `GameActionManager` (198, 208–209) copies `energyOnUse` onto the card and sets
+  `ignoreEnergyOnUse` for an autoplayed card, so `AbstractPlayer.useCard` (1345)
+  does not lower it to the energy left at play time.
+- `useCard` (1348) sets `freeToPlayOnce` on an autoplayed X-cost card.
+- `WhirlwindAction` and `TransmutationAction` set `effect = energyOnUse`, add 2
+  for Chemical X, and spend energy only when not `freeToPlayOnce`.
+- `DoubleTapPower` and `DuplicationPower` queue the replay with the card's
+  `energyOnUse`, so the replay of an autoplayed card has the same X.
+- Energy is refilled in `DrawCardAction`'s constructor (`PlayerTurnEffect`), at
+  the turn start, so Mayhem's take, which runs after the draw, reads the turn's
+  full energy.
+
+Wiki.gg agrees. The Mayhem and Havoc pages: "X-cost cards will use your current
+Energy for X, without consuming that Energy." The Whirlwind page: "it will play
+for the full current Energy without actually using any." Checked 2026-10-17.
+
+The time of the reading shows only when an earlier card in the same batch gains
+energy. Distilled Chaos takes [Bloodletting, Whirlwind, Defend] at 3 energy:
+Bloodletting raises energy to 5, and Whirlwind still hits 3 times. Batches
+like this come from Distilled Chaos, Mayhem with 2+ stacks, and Havoc with
+Duplication.
+
+The engine records the energy on the `QueuedPlay` when `TakeTopCard` runs, in
+the field that already held a replay's X (`x`, formerly `replay_x`), and
+`resolve_queued_play` plays every queued X-cost card at that X.
+
+The X = 0 this replaces had no source. `relic-effects.md` §6.21 attributed it to
+the wiki, misreading the Chemical X page's "no Energy is spent on them", which
+is about what the card costs, not about X. No test pinned it.
+
+Tests, in `tests/test_card_queue.cc`, each with Whirlwind, so the rolled target
+never changes the damage: Havoc at 3 energy plays it at X = 2 and leaves energy
+at 2; Distilled Chaos with Bloodletting ahead of it hits 3 times, not 5; a
+Double Tap replay of it hits twice more; Chemical X adds 2; Mayhem plays it at
+the turn's refilled 3 after the turn ended at 0. Mutation checks, all caught:
+X = 0 restored (five tests), X read at play time (the Bloodletting test alone),
+the taken card spending its energy, and a taken card's replay at X = 0.
+
 ## 4. Rulings (Rob, 2026-10-10)
 
 | # | ruling |
@@ -154,7 +203,7 @@ Rampage is the only card in the pool that grows itself.
 | Q1 | Accept for now: queued cards in limbo are not observed during a choice. Logged as an observation-gap task, to review with #9. |
 | Q2 | Match StS: turn-start relic hooks fire before power hooks. |
 | Q3 | The behaviour changes to Double Tap, Havoc and Mayhem are wanted. |
-| Q4 | X stays 0 for autoplayed X-cost cards until #42. |
+| Q4 | X stays 0 for autoplayed X-cost cards until #42. Superseded by §3.2: X is the energy when the card is taken. |
 
 The questions as they were put:
 

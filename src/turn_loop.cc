@@ -723,7 +723,7 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
       copy.instance = Card{played.card_id, played.bonus_damage, played.upgrades};
       copy.target = target;
       copy.replay = true;
-      copy.replay_x = x;  // the first play's RAW X — the replay adds Chemical X
+      copy.x = x;  // the first play's RAW X — the replay adds Chemical X
       copy.lineage = lineage;
       copy.original = copy.instance;
       copy.original_pile = origin;
@@ -1628,12 +1628,13 @@ void resolve_queued_play(CombatState& state, const QueuedPlay& p) {
   pc.pay_energy = false;      // every queued card is a free play
   pc.take_from_hand = false;  // it is in limbo, not in hand
   pc.instance = p.instance;
+  // A replay "uses the same value of X as the first"; a taken card uses the
+  // energy read when it was taken, not what is left now (card-queue.md §3.2).
+  pc.forced_x = p.x;
   if (p.replay) {
-    pc.enters_pile = false;     // the original already went to its pile
-    pc.forced_x = p.replay_x;  // "uses the same value of X as the first"
+    pc.enters_pile = false;  // the original already went to its pile
   } else {
     pc.force_exhaust = p.exhausts;
-    pc.forced_x = 0;  // an autoplayed X-cost card gets X = 0 — pending #42
   }
   handle_play_card(state, id, std::max(p.target, 0), pc);
   if (p.replay && p.lineage != 0 && data.bonus_damage_per_play > 0) {

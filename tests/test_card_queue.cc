@@ -246,6 +246,83 @@ TEST(CardQueue, AnIdenticalRampageAlreadyDiscardedIsInterchangeable) {
   EXPECT_EQ(rampage_damages(s), (std::vector<int>{13, 18}));
 }
 
+// ------------------------------------------- X-cost cards taken (#42, §3.2)
+//
+// Whirlwind hits every enemy, so the target Havoc, Mayhem or Distilled Chaos
+// rolls never changes the damage. 5 per hit against an unblocked Jaw Worm.
+
+TEST(CardQueue, HavocPlaysAnXCostCardForTheEnergyLeftWithoutSpendingIt) {
+  // Havoc costs 1 of the 3, and the Whirlwind it takes reads the 2 left.
+  CombatState s = one_enemy_fight();
+  s.current_hand = cards({CardId::Havoc});
+  s.draw_pile = cards({CardId::Whirlwind});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Havoc)));
+
+  EXPECT_EQ(s.enemies[0].hp, 100 - 5 * 2);
+  EXPECT_EQ(s.character.energy, 2) << "the Whirlwind spent nothing";
+  EXPECT_EQ(count_of(s.exhaust_pile, CardId::Whirlwind), 1);
+}
+
+TEST(CardQueue, AnAutoplayedXIsReadWhenTheCardIsTaken) {
+  // Distilled Chaos takes all three cards at 3 energy. Bloodletting plays
+  // first and raises energy to 5, but the Whirlwind's X was read when it was
+  // taken: 3 hits, not 5.
+  CombatState s = one_enemy_fight();
+  s.potions = {PotionId::DistilledChaos};
+  s.draw_pile = cards({CardId::Defend, CardId::Whirlwind,
+                       CardId::Bloodletting});  // Bloodletting on top
+
+  ASSERT_TRUE(apply_action(s, drink(PotionId::DistilledChaos)));
+
+  EXPECT_EQ(s.enemies[0].hp, 100 - 5 * 3);
+  EXPECT_EQ(s.character.energy, 3 + 2) << "only Bloodletting changed it";
+  EXPECT_TRUE(s.card_queue.empty());
+}
+
+TEST(CardQueue, ADoubleTappedTakenXCostCardReplaysWithTheSameX) {
+  // Havoc is a Skill, so Double Tap answers the Whirlwind, and its replay
+  // reuses the taken card's X: 2 hits twice.
+  CombatState s = one_enemy_fight();
+  s.character.powers[Power::DoubleTap] = 1;
+  s.current_hand = cards({CardId::Havoc});
+  s.draw_pile = cards({CardId::Whirlwind});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Havoc)));
+
+  EXPECT_EQ(s.enemies[0].hp, 100 - 5 * 2 * 2);
+  EXPECT_EQ(s.character.energy, 2);
+}
+
+TEST(CardQueue, ChemicalXAddsTwoToATakenXCostCard) {
+  CombatState s = one_enemy_fight();
+  s.relics.push_back(HeldRelic{RelicId::ChemicalX, 0});
+  s.current_hand = cards({CardId::Havoc});
+  s.draw_pile = cards({CardId::Whirlwind});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Havoc)));
+
+  EXPECT_EQ(s.enemies[0].hp, 100 - 5 * (2 + kChemicalXBonus));
+  EXPECT_EQ(s.character.energy, 2);
+}
+
+TEST(CardQueue, MayhemPlaysAnXCostCardForTheTurnsEnergy) {
+  // The turn ends with 0 energy left. Mayhem takes the Whirlwind after the
+  // turn's draw, by when energy has been refilled to 3.
+  CombatState s = one_enemy_fight();
+  s.character.powers[Power::Mayhem] = 1;
+  s.draw_pile.push_back(Card{CardId::Whirlwind});  // under the turn's draw
+  for (int i = 0; i < STARTING_HAND_SIZE; ++i) {
+    s.draw_pile.push_back(Card{CardId::Defend});
+  }
+  s.character.energy = 0;
+
+  end_turn_safely(s);
+
+  EXPECT_EQ(s.enemies[0].hp, 100 - 5 * 3);
+  EXPECT_EQ(s.character.energy, 3);
+}
+
 // ---------------------------------------------------------------- Choices
 
 TEST(CardQueue, AQueuedCardsChoicePausesTheRestUntilAnswered) {

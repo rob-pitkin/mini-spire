@@ -2383,6 +2383,9 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       state.draw_pile.pop_back();
       p.target = a.target;      // rolled when this was queued (T3, T4)
       p.exhausts = a.amount == 1;  // Havoc's "and Exhaust it"
+      // NewQueueCardAction reads energyOnUse as the card enters the queue: an
+      // X-cost card plays at this X, spending nothing (card-queue.md §3.2).
+      p.x = state.character.energy;
       state.card_queue.push_back(p);
       break;
     }
