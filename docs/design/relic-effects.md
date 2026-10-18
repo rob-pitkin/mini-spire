@@ -252,7 +252,7 @@ per §1.
 
 ---
 
-## 7. Status: 122 of 140 wired
+## 7. Status: 125 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -271,20 +271,20 @@ tree appears only on a comment line, so the discrepancy is not comment noise.
 One of the two counts used a different rule and neither recorded which, which is
 the whole argument for pinning the command here.
 
-The 18 remaining are not one backlog. **Most are blocked on engine pieces that
+The 15 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
 |---|---|---|
 | ~~**Missing `Power`s**~~ | ~~Bronze Scales, Akabeko, Incense Burner, Fossilized Helix, Thread and Needle, Pen Nib~~ | ✅ **done.** All six Powers exist: Vigor, PenNibCharge, Intangible, Buffer, Thorns, PlatedArmor. Intangible is the one power that ticks — a named exception to the status model (Rob, 2026-09-12). Regen and Duplication have since joined it, and since 2026-10-10 it ticks at the end of the round rather than the player's turn, so Incense Burner's Intangible protects the enemy phase (`debuff-timing.md`). |
-| **No curse cards** | Omamori, Darkstone Periapt, Blue Candle, and the unreachable halves of Du-Vu Doll and Cursed Key | §6.4 |
+| **No curse cards** | Omamori, Darkstone Periapt, Blue Candle, Calling Bell, and the unreachable halves of Du-Vu Doll and Cursed Key | §6.4. The curses now exist as cards; five of their effects are data-only (task #4). Calling Bell moved here from the choice-screen row (Rob, §6.30 P1): its Curse of the Bell must pass through Omamori and Darkstone Periapt |
 | ~~**No colorless cards**~~ | ~~Toolbox, half of Prismatic Shard~~ | ✅ **cleared.** All 35 colorless cards are implemented (`colorless-effects.md`) and the shop's 2 colorless slots now stock. **Toolbox** is wired: a 1-of-3 colorless choice that pauses combat setup BEFORE the opening hand (§6.9 — Rob ruled, 2026-09-20). **Prismatic Shard** is now unblocked: §6.8 was ruled (Rob, 2026-09-21) to the Colorless half only, a deliberate divergence recorded in the README. ⚠️ CORRECTED earlier: Orrery, Dolly's Mirror and Cauldron never needed colorless — Cauldron is potions only, and the other two need a shop CHOICE SCREEN over normal card rewards. |
 | **Needs a shop choice screen** | Orrery, Dolly's Mirror | moved here from the colorless row |
 | ~~**Needs potion effects**~~ | ~~Cauldron~~ | ✅ **done** with potion step 6 (2026-10-18, `potion-effects.md` §6.2): five uniform potions onto a potion reward screen, and the hidden card reward StS rolls and removes. Cauldron moved here from the colorless row. ✅ **Toy Ornithopter and Sacred Bark wired** with potion step 1 (2026-10-05): `Hook::PotionDrunk` fires after a potion's effects, and Sacred Bark doubles `potion_potency`. |
 | **No events** | Neow's Lament, Odd Mushroom, Warped Tongs, Spirit Poop, and the 5 Face Trader masks | 10 of the special-tier relics |
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
-| **Needs a choice screen** | ~~Gambling Chip~~, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. ✅ **Gambling Chip wired** with potion step 2 (2026-10-10): it is Gambler's Brew's discard-any-then-draw choice on turn 1's post-draw hook (`potion-effects.md` §5.7), and it left `v2-spec.md` §9's divergence table. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed). **A run-layer deck choice now exists** (§6.23, `pending_deck_choices`) — Empty Cage (remove 2) and Astrolabe (transform 3) need a new purpose on it, not a new mechanism |
+| **Needs a choice screen** | ~~Gambling Chip~~, ~~Empty Cage~~, ~~Astrolabe~~, ~~Pandora's Box~~, **Tiny House** — its card reward only | all pause for player input. ✅ **Empty Cage, Astrolabe and Pandora's Box wired** (2026-10-18, §6.30) on the run-layer deck choice with new Remove and Transform purposes; Pandora's Box turned out to need no choice at all. Calling Bell moved to the curse row. ✅ **Gambling Chip wired** with potion step 2 (2026-10-10): it is Gambler's Brew's discard-any-then-draw choice on turn 1's post-draw hook (`potion-effects.md` §5.7), and it left `v2-spec.md` §9's divergence table. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed). **A run-layer deck choice now exists** (§6.23, `pending_deck_choices`) — Empty Cage (remove 2) and Astrolabe (transform 3) need a new purpose on it, not a new mechanism |
 | ~~**Nothing blocking**~~ | **0** — ✅ **cleared.** The `~` this row once carried was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. All 17 shipped: Juzu Bracelet and Tiny Chest in §6.18, the three Eggs in §6.19, Matryoshka and Ancient Tea Set in §6.20, Chemical X and Pocketwatch in §6.21, Dead Branch in §6.22, the three Bottled relics in §6.23, Singing Bowl and Wing Boots in §6.25, Unceasing Top in §6.26, Snecko Eye in §6.28 (on the cost layers of §6.27). Every remaining relic waits on another row | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics did need a card-selection screen at pickup, which §6.23 built; the Eggs did not (§6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
 | ~~**Needs an HP-threshold detector**~~ | ~~Red Skull~~ | ✅ **done** (2026-10-18, §6.29): a bloodied flag kept by the HP write functions, the revive heal included, with the Strength change queued to resolve next |
 | ~~**Needs a death intercept**~~ | ~~Lizard Tail~~ | ✅ **done** with potion step 4 (2026-10-17, `potion-effects.md` §5.4): a fixed intercept beside Fairy in a Bottle, not a hook (Rob, U1) |
@@ -1719,3 +1719,125 @@ crossing), staged actions sent to the back (12), the threshold made strict
 (seven tests), no flag at fight start (5), no check in `heal_player` (five
 tests), no check in `revive_player` (9, 10). One survives and is equivalent:
 Blood Vial's heal at the back of the queue (see the R2 correction above).
+
+### 6.30 Empty Cage, Astrolabe and Pandora's Box: removing and transforming deck cards (task #50)
+
+**Status: agreed with Rob 2026-10-18, and built.** P1: Empty Cage, Astrolabe
+and Pandora's Box together; Calling Bell with the curse work. P2: a pick takes
+an unbottled copy when one exists.
+
+**Sources.** Decompiled `relics/EmptyCage`, `relics/Astrolabe`,
+`relics/PandorasBox`, `relics/CallingBell`, `CardGroup.getPurgeableCards`,
+`AbstractDungeon.transformCard`, `returnTrulyRandomCardFromAvailable`,
+`returnTrulyRandomColorlessCardFromAvailable`, `returnTrulyRandomCard`,
+`CardLibrary.getCurse`. wiki.gg Empty Cage, Astrolabe and Pandora's Box,
+checked 2026-10-18.
+
+**Reachability.** All four are boss relics. A run ends at the Act 1 boss, so
+their only way in is Neow's slot 4, which swaps the starter relic for a random
+boss relic (`v2-spec.md` §4.4). Neow is specified but not built, so until it
+is, these are reached only by `obtain_relic` in tests. Neow's own "remove a
+card", "remove 2", "transform a card" and "transform 2" are the same
+operations, as are several events' (task #7), so what is built here serves
+them too.
+
+**What StS does.**
+- **Purgeable cards** (`getPurgeableCards`): the master deck without
+  Necronomicurse, Curse of the Bell and Ascender's Bane. Bottled cards ARE
+  purgeable. The shop's removal and Peace Pipe's Toke use a different list,
+  `getGroupWithoutBottledCards`, which is why `remove_card_from_deck` refuses
+  a bottled card today.
+- **Empty Cage**: two or fewer purgeable cards are all removed at once.
+  Otherwise a grid select over the purgeable cards, exactly 2, no cancel. Each
+  removal goes through `masterDeck.removeCard`, so Parasite costs 3 max HP.
+- **Astrolabe**: the same with 3 cards. Each chosen card is removed (Parasite
+  included) and replaced by `transformCard(card, autoUpgrade = true,
+  miscRng)`, obtained as a new card. All picks are made before any is
+  transformed, so a transformed card cannot be picked again.
+- **Transform** (`transformCard`):
+  - a class card becomes a uniform draw over the class's common, uncommon and
+    rare pools, excluding its own id — basic cards included, healing cards not
+    excluded, no colorless;
+  - a colorless card becomes a colorless card other than itself;
+  - a curse becomes a random curse other than itself, Necronomicurse,
+    Ascender's Bane, Curse of the Bell and Pride;
+  - then, for Astrolabe, upgraded if it can be.
+  wiki.gg: "Transformed cards become a random card of any rarity."
+- **Pandora's Box**: every card tagged `STARTER_STRIKE` or `STARTER_DEFEND` is
+  removed — upgraded and bottled ones too, Bash not — straight from the deck
+  list, and as many `returnTrulyRandomCard`s are added: uniform over the
+  class's common, uncommon and rare pools with no exclusion, so a Strike can
+  come back. The Eggs preview each. The grid shown is a confirmation, not a
+  choice.
+- **Obtaining**: the new cards arrive through the obtain path, so Ceramic Fish
+  pays 9 gold for each (wiki.gg: 27 for Astrolabe), and the Eggs upgrade by
+  type (wiki.gg notes Astrolabe's own upgrade is wasted on such a card).
+- **Calling Bell** is not in this batch (P1): Curse of the Bell, then a reward
+  screen of three relics (common, uncommon, rare) from
+  `returnRandomScreenlessRelic`.
+
+**Engine design.**
+- `purgeable_card_indices()`: the master deck minus the three named curses
+  (of which the engine has Curse of the Bell), bottled cards included.
+- A removal that allows a bottled card, sharing `remove_card_from_deck`'s
+  Curse of the Bell refusal and Parasite penalty: a flag on it, so the shop's
+  and Toke's path is unchanged.
+- `transform_card(card, upgrade, rng)`: the rules above, a pure function of the
+  card and the generator, returning the new `Card` for `add_card`.
+- Two new `DeckChoicePurpose`s, Remove and Transform, each carrying how many
+  picks remain. `resolve_deck_choice(CardId)` marks one copy as picked and takes
+  it out of the candidates; when the last pick is made, all are applied in pick
+  order. Two or fewer (three or fewer) purgeable cards skip the choice.
+- Randomness: the `RelicEffect` stream indexed by the relic's id, as War Paint
+  and Whetstone use. StS draws Astrolabe's transforms from `miscRng` and
+  Pandora's cards from `cardRandomRng`; the engine reproduces the distribution,
+  not the stream.
+
+**The questions as they were put** (ruled above):
+- **P1. Batch.** Recommended Empty Cage, Astrolabe and Pandora's Box together:
+  the same purgeable list, removal path and card generation. Calling Bell goes
+  with the curse work (#4): its Curse of the Bell must pass through Omamori and
+  Darkstone Periapt, which wait on that work, and it needs a relic reward
+  screen that nothing else has yet.
+- **P2. Copies that differ only by being bottled.** Deck choices name a CardId,
+  and copies are taken as interchangeable (§6.23). Empty Cage and Astrolabe can
+  take a bottled card, so a Strike pick could mean the bottled Strike or a plain
+  one. Recommended: a pick takes an unbottled copy when one exists. A human could
+  deliberately remove or transform the bottled copy instead; this rule removes
+  that rare choice. It is the same open question already recorded for the run
+  env (task #9, "B3 cannot tell them apart"), and the alternative — picks named
+  by (CardId, bottled) — would settle it there for every deck choice at once.
+
+**As built.** `run_state.h`/`.cc`: `DeckChoicePurpose::Remove` and
+`Transform`; `PendingDeckChoice::picks` and `staged_uids`;
+`purgeable_card_indices`; `apply_deck_change`; `remove_card_from_deck`'s
+`allow_bottled`; `transform_pool` and `class_card_pool`, built from the
+ordered pool vectors (never by iterating `CARD_DATABASE`, an unordered map);
+the three `obtain_relic` cases. `relic.h`: `kEmptyCageCards`,
+`kAstrolabeCards`.
+
+**Tests** (`tests/test_relic_state.cc`, `DeckChange.*`; decks built through
+`add_card`; every transform assertion holds for any draw):
+1. Purgeable: Curse of the Bell excluded, a bottled card included.
+2. Transform pools, exhaustively: a class card (and its upgrade) → the class
+   pools minus its base; a starter → the whole class pool; a Searing Blow rung
+   → minus Searing Blow; a colorless card → the colorless pools minus itself,
+   Bandage Up included; a curse → `CURSE_POOL` minus itself.
+3. Empty Cage: a 2-pick choice, Curse of the Bell not offered, nothing removed
+   until the second pick.
+4. Empty Cage with two purgeable cards: both gone at once, Parasite's 3 Max HP
+   paid, Curse of the Bell kept.
+5. A picked copy is not offered again; nothing is transformed before the last
+   pick; other run actions refuse meanwhile.
+6. Astrolabe: three picks become three upgraded class cards; Ceramic Fish pays
+   27.
+7. Astrolabe with three or fewer purgeable cards transforms them at once.
+8. P2: the unbottled copy is taken when there is one; a lone bottled copy is
+   taken.
+9. Pandora's Box: every Strike and Defend gone, upgraded and bottled too, Bash
+   kept, as many class cards added, none bottled, Ceramic Fish paying 45.
+
+**Mutation checks, all caught:** each pick applied at once instead of staged
+(3, 5); a pick not preferring the unbottled copy (8); a transform without the
+upgrade (6); the pool keeping the card's own id (2); "N or fewer" made strict
+(4); a deck change refusing a bottled card (8).

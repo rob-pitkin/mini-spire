@@ -172,14 +172,103 @@ bool bottle_can_take(const Card& card, Bottle b) {
          CARD_DATABASE.at(card.card_id).type == bottle_type(b);
 }
 
+// getPurgeableCards' exclusions. Of the three, only Curse of the Bell exists
+// here: Necronomicurse is Act 2+, Ascender's Bane Ascension 10+.
+bool is_purgeable(const Card& card) {
+  return card.card_id != CardId::CurseOfTheBell;
+}
+
+// The unupgraded id: StS compares cardID, which an upgrade does not change, so
+// a transform of Strike+ must not become Strike. Searing Blow's rungs chain
+// through CARD_UPGRADES, hence the loop. A lookup, never a draw, so the map's
+// iteration order cannot reach the RNG.
+CardId base_card_id(CardId id) {
+  bool stepped = true;
+  while (stepped) {
+    stepped = false;
+    for (const auto& [from, to] : CARD_UPGRADES) {
+      if (to == id) {
+        id = from;
+        stepped = true;
+        break;
+      }
+    }
+  }
+  return id;
+}
+
+bool contains(const std::vector<CardId>& pool, CardId id) {
+  return std::find(pool.begin(), pool.end(), id) != pool.end();
+}
+
+// One uniform draw from `pool`.
+CardId draw_from(const std::vector<CardId>& pool, std::mt19937& rng) {
+  return pool[std::uniform_int_distribution<size_t>(0, pool.size() - 1)(rng)];
+}
+
+}  // namespace
+
+std::vector<CardId> transform_pool(CardId id) {
+  const CardId base = base_card_id(id);
+  std::vector<CardId> pool;
+  if (CARD_DATABASE.at(base).type == CardType::Curse) {
+    // CardLibrary.getCurse(prohibited, rng): every curse but itself,
+    // Necronomicurse, Ascender's Bane, Curse of the Bell and Pride — CURSE_POOL
+    // already holds none of the last four.
+    pool = CURSE_POOL;
+  } else if (contains(COLORLESS_UNCOMMON_POOL, base) ||
+             contains(COLORLESS_RARE_POOL, base)) {
+    // returnTrulyRandomColorlessCardFromAvailable: srcColorlessCardPool, healing
+    // cards included.
+    pool = COLORLESS_UNCOMMON_POOL;
+    pool.insert(pool.end(), COLORLESS_RARE_POOL.begin(),
+                COLORLESS_RARE_POOL.end());
+  } else {
+    // returnTrulyRandomCardFromAvailable: the class's common, uncommon and rare
+    // pools — the starters are BASIC and in none of them.
+    pool = class_card_pool();
+  }
+  pool.erase(std::remove(pool.begin(), pool.end(), base), pool.end());
+  return pool;
+}
+
+std::vector<CardId> class_card_pool() {
+  std::vector<CardId> pool = IRONCLAD_COMMON_POOL;
+  pool.insert(pool.end(), IRONCLAD_UNCOMMON_POOL.begin(),
+              IRONCLAD_UNCOMMON_POOL.end());
+  pool.insert(pool.end(), IRONCLAD_RARE_POOL.begin(), IRONCLAD_RARE_POOL.end());
+  return pool;
+}
+
+std::vector<int> RunState::purgeable_card_indices() const {
+  std::vector<int> indices;
+  for (int i = 0; i < static_cast<int>(master_deck.size()); ++i) {
+    if (is_purgeable(master_deck[i])) indices.push_back(i);
+  }
+  return indices;
+}
+
+namespace {
+
+// May the front choice take this copy?
+bool choice_can_take(const PendingDeckChoice& choice, const Card& card) {
+  if (choice.purpose == DeckChoicePurpose::Bottle) {
+    return bottle_can_take(card, bottle_of(choice.relic));
+  }
+  // Remove / Transform: any purgeable card not already picked.
+  return is_purgeable(card) &&
+         std::find(choice.staged_uids.begin(), choice.staged_uids.end(),
+                   card.uid) == choice.staged_uids.end();
+}
+
 }  // namespace
 
 std::vector<CardId> RunState::deck_choice_candidates() const {
   std::vector<CardId> ids;
   if (pending_deck_choices.empty()) return ids;
-  const Bottle b = bottle_of(pending_deck_choices.front().relic);
+  const PendingDeckChoice& choice = pending_deck_choices.front();
   for (const Card& card : master_deck) {
-    if (!bottle_can_take(card, b)) continue;
+    if (!choice_can_take(choice, card)) continue;
     if (std::find(ids.begin(), ids.end(), card.card_id) == ids.end()) {
       ids.push_back(card.card_id);
     }
@@ -190,20 +279,75 @@ std::vector<CardId> RunState::deck_choice_candidates() const {
 
 bool RunState::resolve_deck_choice(CardId id) {
   if (pending_deck_choices.empty()) return false;
-  const Bottle b = bottle_of(pending_deck_choices.front().relic);
-  // The FIRST eligible copy. Copies of one CardId are interchangeable (v2-spec
-  // §6.2), so which one is bottled cannot matter.
-  for (Card& card : master_deck) {
-    if (card.card_id != id || !bottle_can_take(card, b)) continue;
-    card.bottle = b;
+  PendingDeckChoice& choice = pending_deck_choices.front();
+  // Copies of one CardId are interchangeable (v2-spec §6.2), except that a
+  // Remove or Transform can take a bottled copy; it takes an unbottled one
+  // when there is one (Rob, relic-effects.md §6.30 P2). A Bottle cannot take a
+  // bottled card at all, so for it this is simply the first eligible copy.
+  int pick = -1;
+  for (int i = 0; i < static_cast<int>(master_deck.size()); ++i) {
+    const Card& card = master_deck[i];
+    if (card.card_id != id || !choice_can_take(choice, card)) continue;
+    if (pick < 0 || (master_deck[pick].bottle != Bottle::None &&
+                     card.bottle == Bottle::None)) {
+      pick = i;
+    }
+  }
+  if (pick < 0) return false;
+
+  if (choice.purpose == DeckChoicePurpose::Bottle) {
+    master_deck[pick].bottle = bottle_of(choice.relic);
+  } else {
+    choice.staged_uids.push_back(master_deck[pick].uid);
+    if (static_cast<int>(choice.staged_uids.size()) < choice.picks) {
+      return true;  // more picks to make before anything happens
+    }
+    // Copied out: apply_deck_change adds cards, and the queue's front must be
+    // gone before the last answer can let the room exit.
+    const PendingDeckChoice done = choice;
     pending_deck_choices.erase(pending_deck_choices.begin());
+    apply_deck_change(done.purpose, done.relic, done.staged_uids);
     if (pending_deck_choices.empty() && leave_room_after_deck_choice) {
       leave_room_after_deck_choice = false;
       leave_room();
     }
     return true;
   }
-  return false;
+  pending_deck_choices.erase(pending_deck_choices.begin());
+  if (pending_deck_choices.empty() && leave_room_after_deck_choice) {
+    leave_room_after_deck_choice = false;
+    leave_room();
+  }
+  return true;
+}
+
+void RunState::apply_deck_change(DeckChoicePurpose purpose, RelicId relic,
+                                 const std::vector<int>& uids) {
+  // The relic's own stream (RngStream::RelicEffect), as War Paint's upgrades.
+  // StS draws Astrolabe's transforms from miscRng; the distribution is the
+  // game's, the stream is ours.
+  std::mt19937 rng = make_stream(run_seed, RngStream::RelicEffect,
+                                 static_cast<uint32_t>(relic));
+  for (int uid : uids) {
+    const auto it =
+        std::find_if(master_deck.begin(), master_deck.end(),
+                     [uid](const Card& card) { return card.uid == uid; });
+    if (it == master_deck.end()) continue;
+    const Card old = *it;
+    // masterDeck.removeCard: Parasite's 3 Max HP on the way out, for a
+    // transform as for a removal (wiki.gg).
+    if (!remove_card_from_deck(static_cast<int>(it - master_deck.begin()),
+                               /*allow_bottled=*/true)) {
+      continue;
+    }
+    if (purpose == DeckChoicePurpose::Transform) {
+      // transformCard(card, autoUpgrade = true, rng), then obtained: a fresh
+      // card with no bottle, through add_card — the Eggs and Ceramic Fish.
+      Card fresh{draw_from(transform_pool(old.card_id), rng)};
+      upgrade_card_in_place(fresh);
+      add_card(fresh);
+    }
+  }
 }
 
 bool RunState::relic_can_spawn(RelicId id) const {
@@ -250,7 +394,7 @@ int RunState::campfire_relics_held() const {
          static_cast<int>(has_relic(RelicId::Shovel));
 }
 
-bool RunState::remove_card_from_deck(int index) {
+bool RunState::remove_card_from_deck(int index, bool allow_bottled) {
   if (index < 0 || index >= static_cast<int>(master_deck.size())) return false;
   const CardData& data = CARD_DATABASE.at(master_deck[index].card_id);
   // Curse of the Bell: "cannot be removed from your deck", and per the wiki it
@@ -258,8 +402,9 @@ bool RunState::remove_card_from_deck(int index) {
   if (data.cannot_be_removed) return false;
   // A bottled card cannot be removed either (wiki.gg). StS's removal screens —
   // the shop's and Peace Pipe's Toke — list getGroupWithoutBottledCards, so
-  // the copy is never offered; refusing it here covers both.
-  if (master_deck[index].bottle != Bottle::None) return false;
+  // the copy is never offered; refusing it here covers both. Empty Cage and
+  // Astrolabe list getPurgeableCards instead, which keeps bottled cards.
+  if (!allow_bottled && master_deck[index].bottle != Bottle::None) return false;
 
   // Parasite: 3 Max HP when it leaves the MASTER DECK (decompiled
   // Parasite.onRemoveFromMasterDeck -> decreaseMaxHealth(3)). Not on exhaust,
@@ -362,6 +507,52 @@ bool RunState::obtain_relic(RelicId id) {
     case RelicId::WingBoots:
       held_relic(id)->counter = kWingBootsCharges;
       break;
+
+    // Empty Cage and Astrolabe (§6.30): a grid select over the purgeable cards,
+    // exactly N, no cancel — unless there are N or fewer, which are all taken
+    // at once.
+    case RelicId::EmptyCage:
+    case RelicId::Astrolabe: {
+      const DeckChoicePurpose purpose = id == RelicId::Astrolabe
+                                            ? DeckChoicePurpose::Transform
+                                            : DeckChoicePurpose::Remove;
+      const int picks =
+          id == RelicId::Astrolabe ? kAstrolabeCards : kEmptyCageCards;
+      const std::vector<int> purgeable = purgeable_card_indices();
+      if (static_cast<int>(purgeable.size()) <= picks) {
+        std::vector<int> uids;
+        for (int i : purgeable) uids.push_back(master_deck[i].uid);
+        apply_deck_change(purpose, id, uids);
+      } else {
+        pending_deck_choices.push_back(PendingDeckChoice{purpose, id, picks, {}});
+      }
+      break;
+    }
+
+    // Pandora's Box (§6.30): every starter Strike and Defend — upgraded and
+    // bottled too, not Bash — leaves the deck, straight from the list as StS
+    // does, and as many returnTrulyRandomCards arrive: uniform over the class
+    // pools, which hold no starter card because starters are BASIC. No choice;
+    // StS shows a confirmation grid.
+    case RelicId::PandorasBox: {
+      int count = 0;
+      for (auto it = master_deck.begin(); it != master_deck.end();) {
+        const CardId base = it->card_id;
+        if (base == CardId::Strike || base == CardId::StrikePlus ||
+            base == CardId::Defend || base == CardId::DefendPlus) {
+          it = master_deck.erase(it);
+          ++count;
+        } else {
+          ++it;
+        }
+      }
+      std::mt19937 rng = make_stream(run_seed, RngStream::RelicEffect,
+                                     static_cast<uint32_t>(id));
+      const std::vector<CardId> pool = class_card_pool();
+      // add_card applies the Eggs (StS's onPreviewObtainCard) and Ceramic Fish.
+      for (int i = 0; i < count; ++i) add_card(Card{draw_from(pool, rng)});
+      break;
+    }
 
     // Cauldron (potion-effects.md §6.2, Rob W2): five uniform draws over every
     // potion, on the floor's potion stream, onto a reward screen. StS opens

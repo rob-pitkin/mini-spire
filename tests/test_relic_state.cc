@@ -2055,5 +2055,198 @@ TEST(RewardRelics, PrismaticShardDoesNotChangeTheShop) {
   }
 }
 
+// --------------------------- Empty Cage, Astrolabe, Pandora's Box (§6.30)
+//
+// Decks are built through add_card, so every card has a real uid. Nothing here
+// depends on which card a transform draws: each assertion holds for any draw.
+
+RunState with_deck(std::vector<CardId> ids, std::vector<RelicId> relics = {}) {
+  RunState run = RunState::start(1);
+  run.master_deck.clear();
+  for (CardId id : ids) run.add_card(Card{id});
+  for (RelicId r : relics) run.obtain_relic(r);
+  run.phase = Phase::Map;
+  return run;
+}
+
+int count_id(const RunState& run, CardId id) {
+  return static_cast<int>(std::count_if(
+      run.master_deck.begin(), run.master_deck.end(),
+      [id](const Card& c) { return c.card_id == id; }));
+}
+
+// Every upgraded class card a transform with an upgrade can produce.
+std::set<CardId> upgraded_class_cards() {
+  std::set<CardId> out;
+  for (CardId id : class_card_pool()) out.insert(upgraded_card(id));
+  return out;
+}
+
+TEST(DeckChange, PurgeableExcludesCurseOfTheBellAndKeepsBottledCards) {
+  RunState run = with_deck({CardId::Strike, CardId::CurseOfTheBell, CardId::Bash});
+  run.master_deck[2].bottle = Bottle::Flame;
+  EXPECT_EQ(run.purgeable_card_indices(), (std::vector<int>{0, 2}));
+}
+
+TEST(DeckChange, TransformPoolsFollowTransformCard) {
+  // A class card: the three class pools, never itself, compared by base id.
+  std::vector<CardId> without_anger = class_card_pool();
+  without_anger.erase(std::find(without_anger.begin(), without_anger.end(),
+                                CardId::Anger));
+  EXPECT_EQ(transform_pool(CardId::Anger), without_anger);
+  EXPECT_EQ(transform_pool(CardId::AngerPlus), without_anger);
+  // A starter is in none of the pools, so nothing is taken out.
+  EXPECT_EQ(transform_pool(CardId::Strike), class_card_pool());
+  EXPECT_EQ(transform_pool(CardId::StrikePlus), class_card_pool());
+  // Searing Blow's rungs chain back to the base card.
+  const std::vector<CardId> from_blow = transform_pool(CardId::SearingBlow3);
+  EXPECT_EQ(std::count(from_blow.begin(), from_blow.end(), CardId::SearingBlow), 0);
+  EXPECT_EQ(from_blow.size(), class_card_pool().size() - 1);
+  // A colorless card: the colorless pool, healing included, never itself.
+  const std::vector<CardId> colorless = transform_pool(CardId::Apotheosis);
+  EXPECT_EQ(std::count(colorless.begin(), colorless.end(), CardId::Apotheosis), 0);
+  EXPECT_EQ(std::count(colorless.begin(), colorless.end(), CardId::BandageUp), 1);
+  EXPECT_EQ(colorless.size(),
+            COLORLESS_UNCOMMON_POOL.size() + COLORLESS_RARE_POOL.size() - 1);
+  // A curse: the other curses, never Curse of the Bell.
+  std::vector<CardId> curses = CURSE_POOL;
+  curses.erase(std::find(curses.begin(), curses.end(), CardId::Regret));
+  EXPECT_EQ(transform_pool(CardId::Regret), curses);
+}
+
+TEST(DeckChange, EmptyCageRemovesTwoPicksTogether) {
+  RunState run = with_deck({CardId::Strike, CardId::Strike, CardId::Defend,
+                            CardId::Bash, CardId::CurseOfTheBell});
+  run.obtain_relic(RelicId::EmptyCage);
+  ASSERT_TRUE(run.has_pending_deck_choice());
+  EXPECT_EQ(run.deck_choice_candidates(),
+            (std::vector<CardId>{CardId::Strike, CardId::Defend, CardId::Bash}))
+      << "Curse of the Bell is not purgeable";
+
+  ASSERT_TRUE(run.resolve_deck_choice(CardId::Strike));
+  EXPECT_EQ(run.master_deck.size(), 5u) << "nothing leaves until both picks";
+  EXPECT_EQ(count_id(run, CardId::Strike), 2);
+
+  ASSERT_TRUE(run.resolve_deck_choice(CardId::Bash));
+  EXPECT_FALSE(run.has_pending_deck_choice());
+  EXPECT_EQ(count_id(run, CardId::Strike), 1);
+  EXPECT_EQ(count_id(run, CardId::Bash), 0);
+  EXPECT_EQ(run.master_deck.size(), 3u);
+}
+
+TEST(DeckChange, EmptyCageWithTwoPurgeableRemovesBothAtOnce) {
+  // Parasite costs 3 Max HP on the way out; Curse of the Bell stays.
+  RunState run = with_deck(
+      {CardId::Parasite, CardId::Strike, CardId::CurseOfTheBell});
+  const int max_hp = run.max_hp;
+  run.obtain_relic(RelicId::EmptyCage);
+  EXPECT_FALSE(run.has_pending_deck_choice());
+  ASSERT_EQ(run.master_deck.size(), 1u);
+  EXPECT_EQ(run.master_deck[0].card_id, CardId::CurseOfTheBell);
+  EXPECT_EQ(run.max_hp, max_hp - 3);
+}
+
+TEST(DeckChange, APickedCopyIsNotOfferedAgainAndNothingChangesUntilTheLast) {
+  RunState run = with_deck(
+      {CardId::Strike, CardId::Defend, CardId::Bash, CardId::Anger});
+  run.obtain_relic(RelicId::Astrolabe);
+  ASSERT_TRUE(run.has_pending_deck_choice());
+  ASSERT_TRUE(run.resolve_deck_choice(CardId::Bash));
+  const std::vector<CardId> left = run.deck_choice_candidates();
+  EXPECT_EQ(std::count(left.begin(), left.end(), CardId::Bash), 0);
+  EXPECT_FALSE(run.resolve_deck_choice(CardId::Bash));
+  ASSERT_TRUE(run.resolve_deck_choice(CardId::Anger));
+  EXPECT_EQ(count_id(run, CardId::Bash), 1) << "transformed before the last pick";
+  EXPECT_EQ(count_id(run, CardId::Anger), 1);
+  // While the choice is open, other run actions refuse.
+  run.potions = {PotionId::FirePotion};
+  run.discard_potion(0);
+  EXPECT_EQ(run.potions.size(), 1u);
+}
+
+TEST(DeckChange, AstrolabeTransformsThreeIntoUpgradedClassCards) {
+  // Ceramic Fish pays for each card obtained (wiki.gg: 27 for Astrolabe).
+  RunState run = with_deck({CardId::Strike, CardId::Strike, CardId::Strike,
+                            CardId::Defend, CardId::Defend, CardId::Bash},
+                           {RelicId::CeramicFish});
+  const int gold = run.gold;
+  run.obtain_relic(RelicId::Astrolabe);
+  ASSERT_TRUE(run.resolve_deck_choice(CardId::Strike));
+  ASSERT_TRUE(run.resolve_deck_choice(CardId::Strike));
+  ASSERT_TRUE(run.resolve_deck_choice(CardId::Bash));
+  EXPECT_FALSE(run.has_pending_deck_choice());
+  EXPECT_EQ(run.master_deck.size(), 6u);
+  EXPECT_EQ(count_id(run, CardId::Strike), 1);
+  EXPECT_EQ(count_id(run, CardId::Defend), 2);
+  EXPECT_EQ(count_id(run, CardId::Bash), 0);
+  const std::set<CardId> allowed = upgraded_class_cards();
+  int transformed = 0;
+  for (const Card& c : run.master_deck) {
+    if (c.card_id == CardId::Strike || c.card_id == CardId::Defend) continue;
+    EXPECT_EQ(allowed.count(c.card_id), 1u) << "not an upgraded class card";
+    ++transformed;
+  }
+  EXPECT_EQ(transformed, 3);
+  EXPECT_EQ(run.gold, gold + 3 * kCeramicFishGold);
+}
+
+TEST(DeckChange, AstrolabeWithThreeOrFewerPurgeableTransformsThemAtOnce) {
+  RunState run = with_deck(
+      {CardId::Strike, CardId::Bash, CardId::CurseOfTheBell});
+  run.obtain_relic(RelicId::Astrolabe);
+  EXPECT_FALSE(run.has_pending_deck_choice());
+  EXPECT_EQ(run.master_deck.size(), 3u);
+  EXPECT_EQ(count_id(run, CardId::CurseOfTheBell), 1);
+  EXPECT_EQ(count_id(run, CardId::Strike), 0);
+  EXPECT_EQ(count_id(run, CardId::Bash), 0);
+}
+
+TEST(DeckChange, APickTakesAnUnbottledCopyWhenThereIsOne) {
+  // Rob, §6.30 P2.
+  RunState run = with_deck(
+      {CardId::Strike, CardId::Strike, CardId::Defend, CardId::Bash});
+  run.master_deck[0].bottle = Bottle::Flame;
+  run.obtain_relic(RelicId::EmptyCage);
+  ASSERT_TRUE(run.resolve_deck_choice(CardId::Strike));
+  ASSERT_TRUE(run.resolve_deck_choice(CardId::Defend));
+  ASSERT_EQ(count_id(run, CardId::Strike), 1);
+  for (const Card& c : run.master_deck) {
+    if (c.card_id == CardId::Strike) {
+      EXPECT_EQ(c.bottle, Bottle::Flame) << "the bottled copy was taken";
+    }
+  }
+
+  // With the bottled copy the only one, it is purgeable and is taken.
+  RunState only = with_deck({CardId::Strike, CardId::Defend, CardId::Bash});
+  only.master_deck[0].bottle = Bottle::Flame;
+  only.obtain_relic(RelicId::EmptyCage);
+  ASSERT_TRUE(only.resolve_deck_choice(CardId::Strike));
+  ASSERT_TRUE(only.resolve_deck_choice(CardId::Defend));
+  EXPECT_EQ(count_id(only, CardId::Strike), 0);
+}
+
+TEST(DeckChange, PandorasBoxReplacesEveryStrikeAndDefend) {
+  // Upgraded and bottled copies go too; Bash stays. As many class cards
+  // arrive, none of them a starter, and Ceramic Fish pays for each.
+  RunState run = with_deck(
+      {CardId::Strike, CardId::StrikePlus, CardId::Strike, CardId::Defend,
+       CardId::DefendPlus, CardId::Bash},
+      {RelicId::CeramicFish});
+  run.master_deck[3].bottle = Bottle::Lightning;
+  const int gold = run.gold;
+  run.obtain_relic(RelicId::PandorasBox);
+  EXPECT_FALSE(run.has_pending_deck_choice());
+  EXPECT_EQ(run.master_deck.size(), 6u);
+  EXPECT_EQ(count_id(run, CardId::Bash), 1);
+  const std::vector<CardId> pool = class_card_pool();
+  for (const Card& c : run.master_deck) {
+    if (c.card_id == CardId::Bash) continue;
+    EXPECT_EQ(std::count(pool.begin(), pool.end(), c.card_id), 1)
+        << "not a class card";
+    EXPECT_EQ(c.bottle, Bottle::None);
+  }
+  EXPECT_EQ(run.gold, gold + 5 * kCeramicFishGold);
+}
+
 }  // namespace
 }  // namespace minispire

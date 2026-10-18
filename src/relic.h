@@ -199,6 +199,11 @@ inline constexpr int kWingBootsUsedUp = -2;
 // (Cauldron.onEquip; potion-effects.md §6.2).
 inline constexpr int kCauldronPotions = 5;
 
+// Empty Cage removes, and Astrolabe transforms and upgrades, this many cards
+// on pickup (relic-effects.md §6.30).
+inline constexpr int kEmptyCageCards = 2;
+inline constexpr int kAstrolabeCards = 3;
+
 // Snecko Eye: draw this many more cards every turn, the opening hand included
 // (onEquip, `masterHandSize += 2`) — and Confusion, whose roll on each drawn
 // card is 0 to kConfusionMaxCost inclusive (`cardRandomRng.random(3)`).

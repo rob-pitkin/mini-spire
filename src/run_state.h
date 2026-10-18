@@ -180,13 +180,32 @@ inline constexpr float kColorlessShopMarkup = 1.2f;
 // Why a deck choice is open — the pending_purpose of v2-spec §6.1, which the
 // observation will need so "pick a card to bottle" does not alias another
 // purpose. Bottle is the only one today.
-enum class DeckChoicePurpose : uint8_t { Bottle };
+// Bottle: the Bottled relics. Remove and Transform: Empty Cage and Astrolabe
+// (relic-effects.md §6.30), and later Neow's and the events' own.
+enum class DeckChoicePurpose : uint8_t { Bottle, Remove, Transform };
 
 // One forced choice over the master deck, and the relic that opened it.
 struct PendingDeckChoice {
   DeckChoicePurpose purpose;
   RelicId relic;
+  // How many cards the choice takes. StS's grid select makes every pick before
+  // anything happens, so picks are staged (by uid) and applied together, in
+  // pick order, once the last is made: a card transformed by the first pick
+  // can never be offered to the second.
+  int picks = 1;
+  std::vector<int> staged_uids;
 };
+
+// What a transform of `id` can become (AbstractDungeon.transformCard): a class
+// card any common, uncommon or rare Ironclad card but itself; a colorless card
+// any colorless card but itself; a curse any curse in CURSE_POOL but itself.
+// Compared by base id, so Strike+ cannot become Strike. Pure, so the pools are
+// tested exhaustively (relic-effects.md §6.30).
+std::vector<CardId> transform_pool(CardId id);
+
+// returnTrulyRandomCard's pool: every common, uncommon and rare Ironclad card,
+// with no exclusion (Pandora's Box).
+std::vector<CardId> class_card_pool();
 
 struct ShopItem {
   Card card;
@@ -446,8 +465,9 @@ struct RunState {
   // --- pending deck choices (§6.23; v2-spec §6.1) ---
   //
   // A choice over the master deck that a pickup forces before anything else can
-  // happen: StS opens a grid select with no cancel. Today only the Bottled
-  // relics open one; Empty Cage, Astrolabe and Dolly's Mirror will reuse it.
+  // happen: StS opens a grid select with no cancel. The Bottled relics open
+  // one, and Empty Cage and Astrolabe one with several picks (§6.30); Dolly's
+  // Mirror, Neow and the events will reuse it.
   //
   // A QUEUE, front first, because one room can open two: Matryoshka makes a
   // chest pay two relics, and Black Star makes an elite drop two. StS collects
@@ -473,8 +493,21 @@ struct RunState {
   // Answer the front choice with `id`, applying it to the first eligible copy.
   // False, and nothing changes, if nothing is pending or `id` is not a
   // candidate. A treasure room that was waiting on the choice leaves once the
-  // last one is answered.
+  // last one is answered. A Remove or Transform choice stages one pick per
+  // call, preferring an unbottled copy when there is one (Rob, §6.30 P2), and
+  // applies them all with the last.
   bool resolve_deck_choice(CardId id);
+
+  // getPurgeableCards: indices into master_deck of every card but
+  // Necronomicurse, Curse of the Bell and Ascender's Bane. Bottled cards
+  // included — unlike the shop's and Toke's removal.
+  std::vector<int> purgeable_card_indices() const;
+
+  // Removes or transforms the cards with these uids, in this order — the end
+  // of a Remove or Transform choice, or the whole effect when there were too
+  // few purgeable cards to choose from. Transforms upgrade (Astrolabe).
+  void apply_deck_change(DeckChoicePurpose purpose, RelicId relic,
+                         const std::vector<int>& uids);
 
   // StS's relic canSpawn, for the relics whose gate depends on the run rather
   // than the floor. random_relic skips a relic this refuses.
@@ -501,7 +534,11 @@ struct RunState {
   //
   // Every removal path goes through here — the shop's purchase and Peace Pipe's
   // Toke — because the rules held in NEITHER while each erased the deck itself.
-  bool remove_card_from_deck(int index);
+  //
+  // `allow_bottled` is for getPurgeableCards' users (Empty Cage, Astrolabe),
+  // which may take a bottled card; the shop and Toke list
+  // getGroupWithoutBottledCards and may not.
+  bool remove_card_from_deck(int index, bool allow_bottled = false);
 
   // Upgrade up to `count` random upgradable cards of `type` in the master deck,
   // drawn without replacement. Returns how many were actually upgraded, which
