@@ -35,6 +35,9 @@ enum class Outcome {
   InProgress,
   Won,
   Lost,
+  // The player threw a Smoke Bomb (potion-effects.md §5.5). Scored as a win
+  // (Rob, Q1); a run's own outcome never takes it.
+  Escaped,
 };
 
 struct Character {
@@ -176,6 +179,9 @@ struct CombatState {
   // knows which kind of room they walked into, so this is state the fight
   // carries rather than something to infer.
   bool is_elite = false;
+  // A boss fight refuses Smoke Bomb (potion-effects.md §5.5). Nothing sets it
+  // until boss encounters exist (task #8), which set it as is_elite is set.
+  bool is_boss = false;
   std::vector<PotionId> potions;
   // How many potions the belt holds: 3, or 5 with Potion Belt. A human sees the
   // empty slots, and Entropic Brew fills them, so the fight carries the number

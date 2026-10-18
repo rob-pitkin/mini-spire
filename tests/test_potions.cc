@@ -118,8 +118,7 @@ TEST(PotionActions, OnlyHeldPotionsAreLit) {
 TEST(PotionActions, APotionNotYetBuiltCanBeDiscardedButNotDrunk) {
   // Potions land in steps (§8); until its step, a potion is masked off rather
   // than doing nothing. Fairy in a Bottle is never drinkable (§5.4).
-  for (PotionId p : {PotionId::FairyPotion, PotionId::SmokeBomb,
-                     PotionId::EntropicBrew}) {
+  for (PotionId p : {PotionId::FairyPotion, PotionId::EntropicBrew}) {
     CombatState s = fight_holding({p});
     const auto mask = valid_actions(s);
     for (int t = 0; t < kMaxEnemies; ++t) {
@@ -1189,6 +1188,57 @@ TEST(DeathIntercept, AFairyReviveIsNotDrinkingAPotion) {
   s.character.hp = 5;
   enemy_hits(s, {10});
   EXPECT_EQ(s.character.hp, 24) << "not 29";
+}
+
+// ============================================================================
+// Smoke Bomb (§5.5, step 5)
+// ============================================================================
+
+TEST(SmokeBomb, EndsTheFightEscapedAfterWhatTheUseQueued) {
+  // Toy Ornithopter's heal is queued by the use and resolves during StS's
+  // escape animation, so it lands before the fight ends. Nobody dies.
+  CombatState s =
+      fight_holding({PotionId::SmokeBomb}, {RelicId::ToyOrnithopter});
+  s.character.hp = 50;
+  ASSERT_TRUE(apply_action(s, drink(PotionId::SmokeBomb)));
+  EXPECT_EQ(s.outcome, Outcome::Escaped);
+  EXPECT_EQ(s.character.hp, 55);
+  EXPECT_EQ(held(s, PotionId::SmokeBomb), 0);
+  EXPECT_GT(s.enemies[0].hp, 0);
+}
+
+TEST(SmokeBomb, ABossFightRefusesItButItCanStillBeDiscarded) {
+  CombatState s = fight_holding({PotionId::SmokeBomb});
+  EXPECT_TRUE(valid_actions(s)[drink(PotionId::SmokeBomb)]);
+
+  s.is_boss = true;
+  const auto mask = valid_actions(s);
+  for (int t = 0; t < kMaxEnemies; ++t) {
+    EXPECT_FALSE(mask[drink(PotionId::SmokeBomb, t)]) << "target " << t;
+  }
+  EXPECT_TRUE(mask[discard(PotionId::SmokeBomb)]);
+}
+
+TEST(SmokeBomb, TheEnvScoresAnEscapeAsAWinWithTheHpBonus) {
+  // Q1 and V1: +1 plus the HP-shaped bonus, `won` and `escaped` both true.
+  CombatState s = fight_holding({PotionId::SmokeBomb});
+  s.character.hp = 40;  // half of 80
+  CombatEnv env(s, /*hp_reward_coeff=*/0.5f);
+  env.step(drink(PotionId::SmokeBomb));
+  EXPECT_TRUE(env.terminated());
+  EXPECT_FLOAT_EQ(env.reward(), 1.0f + 0.5f * 0.5f);
+  EXPECT_TRUE(env.won());
+  EXPECT_TRUE(env.escaped());
+}
+
+TEST(SmokeBomb, AWinIsNotAnEscape) {
+  CombatState s = fight_holding({PotionId::FirePotion});
+  s.enemies[0].hp = 1;
+  CombatEnv env(s);
+  env.step(drink(PotionId::FirePotion, 0));
+  ASSERT_EQ(env.outcome(), Outcome::Won);
+  EXPECT_TRUE(env.won());
+  EXPECT_FALSE(env.escaped());
 }
 
 // ============================================================================

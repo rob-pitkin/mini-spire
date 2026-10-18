@@ -207,7 +207,7 @@ class CombatEnv {
 
   // Apply the action. Throws std::invalid_argument if out of range or
   // masked-off. Refreshes obs and mask buffers. Sets reward_ based on the
-  // resulting outcome (+1 Won, -1 Lost, 0 InProgress).
+  // resulting outcome (+1 Won or Escaped, -1 Lost, 0 InProgress).
   void step(int action);
 
   // Reward for the most recent step (0 immediately after reset).
@@ -230,6 +230,13 @@ class CombatEnv {
   const CombatState& state() const { return state_; }
   Outcome outcome() const { return state_.outcome; }
   int turn_number() const { return state_.turn_number; }
+
+  // The info dict's `won` and `escaped` (potion-effects.md §1.4 V1). An escape
+  // is scored as a win (Q1), so it is both; `escaped` tells the two apart.
+  bool won() const {
+    return state_.outcome == Outcome::Won || state_.outcome == Outcome::Escaped;
+  }
+  bool escaped() const { return state_.outcome == Outcome::Escaped; }
 
   // Pile contents — for the Python TUI pile-view. Not used during training.
   StatePiles state_piles() const;

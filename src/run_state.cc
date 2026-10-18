@@ -485,7 +485,7 @@ std::optional<RelicId> RunState::random_relic(
       0, candidates.size() - 1)(rng)];
 }
 
-void RunState::roll_potion_drop(int rewards_already_on_screen) {
+void RunState::roll_potion_drop(int rewards_already_on_screen, bool grant) {
   std::mt19937 rng =
       make_stream(run_seed, RngStream::Potion, static_cast<uint32_t>(floor));
 
@@ -525,7 +525,7 @@ void RunState::roll_potion_drop(int rewards_already_on_screen) {
       pool[std::uniform_int_distribution<size_t>(0, pool.size() - 1)(rng)];
 
   // A full belt simply means the drop is lost, which is what happens in game.
-  obtain_potion(drop);
+  if (grant) obtain_potion(drop);
 }
 
 ChestSize chest_size_for_roll(int size_roll) {
@@ -1426,8 +1426,15 @@ void RunState::end_combat() {
     //
     // The count is every entry the screen will hold, card reward included (§4.2)
     // — gold, the elite's relic, and the card. Miscounting it moves the
-    // four-item suppression threshold by a fight.
-    award_combat_gold(combat_source);
+    // four-item suppression threshold by a fight. (Whether StS counts the card
+    // is an open question, task #47.)
+    //
+    // A Smoke Bomb escape (potion-effects.md §5.5, Rob V2) runs StS's same
+    // reward block and then opens a screen that grants nothing. Rolls that
+    // leave state behind still happen — the elite's relic draw, the potion's
+    // drift — and gold and the card reward, which leave none, are not rolled.
+    const bool smoked = combat.outcome == Outcome::Escaped;
+    if (!smoked) award_combat_gold(combat_source);
     const bool elite = combat_source == RewardSource::Elite;
 
     // Black Star: an elite drops a SECOND relic. Both are drawn here, before
@@ -1459,15 +1466,29 @@ void RunState::end_combat() {
 
     // Prayer Wheel: normal enemies drop an ADDITIONAL card reward — a second
     // screen, and explicitly not on elites or bosses.
-    if (combat_source == RewardSource::Monster &&
-        has_relic(RelicId::PrayerWheel)) {
-      pending_extra_card_rewards += 1;
-    }
+    const int extra_card_rewards =
+        pending_extra_card_rewards +
+        (combat_source == RewardSource::Monster &&
+                 has_relic(RelicId::PrayerWheel)
+             ? 1
+             : 0);
 
+    // Counted as for an unsmoked screen even when smoked: StS rolls the potion
+    // before it opens the screen that turns out to show nothing.
     const int on_screen = 1 /* gold */ + 1 /* card */ +
                           static_cast<int>(elite_relics.size()) +
-                          pending_extra_card_rewards;
-    roll_potion_drop(on_screen);
+                          extra_card_rewards;
+    roll_potion_drop(on_screen, /*grant=*/!smoked);
+
+    if (smoked) {
+      // Nothing to collect and nothing to decide: StS's smoked screen offers
+      // only Proceed. No card reward was made, so none is owed, Prayer
+      // Wheel's included.
+      leave_room();
+      return;
+    }
+
+    pending_extra_card_rewards = extra_card_rewards;
     generate_card_reward(combat_source);
 
     // Collected last, so nothing above could read them.

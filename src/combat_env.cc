@@ -166,6 +166,8 @@ void CombatEnv::step(int action) {
   }
 
   switch (state_.outcome) {
+    // An escape is scored as a win, HP bonus included (potion-effects.md Q1).
+    case Outcome::Escaped:
     case Outcome::Won: {
       // Sparse +1 plus an optional HP-retention bonus (ROB-52). Read the
       // character's (survivor's) post-step HP; float division.

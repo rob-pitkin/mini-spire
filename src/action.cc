@@ -1612,9 +1612,13 @@ void push_potion_effects(CombatState& state, PotionId id, int target,
     case PotionId::FairyPotion:
       assert(false && "Fairy in a Bottle is never drinkable");
       break;
+    // Smoke Bomb queues nothing: SmokeBomb.use only flags the room and starts
+    // the escape. use_potion ends the fight once everything queued has run
+    // (§5.5).
+    case PotionId::SmokeBomb:
+      break;
     // Later steps of potion-effects.md §8; potion_effect_implemented() keeps
     // them out of the mask until then.
-    case PotionId::SmokeBomb:
     case PotionId::EntropicBrew:
       assert(false && "potion not implemented yet; the mask should refuse it");
       break;

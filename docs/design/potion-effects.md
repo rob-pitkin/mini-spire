@@ -10,7 +10,9 @@ minimum picks, and the choice header and staged plane (#33). **Step 3 done**
 (2026-10-10): 30 of 33 — Duplication, Distilled Chaos, Snecko Oil — plus
 Double Tap's charge timing and Havoc's and Mayhem's targets (§1.2, §5.8).
 **Step 4 done** (2026-10-17): 31 of 33 — Fairy in a Bottle, never drinkable,
-and Lizard Tail with it, through one death intercept (§1.3, §5.4).
+and Lizard Tail with it, through one death intercept (§1.3, §5.4). **Step 5
+done** (2026-10-17): 32 of 33 — Smoke Bomb, `Outcome::Escaped` scored as a
+win, and the smoked reward screen in the run layer (§1.4, §5.5).
 
 Potions are first-class combat state (`v2-spec.md` §3.0.1): held in
 `CombatState::potions`, observable, and usable through the combat action space.
@@ -80,6 +82,14 @@ name and targeting already in `src/potion.cc`.
 | U1 | A `Hook::PlayerDeath` or a fixed intercept | A fixed function with StS's two checks in StS's order: Fairy in a Bottle, then Lizard Tail (§5.4). No hook. |
 | U2 | Lizard Tail's used state is not observed | Left with #9, as part of relics not being in the combat observation at all. The aim is to make relics observable, as they are to a human. |
 | U3 | Out-of-combat death, and Red Skull | Requirements on other work, not built now: events (#7) route their HP loss through the same intercept, without Magic Flower; Red Skull (#3) must see the revive heal lift HP above half. |
+
+### 1.4 Step 5 rulings (Rob, 2026-10-17)
+
+| # | question | ruling |
+|---|---|---|
+| V1 | The info dict for an escape | `won` is true, as Q1 scores an escape as a win, and a new `escaped` key is true. `eval.py` records `escaped` per seed. |
+| V2 | What a smoked fight rolls | Match StS where the roll leaves state behind: the potion drop is rolled and not granted (its drift moves), and elite relics are drawn and not obtained (for #22). Gold and the card reward are not rolled. The run leaves the room with no reward decision. |
+| — | The potion drop's count of rewards on screen | Logged as its own issue (#47): StS's count holds gold and relics only, the engine's adds the card reward. |
 
 ## 2. Using and discarding a potion
 
@@ -376,15 +386,130 @@ dropped (7 and 9), every Fairy consumed (10), Toy Ornithopter fired (11), and
 
 ### 5.5 Smoke Bomb (Q1)
 
-- **Combat:** usable unless the fight is a boss fight. Using it ends the fight with
-  `Outcome::Escaped` after the queue drains. The standalone env scores it as a win,
-  HP-shaped bonus included; its info reports `escaped` as well as `won`.
-- **Run layer** (`AbstractRoom.update`, `CombatRewardScreen.openCombat`): the fight
-  ends through `endBattle`, so the victory relic hooks fire (Burning Blood heals,
-  Meat on the Bone triggers). The reward phase still rolls gold (treasure stream),
-  the elite relic (relic stream) and the potion drop with its ±10 drift (potion
-  stream); then the smoked reward screen grants none of it, and no card reward is
-  rolled.
+**Status: agreed with Rob 2026-10-17 (§1.4).**
+
+**Sources.** Decompiled `potions/SmokeBomb`, `AbstractPlayer.updateEscapeAnimation`,
+`AbstractRoom.update` (the post-combat block) and `endBattle`,
+`CombatRewardScreen.openCombat` and `setupItemReward`, `relics/ToyOrnithopter`.
+wiki.gg Smoke Bomb and Potions, checked 2026-10-17.
+
+**What StS does.**
+- `canUse`: false if any monster in the room is a BOSS, or has Back Attack
+  (Act 4's Surrounded fight). The loop covers dead monsters too, so a Slime
+  Boss that has split still blocks it.
+- `use` sets `room.smoked`, starts a 2.5-second escape animation and disables
+  End Turn. It queues no game action. Actions already queued keep running
+  during the animation: Toy Ornithopter's `onUsePotion` queues its
+  `HealAction` (in combat), so it heals 5 as it does for any potion. When the
+  timer runs out, `endBattle` runs. The enemies never act again.
+- `endBattle` is the victory path: Meat on the Bone's `onTrigger`, then
+  `player.onVictory()` (Burning Blood's heal and every other victory relic).
+  It then clears the action queue.
+- The reward block in `AbstractRoom.update` runs as for a win: gold is rolled
+  (`treasureRng`), the elite's `dropReward` draws its relic(s) (`relicRng`),
+  and `addPotionToRewards` rolls the drop and moves the ±10 drift
+  (`potionRng`). Then `openCombat(..., smoked = true)` skips
+  `setupItemReward`, which is where the card reward (and Prayer Wheel's
+  second one) would be created. The screen shows only Proceed: no gold, relic,
+  potion or card is granted. wiki.gg's Potions page: on Smoke Bomb "the game
+  rolls for a potion, but does not display this potion to the player if it
+  drops."
+
+**Engine design, combat.**
+- `Outcome::Escaped`, a fourth combat outcome. The run's own `outcome` (which
+  reuses the enum) never takes it.
+- `CombatState::is_boss`, default false. The mask refuses Smoke Bomb when it
+  is true. Nothing sets it until bosses exist (#8), which will set it from the
+  encounter pool as `is_elite` is set now. A room flag gives StS's answer for
+  every Act 1 boss, the Slime Boss's split included. Back Attack is Act 4 and
+  is not built.
+- `use_potion` drains the potion's actions and Toy Ornithopter's heal, runs
+  the terminal checks, and then, if the potion was Smoke Bomb and the fight
+  is still on, sets `Outcome::Escaped`. The engine's drain stands in for the
+  2.5-second animation. The card queue is empty at that point: a potion cannot
+  be used while a choice is open (Q8), which is the only time cards wait.
+- `CombatEnv` scores Escaped as Won: +1 plus the HP-shaped bonus (Q1). See V1
+  for the info dict.
+
+**Engine design, run layer** (`RunState::end_combat`, see V2):
+- The CombatEnd relic hooks already fire whenever the player is alive, so an
+  escape fires them as a win does.
+- Hand of Greed's gold was gained during the fight, so it is kept.
+- Not granted: gold, elite relics, the potion drop, and any card reward. The
+  run then leaves the room without a reward decision, since StS's smoked
+  screen offers nothing to choose.
+
+**The questions as they were put** (rulings in §1.4):
+- **V1. The info dict.** Q1 scores an escape as a win. Recommended
+  `info["won"] = True` for Escaped, so the reward and every metric that reads
+  `won` (training callbacks, `eval.py`'s win rate) agree with Q1. Add
+  `info["escaped"]` so analysis can separate the two, and record `escaped`
+  per seed in `eval.py` with an escape count. The alternative,
+  `won = False` with `escaped = True`, would make the info dict disagree with
+  the reward.
+- **V2. What a smoked fight rolls.** Recommended matching StS's rolls where they
+  carry state and skipping them where they cannot show:
+  - **Potion drop: rolled, not granted.** The roll moves the drift, which the
+    next fight's drop chance reads. The count of rewards already on screen is
+    computed as for an unsmoked fight, because StS rolls before it knows the
+    screen is smoked.
+  - **Elite relics: drawn, not obtained.** Today the draw changes nothing,
+    because relic pools are not consumed. Once they are (#22), StS's draw
+    removes the relic from the pool even when smoked, and drawing it here keeps
+    that right without revisiting this code.
+  - **Gold: not rolled.** Every run-layer draw site builds its generator fresh
+    from (seed, stream, floor), so a skipped draw cannot shift any other, and
+    the gold roll leaves no counter behind. `award_combat_gold` is the only
+    reader of the treasure stream.
+  - **Card reward: not rolled.** StS never creates it, so the rarity counter
+    must not move. Prayer Wheel's extra screen is not owed.
+
+**Not in this step.** The TUI's end screen treats every outcome but Won as a
+loss. No human can throw a Smoke Bomb until the TUI has a potion belt (step
+7), so that screen is fixed there.
+
+**A separate flag found here (#47).** StS's potion roll counts the rewards
+already on the room's list, which at that point hold gold and relics but not
+the card reward, which is created later. The engine counts the card reward.
+A smoked fight uses the same count as an unsmoked one, so whatever is ruled
+there applies to both.
+
+**Where `won` and `escaped` live.** `CombatEnv::won()` and `escaped()`, which
+the bindings read, so the rule stays out of `bindings/` and is testable in
+C++. A standalone env holds no potions, so Python cannot reach an escape.
+
+**Tests.**
+- `tests/test_potions.cc`, `SmokeBomb.*`:
+  1. The fight ends Escaped after Toy Ornithopter's heal (50 → 55), with the
+     enemy alive.
+  2. `is_boss` masks it at every target; discard stays available.
+  3. `CombatEnv` scores the escape +1 plus the HP bonus, and `won()` and
+     `escaped()` are both true.
+  4. A real win is `won()` and not `escaped()`.
+- `tests/test_relic_state.cc`, `SmokeBombEscape.*`:
+  5. An escaped elite, with the potion drop forced to 100%, grants no gold,
+     relic, potion or card reward, leaves the rarity counter alone, and goes
+     to the map.
+  6. The potion roll still moves the drift (60 → 50).
+  7. The escape's drift equals the same fight won, with Black Star making the
+     count of rewards matter.
+  8. Burning Blood heals 6, and Hand of Greed's in-fight gold is kept.
+  9. No Prayer Wheel screen is owed.
+- `tests/test_mask_oracle.cc`: the independent mask derivation adds Smoke Bomb
+  and its boss rule; the sweep flips `is_boss` and counts states holding a
+  Smoke Bomb in a boss fight.
+- `python/tests/test_smoke.py`: the info dict has `escaped`, false in a
+  standalone fight.
+
+Mutation checks. Caught: the escape never set (1, 3); the boss rule dropped
+(2, oracle); the escape scored 0 (3); `won()` excluding escapes (3); gold,
+the potion, the elite's relics or a card reward granted (5, 8 for gold);
+the potion roll skipped (6, 7); the smoked count without the card (7); the
+victory relics only on Won (8); Prayer Wheel's screen owed (9). One survives,
+and is equivalent today: setting Escaped *before* the drain rather than after.
+`drain` checks the outcome only after running an action, and the most a Smoke
+Bomb can leave queued is Toy Ornithopter's one heal, so both orders give the
+same result. It would show only if a second action could follow a potion.
 
 ### 5.6 The potion stream and slot count in combat (Q6)
 
@@ -537,6 +662,6 @@ plays has X = the player's energy when the card is taken, and spends no energy
    staged-picks plane (S6, §3.3).
 3. **Card-play potions:** Duplication, Distilled Chaos, Snecko Oil.
 4. **Fairy in a Bottle and Lizard Tail** (§5.4, task #5). ✅ 2026-10-17.
-5. **Smoke Bomb** (§5.5).
+5. **Smoke Bomb** (§5.5). ✅ 2026-10-17.
 6. **Entropic Brew, Cauldron, out-of-combat use** (§5.6, §6).
 7. **TUI potion belt** (Q10).

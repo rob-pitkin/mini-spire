@@ -503,7 +503,11 @@ struct RunState {
   // Rolls a post-combat potion drop and its drift (§4.2). Takes how many
   // rewards are already on the screen, because four suppresses the drop —
   // potions are coupled to the other rewards, not independent of them.
-  void roll_potion_drop(int rewards_already_on_screen);
+  //
+  // `grant` false rolls without taking the potion: a Smoke Bomb escape still
+  // rolls, and moves the drift, but the screen shows nothing
+  // (potion-effects.md §5.5).
+  void roll_potion_drop(int rewards_already_on_screen, bool grant = true);
 
   // Draws a relic of `tier`, excluding any already held so a run never sees a
   // duplicate offered.

@@ -163,8 +163,10 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
 
   // Potions (potion-effects.md §3.1), restated rather than asked of the
   // engine. Every held potion can be discarded. It can be drunk if its effect
-  // is built — the list of steps 1 to 3, restated here on purpose and widened
+  // is built — the list of steps 1 to 5, restated here on purpose and widened
   // as each step lands — at a living enemy if it targets one, else at slot 0.
+  // Smoke Bomb, not in a boss fight (§5.5). Fairy in a Bottle is built but
+  // never drinkable, so it is not on the list.
   // Raw arithmetic: use is potion × target, discard one per potion.
   static const PotionId kBuilt[] = {
       PotionId::BloodPotion,     PotionId::BlockPotion,
@@ -184,13 +186,16 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
       PotionId::LiquidMemories,
       // Step 3: the card-play potions.
       PotionId::DuplicationPotion, PotionId::DistilledChaos,
-      PotionId::SneckoOil};
+      PotionId::SneckoOil,
+      // Step 5.
+      PotionId::SmokeBomb};
   for (PotionId p : state.potions) {
     const int id = static_cast<int>(p);
     mask[kPotionDiscardBlock + id] = true;
     if (std::find(std::begin(kBuilt), std::end(kBuilt), p) == std::end(kBuilt)) {
       continue;
     }
+    if (p == PotionId::SmokeBomb && state.is_boss) continue;
     const bool targeted = p == PotionId::FirePotion ||
                           p == PotionId::WeakPotion || p == PotionId::FearPotion;
     for (int target = 0; target < kMaxEnemies; ++target) {
@@ -215,7 +220,8 @@ TEST(MaskOracle, EngineMaskMatchesAnIndependentDerivation) {
   // vacuously, which is exactly how the free-cost branch went unexercised for
   // as long as it did.
   long long saw_choice = 0, saw_free = 0, saw_entangle = 0, saw_rung = 0,
-            saw_potion = 0, saw_staged = 0, saw_required = 0;
+            saw_potion = 0, saw_staged = 0, saw_required = 0,
+            saw_boss_smoke = 0;
 
   for (uint32_t seed = 0; seed < 300; ++seed) {
     for (EncounterPool pool : {EncounterPool::Weak, EncounterPool::Strong,
@@ -245,6 +251,14 @@ TEST(MaskOracle, EngineMaskMatchesAnIndependentDerivation) {
         if (rng() % 6 == 0 && s.potions.size() < 5) {
           s.potions.push_back(static_cast<PotionId>(rng() % kNumPotions));
           ++saw_potion;
+        }
+        // A boss fight, which refuses Smoke Bomb. No encounter is a boss fight
+        // yet (task #8), so the flag is flipped here.
+        if (rng() % 10 == 0) s.is_boss = !s.is_boss;
+        if (s.is_boss &&
+            std::find(s.potions.begin(), s.potions.end(), PotionId::SmokeBomb) !=
+                s.potions.end()) {
+          ++saw_boss_smoke;
         }
         // Query-layer state: Corruption, Barricade.
         if (rng() % 9 == 0) s.character.powers[Power::Corruption] = 1;
@@ -341,4 +355,5 @@ TEST(MaskOracle, EngineMaskMatchesAnIndependentDerivation) {
   EXPECT_GT(saw_potion, 100) << "potions barely exercised";
   EXPECT_GT(saw_staged, 100) << "multi-select staging barely exercised";
   EXPECT_GT(saw_required, 20) << "required picks barely exercised";
+  EXPECT_GT(saw_boss_smoke, 20) << "Smoke Bomb in a boss fight barely exercised";
 }

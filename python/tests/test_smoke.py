@@ -86,9 +86,13 @@ def test_step_info_has_metric_keys():
     end_turn = env.END_TURN_ACTION
     _, _, _, _, info = env.step(end_turn)
     assert "won" in info
+    assert "escaped" in info
     assert "final_hp" in info
     assert "hp_fraction" in info
     assert isinstance(info["won"], bool)
+    # A standalone env holds no potions, so it can never escape; the escape
+    # itself is tested in C++ (test_potions.cc, SmokeBomb.*).
+    assert info["escaped"] is False
     assert isinstance(info["final_hp"], int)
     assert isinstance(info["hp_fraction"], float)
 

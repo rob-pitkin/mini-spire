@@ -307,6 +307,84 @@ TEST(PotionState, AFullRewardScreenStillDriftsTheChanceUp) {
       << "a suppressed screen skipped the miss drift";
 }
 
+// ------------------------------------------------------ Smoke Bomb escapes
+//
+// potion-effects.md §5.5, Rob V2. StS runs the same reward block as for a win
+// and then opens a screen that grants nothing.
+
+TEST(SmokeBombEscape, GrantsNothingAndLeavesTheRoom) {
+  // An elite, with the potion drop forced to 100%: there is a relic, a potion,
+  // gold and a card reward to withhold.
+  RunState run = RunState::start(1);
+  run.potion_chance_bonus = 60;
+  run.begin_combat(EncounterPool::Elite);
+  const int gold = run.gold;
+  const size_t relics = run.relics.size();
+  const int rarity = run.card_rarity_factor;
+
+  run.combat.outcome = Outcome::Escaped;
+  run.end_combat();
+
+  EXPECT_EQ(run.gold, gold);
+  EXPECT_EQ(run.relics.size(), relics) << "the elite's relic was granted";
+  EXPECT_TRUE(run.potions.empty()) << "the potion drop was granted";
+  EXPECT_TRUE(run.card_reward.empty()) << "a card reward was made";
+  EXPECT_EQ(run.card_rarity_factor, rarity) << "the card was rolled";
+  EXPECT_EQ(run.phase, Phase::Map) << "a smoked screen has nothing to decide";
+}
+
+TEST(SmokeBombEscape, ThePotionRollStillMovesTheDrift) {
+  // 100% chance: the roll hits, so the drift falls by 10 although nothing is
+  // shown (wiki.gg: "rolls for a potion, but does not display" it).
+  RunState run = RunState::start(1);
+  run.potion_chance_bonus = 60;
+  run.begin_combat(EncounterPool::Weak);
+  run.combat.outcome = Outcome::Escaped;
+  run.end_combat();
+  EXPECT_EQ(run.potion_chance_bonus, 50);
+}
+
+TEST(SmokeBombEscape, ThePotionRollCountsTheScreenAsAWinWould) {
+  // StS rolls the potion before it knows the screen is smoked, so the count
+  // of rewards on screen is the unsmoked one. Black Star's two relics make
+  // the count matter: the escape's drift must match the same fight won,
+  // whatever task #47 rules the count to be.
+  auto drift_after = [](bool escape) {
+    RunState run = RunState::start(1);
+    run.obtain_relic(RelicId::BlackStar);
+    run.potion_chance_bonus = 60;
+    run.begin_combat(EncounterPool::Elite);
+    if (escape) run.combat.outcome = Outcome::Escaped;
+    run.end_combat();
+    return run.potion_chance_bonus;
+  };
+  EXPECT_EQ(drift_after(true), drift_after(false));
+}
+
+TEST(SmokeBombEscape, VictoryRelicsFireAndInFightGoldIsKept) {
+  // endBattle runs onVictory, so Burning Blood heals 6. Hand of Greed's gold
+  // was gained during the fight and stays.
+  RunState run = RunState::start(1);
+  run.begin_combat(EncounterPool::Weak);
+  const int gold = run.gold;
+  run.combat.character.hp = 50;
+  run.combat.gold_gained = 20;
+  run.combat.outcome = Outcome::Escaped;
+  run.end_combat();
+  EXPECT_EQ(run.hp, 56);
+  EXPECT_EQ(run.gold, gold + 20);
+}
+
+TEST(SmokeBombEscape, OwesNoPrayerWheelScreen) {
+  RunState run = RunState::start(1);
+  run.obtain_relic(RelicId::PrayerWheel);
+  run.begin_combat(EncounterPool::Weak);
+  run.combat.outcome = Outcome::Escaped;
+  run.end_combat();
+  EXPECT_EQ(run.pending_extra_card_rewards, 0);
+  EXPECT_EQ(run.phase, Phase::Map);
+}
+
 // White Beast Statue forces the chance to 100, but a full screen still wins.
 TEST(PotionState, AFullScreenSuppressesEvenWhiteBeastStatue) {
   RunState run = RunState::start(1);

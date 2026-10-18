@@ -1539,6 +1539,12 @@ void use_potion(CombatState& state, PotionId p, int target) {
   check_character_terminal(state);
   if (state.outcome != Outcome::InProgress) return;
   check_enemy_terminal(state);
+  // Smoke Bomb (§5.5). StS's escape takes 2.5 seconds, during which queued
+  // actions — Toy Ornithopter's heal — still run, and then endBattle. Draining
+  // first stands in for that, so the heal lands before the fight ends.
+  if (p == PotionId::SmokeBomb && state.outcome == Outcome::InProgress) {
+    state.outcome = Outcome::Escaped;
+  }
 }
 
 // A replayed Rampage's ModifyDamageAction reaches every in-battle copy sharing

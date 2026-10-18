@@ -47,7 +47,8 @@ py::dict make_info(CombatEnv& self) {
   py::dict info;
   info["outcome"] = self.outcome();
   info["turn_number"] = self.turn_number();
-  info["won"] = (self.outcome() == Outcome::Won);
+  info["won"] = self.won();  // an escape counts (potion-effects.md V1)
+  info["escaped"] = self.escaped();
   info["final_hp"] = c.hp;
   info["hp_fraction"] =
       c.max_hp > 0 ? static_cast<float>(c.hp) / static_cast<float>(c.max_hp)
@@ -63,7 +64,8 @@ PYBIND11_MODULE(_core, m) {
   py::enum_<Outcome>(m, "Outcome")
       .value("InProgress", Outcome::InProgress)
       .value("Won", Outcome::Won)
-      .value("Lost", Outcome::Lost);
+      .value("Lost", Outcome::Lost)
+      .value("Escaped", Outcome::Escaped);
 
   // CardId is exposed so Python code (the TUI in ROB-47) can identify cards
   // in StatePiles without needing to also expose CARD_DATABASE.

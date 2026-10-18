@@ -64,6 +64,8 @@ def evaluate(
             {
                 "seed": seed,
                 "won": bool(info["won"]),
+                # An escape (Smoke Bomb) counts as a win; this tells them apart.
+                "escaped": bool(info["escaped"]),
                 "final_hp": int(info["final_hp"]),
                 "hp_fraction": float(info["hp_fraction"]),
                 "length": length,
@@ -81,6 +83,7 @@ def evaluate(
         "n_seeds": n_seeds,
         "win_rate": win_rate,
         "wins": len(wins),
+        "escapes": sum(1 for r in per_seed if r["escaped"]),
         "losses": n_seeds - len(wins),
         "mean_hp_retained_on_win": float(np.mean(hp_on_win)) if hp_on_win else 0.0,
         "median_hp_retained_on_win": (

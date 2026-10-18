@@ -126,13 +126,14 @@ bool potion_effect_implemented(PotionId id) {
     case PotionId::DuplicationPotion:
     case PotionId::DistilledChaos:
     case PotionId::SneckoOil:
+    // Step 5: Smoke Bomb (§5.5).
+    case PotionId::SmokeBomb:
       return true;
     // Fairy in a Bottle is built (step 4) but never drinkable: its effect is
     // the death intercept in action.cc (§5.4), and StS's canUse is false.
     case PotionId::FairyPotion:
       return false;
     // Later steps.
-    case PotionId::SmokeBomb:
     case PotionId::EntropicBrew:
       return false;
   }

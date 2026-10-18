@@ -116,6 +116,8 @@ bool potion_can_be_drunk(const CombatState& state, PotionId id) {
   // Rob, 2026-10-04 (Q8): not while a card choice is open. StS may allow it;
   // it changes no outcome, so it is not listed as a divergence.
   if (state.pending_choice.active()) return false;
+  // SmokeBomb.canUse: not against a boss (§5.5).
+  if (id == PotionId::SmokeBomb && state.is_boss) return false;
   return potion_effect_implemented(id);
 }
 
