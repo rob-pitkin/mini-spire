@@ -52,7 +52,9 @@ struct ResolutionContext {
 
 enum class Hook {
   TurnStartPlayer,    // Demon Form, Brutality, Berserk, Flame Barrier expiry
-  TurnEndPlayer,      // Combust, player Metallicize, Rage expiry
+  TurnEndPlayer,      // Combust, Regen, Rage expiry; relics: Orichalcum, Stone
+                      // Calendar. The powers fire after the end-of-turn cards
+                      // play, the relics before (curse-effects.md §3.1)
   TurnStartEnemy,     // enemy Metallicize (see ordering-notes §24)
   TurnEndEnemy,       // enemy Ritual — StS grants it at the END of the bearer's
                       // turn, so the intent the player sees already reflects it
@@ -92,6 +94,11 @@ enum class Hook {
   CombatEnd,            // Burning Blood, Meat on the Bone — fired on the WON
                         // fight's state, before RunState writes HP back, so the
                         // heal lands in one place rather than two
+  TurnEndPlayerPreCards,  // Metallicize, Plated Armor — StS's
+                          // atEndOfTurnPreEndTurnCards: after the end-of-turn
+                          // relics, BEFORE Burn and the end-of-turn curses play
+                          // (curse-effects.md §1.1). TurnEndPlayer is the later
+                          // atEndOfTurn group: Combust, Regen, Rage
 };
 
 // Fire the enemy-at-`slot`'s TriggeredEffects matching `hook`, PUSHING the
@@ -203,7 +210,10 @@ void apply_damage_to_hp_block(int& hp, int& block, int amount);
 void gain_block(CombatState& state, int slot, int amount);
 
 // Direct player HP loss (a lose-HP EFFECT — bypasses block, can kill; ROB-80).
-void lose_player_hp(CombatState& state, int amount);
+// Returns true if HP was actually lost: Intangible, Tungsten Rod and Buffer can
+// each take it to nothing, and StS's HP-loss reactions (Rupture, Blood for
+// Blood, Runic Cube) sit behind `damageAmount > 0` (curse-effects.md §1.4).
+bool lose_player_hp(CombatState& state, int amount);
 
 void gain_energy(CombatState& state, int amount);
 void spend_energy(CombatState& state, int amount);

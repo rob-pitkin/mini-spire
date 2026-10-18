@@ -260,8 +260,9 @@ int relic_bonus_energy(const CombatState& state, bool elite_or_boss) {
 
 bool hand_discards_at_turn_end(const CombatState& state) {
   // Runic Pyramid: the hand is kept. Ethereal cards still EXHAUST (a different
-  // fate from discarding) and cards with an end-of-turn effect in hand still
-  // leave — see the DiscardHand executor.
+  // fate from discarding) — see the DiscardHand executor. Cards with an
+  // end-of-turn effect still leave too, but earlier: they play from the card
+  // queue before the hand is discarded (curse-effects.md §3.1).
   return !state.has_relic(RelicId::RunicPyramid);
 }
 

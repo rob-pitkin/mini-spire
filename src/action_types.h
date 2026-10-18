@@ -193,6 +193,11 @@ struct Action {
   CostLayer discount_layer = CostLayer::None;
   MoveName move = MoveName::None;  // RewriteIntent payload
   bool card_block = false;  // GainBlock from a played card: apply Dex/Frail
+  // ApplyDebuff on the player: StS's isSourceMonster argument, set by a player
+  // effect. Doubt and Shame construct their Weak and Frail with it true, so a
+  // new one starts just applied (curse-effects.md §3.2). An enemy actor implies
+  // it; this is for the cases where the source is not an enemy.
+  bool as_source_monster = false;
   // RequestChoice: what the choice may do; ApplyChoice: the copies and cost-0
   // it applies with (potion-effects.md S1). Replaced a bare `copies`, which was
   // the only setting back when a choice's other settings came from its card.
@@ -295,6 +300,15 @@ struct QueuedPlay {
   int lineage = 0;
   Card original{CardId::Strike};
   OriginPile original_pile = OriginPile::None;
+  // An end-of-turn autoplay: Burn, Decay, Regret, Doubt or Shame, queued from
+  // the hand when the turn ends (curse-effects.md §3.1). StS's
+  // dontTriggerOnUseCard: no on-play hooks, no play count, no Pain, no Blue
+  // Candle. Only the card's end-of-turn effect, then its discard.
+  bool end_of_turn = false;
+  // Regret's HP loss: the hand size when it was queued, which counts Regret
+  // itself and every other card still in hand (StS sets magicNumber in
+  // triggerOnEndOfTurnForPlayingCard). Unused by the other autoplays.
+  int hand_count = 0;
 };
 
 // The card queue (card-queue.md): cards waiting to be played once every

@@ -91,16 +91,30 @@ Unobservable.
 
 ## Stage 4a (player powers via the static registry)
 
-### 7. End of turn: hand first, then powers
+### 7. End of turn: three phases (corrected 2026-10-18)
 
-StS handles the hand at end of turn (ethereal exhausts, the rest discards)
-*before* end-of-turn powers resolve, so an ethereal exhaust's Feel No Pain
-block is gained in time to absorb the enemy attack, and queues ahead of
-Combust. Encoded as `DiscardHand` pushed before the `TurnEndPlayer` hook.
-Pinned by `EtherealExhaustAtEndOfTurnTriggersFeelNoPain`. (Not directly
-documented on the wiki — searched; this follows from ethereal being described
-as a special end-of-turn hand step, and matches in-game behavior. Revisit if
-a counterexample turns up.)
+The end of the player's turn follows StS's order from the decompiled source
+(`curse-effects.md` §1.1, §3.1):
+
+1. **Phase A.** End-of-turn relics (Orichalcum, Stone Calendar), then the
+   pre-card powers (Metallicize, Plated Armor; `Hook::TurnEndPlayerPreCards`).
+   Every hand card with an end-of-turn effect (Burn, Decay, Regret, Doubt,
+   Shame) joins the card queue, and Regret's count is taken now.
+2. **Phase B.** Those cards play from the card queue, each in its own drain.
+3. **Phase C.** The `TurnEndPlayer` powers (Combust, Regen, Rage), The Bomb,
+   then `DiscardHand`: ethereal cards exhaust, the rest discard.
+
+**Correction.** This note used to say the hand is handled *before* the
+end-of-turn powers, encoded as `DiscardHand` pushed ahead of the
+`TurnEndPlayer` hook. The push order was real but the effect was not:
+`DiscardHand`'s executor `push_back`ed its moves and Burn's damage, so they ran
+after every power's action. StS also exhausts ethereal cards after the powers
+(`AbstractRoom.endTurn` queues `DiscardAtEndOfTurnAction` behind
+`atEndOfTurn`), so the ethereal timing was right by accident, while Regen ended
+up healing before Burn's damage instead of after. A probe measured both before
+the change. `EtherealExhaustAtEndOfTurnTriggersFeelNoPain` still holds: Feel No
+Pain's block is up before the enemy acts. `EndOfTurnOrder.*` in
+`test_curse_effects.cc` pins the new order.
 
 ### 8. Fixed (thorns-type) damage fires only the any-damage hooks
 
@@ -116,10 +130,13 @@ damage-wake moved to the latter. Pinned by `FixedDamageDoesNotTriggerCurlUp`.
 
 ### 9. Rupture keys on self-inflicted HP loss only
 
-`Hook::HpLostPlayer` fires from the `LoseHp` executor only. Enemy attack
-damage goes through `DealDamage`, which deliberately does not fire it — so
-Rupture never triggers on being attacked. Pinned by
-`RuptureDoesNotTriggerOnEnemyDamage`.
+`Hook::HpLostPlayer` fires from the `LoseHp` executor, and from fixed damage
+to the player whose source is the player (Burn and Decay; StS's Rupture keys on
+`info.owner == owner`). Both fire it only when HP was actually lost: Tungsten
+Rod or Buffer taking a loss to nothing fires nothing (`curse-effects.md` §1.4).
+Enemy attack damage goes through `DealDamage`, which deliberately does not fire
+it — so Rupture never triggers on being attacked. Pinned by
+`RuptureDoesNotTriggerOnEnemyDamage` and `HpLossReactions.*`.
 
 ### 10. Expiry timing: Rage vs Flame Barrier
 

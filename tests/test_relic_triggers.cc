@@ -51,6 +51,21 @@ void hit_player(CombatState& s, int amount) {
   drain(s, q, ctx);
 }
 
+// An enemy's attack on the player: enemy slot 0 as the source. Unlike
+// hit_player's sourceless fixed damage, this is what reduces Plated Armor
+// (another creature's NORMAL damage, curse-effects.md §1.4). Jaw Worm has no
+// Strength or Weak at the start, so the amount lands as given.
+void attack_player(CombatState& s, int amount) {
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action a{ActionKind::DealDamage};
+  a.actor = 0;
+  a.target = kPlayerSlot;
+  a.amount = amount;
+  q.push_back(a);
+  drain(s, q, ctx);
+}
+
 // The same, aimed at an enemy slot. Fixed damage is still DAMAGE, so it goes
 // through the block subtraction that Hand Drill watches.
 void hit_enemy(CombatState& s, int slot, int amount) {
@@ -1628,12 +1643,12 @@ TEST(PlatedArmorPower, IsNotModifiedByDexterity) {
   plain.character.current_block = 0;
   dex.character.current_block = 0;
 
-  // Drive only the end-of-turn power hooks, so the enemy phase does not spend
-  // the block before it can be compared.
+  // Drive only the pre-card end-of-turn hook Plated Armor fires on, so the
+  // enemy phase does not spend the block before it can be compared.
   ActionQueue pq, dq;
   ResolutionContext pctx, dctx;
-  fire_player_power_hooks(plain, Hook::TurnEndPlayer, pq);
-  fire_player_power_hooks(dex, Hook::TurnEndPlayer, dq);
+  fire_player_power_hooks(plain, Hook::TurnEndPlayerPreCards, pq);
+  fire_player_power_hooks(dex, Hook::TurnEndPlayerPreCards, dq);
   drain(plain, pq, pctx);
   drain(dex, dq, dctx);
 
@@ -1642,20 +1657,51 @@ TEST(PlatedArmorPower, IsNotModifiedByDexterity) {
       << "Dexterity modified Plated Armor's block";
 }
 
-// Loses a stack to UNBLOCKED damage only.
+// Loses a stack to an enemy attack's UNBLOCKED damage only.
 TEST(PlatedArmorPower, LosesAStackToUnblockedDamage) {
   CombatState s = fight_with({RelicId::ThreadAndNeedle});
   s.character.current_block = 0;
-  hit_player(s, 10);
+  attack_player(s, 10);
   EXPECT_EQ(get_status(s.character.powers, Power::PlatedArmor), 3);
 }
 
 TEST(PlatedArmorPower, KeepsItsStackWhenFullyBlocked) {
   CombatState s = fight_with({RelicId::ThreadAndNeedle});
   s.character.current_block = 50;
-  hit_player(s, 10);
+  attack_player(s, 10);
   EXPECT_EQ(get_status(s.character.powers, Power::PlatedArmor), 4)
       << "a fully blocked hit cost a Plated Armor stack";
+}
+
+// PlatedArmorPower.wasHPLost skips THORNS damage and damage the player owns.
+// Burn's and Decay's end-of-turn damage are both, so they never reduce it,
+// even unblocked (curse-effects.md §1.4).
+TEST(PlatedArmorPower, KeepsItsStackWhenBurnGetsThrough) {
+  CombatState s = fight_with({RelicId::ThreadAndNeedle});
+  s.character.current_block = 0;
+  const int hp = s.character.hp;
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action burn{ActionKind::DealFixedDamage};
+  burn.actor = kPlayerSlot;
+  burn.target = kPlayerSlot;
+  burn.amount = 2;
+  q.push_back(burn);
+  drain(s, q, ctx);
+  ASSERT_EQ(s.character.hp, hp - 2) << "the Burn damage did not get through";
+  EXPECT_EQ(get_status(s.character.powers, Power::PlatedArmor), 4);
+}
+
+// Buffer turning a hit to nothing means wasHPLost never runs: no HP was lost.
+TEST(PlatedArmorPower, KeepsItsStackWhenBufferStopsTheHit) {
+  CombatState s = fight_with({RelicId::ThreadAndNeedle});
+  s.character.current_block = 0;
+  s.character.powers[Power::Buffer] = 1;
+  const int hp = s.character.hp;
+  attack_player(s, 10);
+  ASSERT_EQ(s.character.hp, hp) << "Buffer did not stop the hit";
+  ASSERT_EQ(get_status(s.character.powers, Power::Buffer), 0);
+  EXPECT_EQ(get_status(s.character.powers, Power::PlatedArmor), 4);
 }
 
 // ===================================================================== batch A2
@@ -2772,21 +2818,34 @@ TEST(RelicQuery, WithoutRunicPyramidTheHandDiscards) {
 // STILL leaves the hand — the wiki lists the end-of-turn-effect family as
 // bypassing the relic. Keeping it would strand the Burn in hand, dealing its
 // damage every turn for the rest of the fight.
+// Driven through End Turn: the Burn leaves by playing from the card queue,
+// before the hand step Runic Pyramid governs (curse-effects.md §3.1). Five
+// Defends in the draw pile feed the next turn's draw without a reshuffle, so a
+// Burn found in hand afterwards can only be one that stayed. The enemy's
+// attack cancels out against a twin without the Burn.
 TEST(RelicQuery, RunicPyramidDoesNotStrandABurnInHand) {
   CombatState with = fight_with({RelicId::RunicPyramid});
   with.current_hand.clear();
-  with.current_hand.push_back(Card{CardId::Burn});
+  with.draw_pile.clear();
+  with.discard_pile.clear();
+  for (int i = 0; i < 5; ++i) with.draw_pile.push_back(Card{CardId::Defend});
   with.current_hand.push_back(Card{CardId::Strike});
-  const int hp_before = with.character.hp;
+  CombatState bare = with;
+  with.current_hand.push_back(Card{CardId::Burn});
 
-  ActionQueue q;
-  ResolutionContext ctx;
-  q.push_back(Action{ActionKind::DiscardHand});
-  drain(with, q, ctx);
+  ASSERT_TRUE(apply_action(with, kEndTurnAction));
+  ASSERT_TRUE(apply_action(bare, kEndTurnAction));
+  ASSERT_EQ(with.outcome, Outcome::InProgress);
 
-  ASSERT_EQ(with.current_hand.size(), 1u) << "the Burn should have left";
-  EXPECT_EQ(with.current_hand[0].card_id, CardId::Strike);
-  EXPECT_LT(with.character.hp, hp_before) << "the Burn dealt no damage";
+  EXPECT_EQ(with.character.hp, bare.character.hp - 2)
+      << "the Burn dealt no damage";
+  for (const Card& c : with.current_hand) {
+    EXPECT_NE(c.card_id, CardId::Burn) << "the Burn stayed in hand";
+  }
+  ASSERT_EQ(with.discard_pile.size(), 1u);
+  EXPECT_EQ(with.discard_pile[0].card_id, CardId::Burn);
+  // The relic still kept the Strike.
+  EXPECT_EQ(with.current_hand.size(), bare.current_hand.size());
 }
 
 // Ethereal cards exhaust rather than discard, and exhausting is a different

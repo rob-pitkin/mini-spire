@@ -150,15 +150,16 @@ void subtract_player_hp(CombatState& state, int amount) {
   revive_if_dying(state);
 }
 
-void lose_player_hp(CombatState& state, int amount) {
-  if (amount <= 0) return;
+bool lose_player_hp(CombatState& state, int amount) {
+  if (amount <= 0) return false;
   amount = intangible_capped(state, amount);
   // Tungsten Rod reduces ALL HP loss, including this path, which bypasses
   // block entirely. Torii cannot apply here: it takes attack damage only.
   amount = reduce_player_hp_loss(state, amount, /*from_attack=*/false);
-  if (amount <= 0) return;
-  if (buffer_absorbs_hp_loss(state)) return;
+  if (amount <= 0) return false;
+  if (buffer_absorbs_hp_loss(state)) return false;
   subtract_player_hp(state, amount);
+  return true;
 }
 
 // Damage TO the player: block absorbs first, then Buffer eats whatever would
@@ -183,19 +184,20 @@ bool damage_player(CombatState& state, int amount, bool from_attack) {
   // decrementBlock for the same reason.
   const int to_hp = reduce_player_hp_loss(state, amount - blocked, from_attack);
   if (to_hp <= 0) return false;  // fully blocked or reduced away
+  if (buffer_absorbs_hp_loss(state)) return false;
 
-  // Plated Armor loses a stack on receiving UNBLOCKED damage — which is what
-  // getting past block means, so it is decided here rather than at the HP
-  // write. Deliberately before Buffer: the damage was still unblocked, and
-  // Buffer preventing the HP loss does not un-receive it.
-  {
+  // Plated Armor loses a stack in its wasHPLost, which StS reaches only once HP
+  // is actually lost — after block, Buffer and Tungsten Rod — and only for
+  // damage from ANOTHER creature that is neither HP_LOSS nor THORNS. An enemy
+  // attack is the one such damage in the engine; Burn and Decay are THORNS
+  // from the player, so they never reduce it (curse-effects.md §1.4).
+  if (from_attack) {
     auto it = state.character.powers.find(Power::PlatedArmor);
     if (it != state.character.powers.end() && it->second > 0) {
       if (--it->second <= 0) state.character.powers.erase(it);
     }
   }
 
-  if (buffer_absorbs_hp_loss(state)) return false;
   subtract_player_hp(state, to_hp);
   return true;
 }
@@ -656,6 +658,7 @@ void fire_enemy_hooks(CombatState& state, int slot, Hook hook, ActionQueue& q) {
       break;
     case Hook::TurnStartPlayer:
     case Hook::TurnEndPlayer:
+    case Hook::TurnEndPlayerPreCards:
     case Hook::TurnStartEnemy:
     case Hook::TurnEndEnemy:
     case Hook::CardExhausted:
@@ -1780,11 +1783,6 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
         a.amount = combust;
         q.push_back(a);
       }
-      if (metallicize > 0) push_player_block(q, metallicize);
-      // Plated Armor's block is NOT card block: Dexterity and Frail do not
-      // modify it. push_player_block leaves card_block false, so that holds by
-      // construction rather than by remembering to exclude them.
-      if (plated_armor > 0) push_player_block(q, plated_armor);
       // Rage lasts only the player's own turn.
       if (rage > 0) push_remove_player_power(q, Power::Rage);
       // Double Tap's charges are "this turn" too — unused ones are lost.
@@ -1813,6 +1811,16 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
       // Regen Potion: heal by the current stacks. The stack is taken off by the
       // end-of-turn tick, after this drain (turn_loop.cc, handle_end_turn).
       if (regen > 0) push_player_heal(q, regen);
+      break;
+    case Hook::TurnEndPlayerPreCards:
+      // StS's atEndOfTurnPreEndTurnCards: this block lands before Burn and the
+      // end-of-turn curses play, so it can absorb Burn's damage
+      // (curse-effects.md §1.1).
+      if (metallicize > 0) push_player_block(q, metallicize);
+      // Plated Armor's block is NOT card block: Dexterity and Frail do not
+      // modify it. push_player_block leaves card_block false, so that holds by
+      // construction rather than by remembering to exclude them.
+      if (plated_armor > 0) push_player_block(q, plated_armor);
       break;
     case Hook::CardPlayed:
       // Rage: block whenever an Attack is played this turn.
@@ -2058,10 +2066,18 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
     }
     case ActionKind::DealFixedDamage:
       if (a.target == kPlayerSlot) {
-        // Fixed damage TO the player (Burn's end-of-turn tick). Blockable,
-        // and it is damage rather than HP loss, so Rupture does not fire.
+        // Fixed damage TO the player: Burn and Decay at the end of the turn.
+        // Blockable. Their DamageInfo has the PLAYER as its owner, so HP that
+        // gets through fires Rupture, whose wasHPLost keys on
+        // `info.owner == owner` (wiki Rupture: "Burn and Decay … will still
+        // trigger Rupture, as long as the damage is not fully negated by
+        // Block"). actor == kPlayerSlot marks that source; an enemy's
+        // thorns-type damage would carry its own slot and not fire it.
         if (damage_player(state, a.amount, /*from_attack=*/false)) {
           record_hp_loss_event(state);  // Blood for Blood counts it
+          if (a.actor == kPlayerSlot) {
+            fire_player_power_hooks(state, Hook::HpLostPlayer, q);
+          }
           fire_relic_hooks(state, Hook::PlayerHpLostAny, q);
         }
         break;
@@ -2091,8 +2107,11 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       break;
     }
     case ActionKind::LoseHp:
-      if (a.amount > 0) {
-        lose_player_hp(state, a.amount);
+      // Every reaction needs HP actually lost. Tungsten Rod taking Combust's 1
+      // to 0, or Buffer stopping Regret, fires none of them — StS's
+      // `if (damageAmount > 0)` in AbstractPlayer.damage, which the damage
+      // paths below already follow.
+      if (lose_player_hp(state, a.amount)) {
         // Blood for Blood counts HP-loss EVENTS from any source (Stage 4b).
         record_hp_loss_event(state);
         // Rupture: HP lost from a card or power (never from enemy damage).
@@ -2147,10 +2166,12 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       break;
     case ActionKind::ApplyDebuff:
       if (a.target == kPlayerSlot) {
-        // An enemy actor makes it StS's isSourceMonster (debuff-timing.md).
+        // An enemy actor makes it StS's isSourceMonster (debuff-timing.md), as
+        // does Doubt or Shame, which pass the flag themselves.
         apply_debuff(state,
                      DebuffApplication{a.debuff, a.amount, Target::Character,
-                                       /*from_enemy=*/a.actor >= 0},
+                                       /*from_enemy=*/a.actor >= 0 ||
+                                           a.as_source_monster},
                      kNoSlot);
       } else if (apply_debuff(state,
                               DebuffApplication{a.debuff, a.amount,
@@ -2858,34 +2879,26 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       reshuffle_discard_into_draw(state, q);
       break;
     case ActionKind::DiscardHand: {
-      // End of the player's turn: unplayed Ethereal cards exhaust (ROB-65
-      // Dazed), the rest discard. Routed through the executors so an ethereal
-      // exhaust is seen by Feel No Pain / Dark Embrace — StS handles the hand
-      // before end-of-turn powers, so those responses queue ahead of Combust.
+      // End of the player's turn, after the end-of-turn powers (StS's
+      // DiscardAtEndOfTurnAction, queued behind atEndOfTurn): unplayed Ethereal
+      // cards exhaust (ROB-65 Dazed), the rest discard. Routed through the
+      // executors so an ethereal exhaust is seen by Feel No Pain / Dark
+      // Embrace.
       //
-      // Runic Pyramid keeps the hand, but it is NOT a blanket "nothing leaves":
-      //   - Ethereal cards still exhaust. Exhausting is a different fate from
-      //     discarding, and the relic only stops the discard.
-      //   - Cards with an end-of-turn effect in hand still leave on their own
-      //     (Burn, and the Decay/Doubt/Regret/Shame family). The wiki lists
-      //     these as bypassing the relic.
-      // Treating it as "skip the whole loop" would strand a Burn in hand
-      // forever, dealing its damage every turn for the rest of the fight.
+      // Burn and the end-of-turn curses are already gone: they played from the
+      // card queue before this (curse-effects.md §3.1), which is how they leave
+      // even under Runic Pyramid. A Burn that arrived after they were queued —
+      // drawn by Runic Cube off another Burn's damage — is an ordinary card
+      // here, as it is in StS.
+      //
+      // Runic Pyramid keeps the hand, but ethereal cards still exhaust:
+      // exhausting is a different fate from discarding, and the relic only
+      // stops the discard.
       const bool discards = hand_discards_at_turn_end(state);
       std::vector<Card> kept;
       for (const Card& c : state.current_hand) {
         const CardData& cd = CARD_DATABASE.at(c.card_id);
-        // Burn: damage for sitting in hand at end of turn. Queued BEFORE the
-        // card leaves, and as DealFixedDamage so block absorbs it (StS calls
-        // it damage, not HP loss — "unblocked damage from Burn").
-        const bool self_discards = cd.end_of_turn_damage_in_hand > 0;
-        if (self_discards) {
-          Action burn = make_action(ActionKind::DealFixedDamage);
-          burn.target = kPlayerSlot;
-          burn.amount = cd.end_of_turn_damage_in_hand;
-          q.push_back(burn);
-        }
-        if (!discards && !cd.ethereal && !self_discards) {
+        if (!discards && !cd.ethereal) {
           kept.push_back(c);
           continue;
         }

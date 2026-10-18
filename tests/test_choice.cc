@@ -1389,16 +1389,32 @@ TEST(GeneratedCards, WoundAndBurnAreUnplayable) {
   EXPECT_FALSE(apply_action(s, card_action(CardId::Wound)));
 }
 
+// Ends the turn with no enemy phase, so the player's HP shows only the end of
+// the turn. Combust kills the one 1-HP enemy in the LAST end-of-turn phase,
+// after Burn has played; with no casts it costs no HP. An enemy already at 0
+// HP would not do: the fight would be over before Burn plays, and the test
+// would pass for that reason alone (curse-effects.md §3.1).
+namespace {
+void end_turn_then_win(CombatState& s) {
+  s.enemies[0].hp = 1;
+  s.enemies[0].current_block = 0;
+  s.character.powers[Power::Combust] = 1;
+  s.character.combust_casts = 0;
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  ASSERT_EQ(s.outcome, Outcome::Won) << "Combust should have ended the fight";
+}
+}  // namespace
+
 TEST(GeneratedCards, BurnDamagesThePlayerAtEndOfTurnAndThenDiscards) {
   CombatState s = make_minimal_state(0);
   s.current_hand.push_back(Card{CardId::Burn});
-  s.enemies[0].hp = 0;  // no enemy attack, so Burn is the only damage source
   const int hp = s.character.hp;
 
-  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  end_turn_then_win(s);
 
-  // 2 damage from Burn (the fight ends as a win, so no enemy phase damage).
   EXPECT_EQ(s.character.hp, hp - 2);
+  ASSERT_EQ(s.discard_pile.size(), 1u);
+  EXPECT_EQ(s.discard_pile[0].card_id, CardId::Burn);
 }
 
 TEST(GeneratedCards, BurnDamageIsAbsorbedByBlock) {
@@ -1407,22 +1423,21 @@ TEST(GeneratedCards, BurnDamageIsAbsorbedByBlock) {
   CombatState s = make_minimal_state(0);
   s.current_hand.push_back(Card{CardId::Burn});
   s.character.current_block = 10;
-  s.enemies[0].hp = 0;
   const int hp = s.character.hp;
 
-  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  end_turn_then_win(s);
 
   EXPECT_EQ(s.character.hp, hp) << "block should absorb Burn";
+  EXPECT_EQ(s.character.current_block, 8) << "Burn should have spent 2 block";
 }
 
 TEST(GeneratedCards, BurnOnlyTicksWhileItIsInHand) {
   // A Burn sitting in the discard pile does nothing.
   CombatState s = make_minimal_state(0);
   s.discard_pile.push_back(Card{CardId::Burn});
-  s.enemies[0].hp = 0;
   const int hp = s.character.hp;
 
-  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  end_turn_then_win(s);
 
   EXPECT_EQ(s.character.hp, hp);
 }

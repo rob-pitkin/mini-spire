@@ -896,19 +896,54 @@ void translate_enemy_move(CombatState& state, const Move& move, int actor_slot,
 }
 
 void handle_end_turn(CombatState& state) {
-  // 1. End of player turn — one translate + drain (Stage 4a). StS order:
-  // the hand is handled FIRST (ethereal exhausts, rest discards), so an
-  // ethereal exhaust's Feel No Pain block queues ahead of the end-of-turn
-  // powers; then Combust / player Metallicize / Rage expiry.
+  // 1. End of player turn, in StS's three phases (curse-effects.md §3.1).
+  //
+  // Phase A — callEndOfTurnActions: the end-of-turn relics (Orichalcum, Stone
+  // Calendar), then the pre-card powers (Metallicize, Plated Armor), then every
+  // hand card with an end-of-turn effect joins the card queue. Regret's count is
+  // the hand size now, before any of them leaves.
   {
     ActionQueue q;
     ResolutionContext ctx;
-    q.push_back(Action{ActionKind::DiscardHand});
+    fire_relic_hooks(state, Hook::TurnEndPlayer, q);
+    fire_player_power_hooks(state, Hook::TurnEndPlayerPreCards, q);
+    const int hand_count = static_cast<int>(state.current_hand.size());
+    for (const Card& c : state.current_hand) {
+      const CardData& cd = CARD_DATABASE.at(c.card_id);
+      const bool acts = cd.end_of_turn_damage_in_hand > 0 ||
+                        cd.end_of_turn_hp_loss_per_card_in_hand ||
+                        cd.end_of_turn_self_debuff != Debuff::None;
+      if (!acts) continue;
+      QueuedPlay p;
+      p.instance = c;
+      p.end_of_turn = true;
+      p.hand_count = hand_count;
+      state.card_queue.push_back(p);
+    }
+    drain(state, q, ctx);
+    process_deaths(state, ctx);  // Stone Calendar can kill
+    check_character_terminal(state);
+    if (state.outcome != Outcome::InProgress) return;
+    check_enemy_terminal(state);
+    // A fight over before they play leaves them unplayed, as for any card
+    // waiting in the queue (card-queue.md, "Fight end"): apply_action's
+    // play_queued_cards, which runs after this returns, clears the queue of a
+    // finished fight.
+    if (state.outcome != Outcome::InProgress) return;
+  }
+  // Phase B — the queued end-of-turn cards play, each its own drain.
+  play_queued_cards(state);
+  if (state.outcome != Outcome::InProgress) return;
+  // Phase C — AbstractRoom.endTurn: the atEndOfTurn powers (Combust, Regen,
+  // Rage, Ritual), The Bomb, then the hand: ethereal exhausts, the rest discard.
+  {
+    ActionQueue q;
+    ResolutionContext ctx;
     fire_player_power_hooks(state, Hook::TurnEndPlayer, q);
     // The Bomb ticks with the other end-of-turn powers, which is what it is in
     // StS — a power whose fuse counts down at the end of each of your turns.
     q.push_back(Action{ActionKind::TickBombs});
-    fire_relic_hooks(state, Hook::TurnEndPlayer, q);
+    q.push_back(Action{ActionKind::DiscardHand});
     drain(state, q, ctx);
     // Combust's damage lands inside that drain, so its kills need their
     // on-death hooks fired before we decide the fight is over (ROB-90).
@@ -1600,12 +1635,66 @@ void spread_replay_growth(CombatState& state, const QueuedPlay& p,
   }
 }
 
+// An end-of-turn autoplay (curse-effects.md §3.1): StS plays it with
+// dontTriggerOnUseCard, so only its own effect runs, then UseCardAction moves
+// it to the discard pile. One drain per card, so what its effect triggers —
+// Runic Cube's draw, Rupture's Strength — resolves before the next card and
+// before the hand is discarded.
+void resolve_end_of_turn_card(CombatState& state, const QueuedPlay& p) {
+  // It is still in hand: queued from there, and nothing between can move it.
+  auto it = std::find_if(
+      state.current_hand.begin(), state.current_hand.end(),
+      [&](const Card& c) { return c.same_as(p.instance); });
+  if (it == state.current_hand.end()) return;
+  state.current_hand.erase(it);
+  const CardData& data = CARD_DATABASE.at(p.instance.card_id);
+  ActionQueue q;
+  ResolutionContext ctx;
+  if (data.end_of_turn_damage_in_hand > 0) {
+    // Burn, Decay: damage, so block absorbs it, with the player as its source.
+    Action a{ActionKind::DealFixedDamage};
+    a.actor = kPlayerSlot;
+    a.target = kPlayerSlot;
+    a.amount = data.end_of_turn_damage_in_hand;
+    q.push_back(a);
+  }
+  if (data.end_of_turn_hp_loss_per_card_in_hand) {
+    // Regret: the hand size when it was queued.
+    Action a{ActionKind::LoseHp};
+    a.amount = p.hand_count;
+    q.push_back(a);
+  }
+  if (data.end_of_turn_self_debuff != Debuff::None) {
+    // Doubt, Shame: WeakPower / FrailPower(player, 1, isSourceMonster = true).
+    Action a{ActionKind::ApplyDebuff};
+    a.target = kPlayerSlot;
+    a.debuff = data.end_of_turn_self_debuff;
+    a.amount = data.end_of_turn_self_debuff_amount;
+    a.as_source_monster = true;
+    q.push_back(a);
+  }
+  Action move{ActionKind::DiscardCard};
+  move.carry(p.instance);
+  q.push_back(move);
+  drain(state, q, ctx);
+  process_deaths(state, ctx);
+  check_character_terminal(state);
+  if (state.outcome != Outcome::InProgress) return;
+  check_enemy_terminal(state);
+}
+
 // One card from the card queue — GameActionManager's card branch for a card
 // the player did not pick (card-queue.md §3). It is played only if
 // canUse(player, its target) holds: is_playable, and for a single-target card a
 // target that is not dying (AbstractCard.cardPlayable). The target was rolled,
-// or inherited, when the card was queued, and may have died since.
+// or inherited, when the card was queued, and may have died since. An
+// end-of-turn autoplay skips that check: StS lets it through on
+// dontTriggerOnUseCard alone.
 void resolve_queued_play(CombatState& state, const QueuedPlay& p) {
+  if (p.end_of_turn) {
+    resolve_end_of_turn_card(state, p);
+    return;
+  }
   const CardId id = p.instance.card_id;
   const CardData& data = CARD_DATABASE.at(id);
   const bool usable =

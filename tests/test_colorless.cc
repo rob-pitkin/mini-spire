@@ -2033,19 +2033,22 @@ TEST(Curses, ACurseInHandIsMaskedOut) {
 }
 
 // Decay shares Burn's field and therefore Burn's behaviour: damage at end of
-// turn, and it leaves the hand as it fires.
+// turn, and it leaves the hand as it fires. Measured against the same fight
+// without it, so the enemy's attack cancels out; the draw pile holds the
+// starter deck, so the next turn's draw does not pull the Decay back.
 TEST(Curses, DecayDealsTwoAtEndOfTurnAndLeavesTheHand) {
   CombatState s = fight_holding(CardId::Decay);
   s.character.current_block = 0;
-  const int hp = s.character.hp;
+  CombatState bare = s;
+  bare.current_hand.clear();
 
-  ActionQueue q;
-  ResolutionContext ctx;
-  q.push_back(Action{ActionKind::DiscardHand});
-  drain(s, q, ctx);
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  ASSERT_TRUE(apply_action(bare, kEndTurnAction));
 
-  EXPECT_EQ(s.character.hp, hp - 2) << "Decay dealt no end-of-turn damage";
-  EXPECT_TRUE(s.current_hand.empty());
+  EXPECT_EQ(s.character.hp, bare.character.hp - 2)
+      << "Decay dealt no end-of-turn damage";
+  ASSERT_EQ(s.discard_pile.size(), 1u);
+  EXPECT_EQ(s.discard_pile[0].card_id, CardId::Decay);
 }
 
 // Clumsy exhausts rather than discarding — Ethereal, so it is gone for the
