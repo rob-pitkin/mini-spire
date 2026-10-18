@@ -127,9 +127,11 @@ bool potion_effect_implemented(PotionId id) {
     case PotionId::DistilledChaos:
     case PotionId::SneckoOil:
       return true;
-    // Later steps. Fairy in a Bottle is never drinkable at all (§5.4), so it
-    // stays false even once its death intercept lands.
+    // Fairy in a Bottle is built (step 4) but never drinkable: its effect is
+    // the death intercept in action.cc (§5.4), and StS's canUse is false.
     case PotionId::FairyPotion:
+      return false;
+    // Later steps.
     case PotionId::SmokeBomb:
     case PotionId::EntropicBrew:
       return false;

@@ -9,6 +9,8 @@ Discovery potions, Elixir, Gambler's Brew, Liquid Memories — plus Gambling Chi
 minimum picks, and the choice header and staged plane (#33). **Step 3 done**
 (2026-10-10): 30 of 33 — Duplication, Distilled Chaos, Snecko Oil — plus
 Double Tap's charge timing and Havoc's and Mayhem's targets (§1.2, §5.8).
+**Step 4 done** (2026-10-17): 31 of 33 — Fairy in a Bottle, never drinkable,
+and Lizard Tail with it, through one death intercept (§1.3, §5.4).
 
 Potions are first-class combat state (`v2-spec.md` §3.0.1): held in
 `CombatState::potions`, observable, and usable through the combat action space.
@@ -70,6 +72,14 @@ name and targeting already in `src/potion.cc`.
 | T3 | Distilled Chaos targets | Rolled at use from `card_rng`, one per card (§5.8). A card whose target has died by the time it plays is not played: it goes to its pile with no effect. A card whose target escaped is lost. |
 | T4 | Havoc and Mayhem | Moved onto the same pre-rolled target. StS plays all three through `PlayTopCardAction`; the engine rolled Havoc's and Mayhem's targets from the combat stream at play time. |
 | T5 | A top-of-draw card that cannot be used | The whole `canUse` rule, not only T3's dead target (§5.8). A card that fails `is_playable` (unplayable without Medical Kit, an Attack while Entangled, Clash, Secret Technique/Weapon) goes to its pile with no effect and no on-play triggers. It is exhausted only for Havoc or a card with its own Exhaust, else discarded. This fixes Mayhem exhausting an unplayable card, and autoplayed Attacks ignoring Entangle. |
+
+### 1.3 Step 4 rulings (Rob, 2026-10-17)
+
+| # | question | ruling |
+|---|---|---|
+| U1 | A `Hook::PlayerDeath` or a fixed intercept | A fixed function with StS's two checks in StS's order: Fairy in a Bottle, then Lizard Tail (§5.4). No hook. |
+| U2 | Lizard Tail's used state is not observed | Left with #9, as part of relics not being in the combat observation at all. The aim is to make relics observable, as they are to a human. |
+| U3 | Out-of-combat death, and Red Skull | Requirements on other work, not built now: events (#7) route their HP loss through the same intercept, without Magic Flower; Red Skull (#3) must see the revive heal lift HP above half. |
 
 ## 2. Using and discarding a potion
 
@@ -249,10 +259,120 @@ wiki's Artifact and Flex pages before building.
 
 ### 5.4 Death intercept (with Lizard Tail, task #5)
 
-When the player's HP would drop below 1 (`AbstractPlayer.damage`), unless Mark of
-the Bloom (a boss relic, absent): Fairy in a Bottle first — HP to 0, heal
-`max(1, (int)(maxHP × p%))` through the normal heal path (Magic Flower applies),
-remove the potion; otherwise Lizard Tail, once per run. Built once, for both.
+**Status: agreed with Rob 2026-10-17 (§1.3).**
+
+**Sources.** Decompiled `AbstractPlayer.damage` (the intercept),
+`potions/FairyPotion`, `relics/LizardTail`, `relics/MagicFlower`,
+`relics/SacredBark`, `AbstractCreature.heal`, `actions/common/LoseHPAction`,
+`ui/panels/PotionPopUp` and `TopPanel.destroyPotion`. wiki.gg Fairy in a
+Bottle, Lizard Tail and Toy Ornithopter, checked 2026-10-17. A code search of
+the decompiled repo finds "Lizard Tail" only in `LizardTail` and
+`AbstractPlayer`, and "FairyPotion" only in `FairyPotion`, `PotionHelper` and
+`AbstractPlayer` (a search shows where a name appears, not every effect).
+
+**What StS does.** Every HP loss reaches `AbstractPlayer.damage`, including
+`LoseHPAction`, which calls it with `HP_LOSS`. At the end of `damage`, after
+the HP is subtracted and every HP-loss hook has been called, if HP is below 1
+and the player lacks Mark of the Bloom:
+1. **Fairy in a Bottle**, if held: HP is set to 0, the potion's `use` heals
+   `max(1, (int)(maxHP × potency / 100))` through `heal`, and the potion is
+   destroyed. Potency is 30, or 60 with Sacred Bark. One copy, the first in the
+   belt. `damage` returns.
+2. **Otherwise Lizard Tail**, if its counter is -1 (unused): HP is set to 0,
+   it heals `max(1, maxHP / 2)` through `heal`, and the counter becomes -2
+   (used up). `damage` returns.
+3. Otherwise the player is dead.
+
+Consequences:
+- **The revive happens inside the hit**, synchronously. The rest of a
+  multi-hit attack, and every action after it, lands on the revived HP. The
+  wiki says the same for Lizard Tail: "Powerful enemy attacks can still kill you
+  through Lizard Tail by continuing damage after the revival triggers."
+- **Fairy before Lizard Tail.** The wiki: revival effects trigger "top to
+  bottom, so the potion activates before Lizard Tail." Holding both, a second
+  death in the same fight uses Lizard Tail.
+- **The heal is a normal heal.** Magic Flower's ×1.5 (combat only) applies: 24
+  becomes 36 at 80 max HP. Mark of the Bloom would make it 0 and block both
+  revives. Mark of the Bloom comes from Mind Bloom, an Act 3 event, and is not
+  in the engine, so nothing is built for it.
+- **The revive is not drinking a potion.** Toy Ornithopter's `onUsePotion` is
+  called only from `PotionPopUp`. The Fairy branch calls `use` and
+  `destroyPotion` directly and never goes through it, so a Fairy revive does
+  not heal 5. The wiki's Toy Ornithopter page does not mention Fairy.
+- **Integer arithmetic is exact here.** `(int)(maxHP × 0.3f)` equals
+  `maxHP × 30 / 100` for every reachable max HP: `0.3f` and `0.6f` sit slightly
+  above 0.3 and 0.6, so a product that should be an integer is never rounded
+  below it, and when it is not an integer its fractional part is a multiple of
+  0.1, far larger than the float error.
+- **Lizard Tail has no combat-start or combat-end behaviour.** The decompiled
+  class has only `onTrigger` and `setCounter`. `relic-effects.md` §3.1 lists it
+  under CombatStart and CombatEnd, rows taken from the reference; neither is a
+  behaviour of the relic.
+
+**Engine design.**
+- The engine has two functions that lower the player's HP: `lose_player_hp`
+  (HP loss) and `damage_player` (attack and fixed damage). Both call one new
+  helper that subtracts the HP, clamps at 0 and, if HP is below 1, runs the
+  intercept. A search for assignments to the player's HP finds only these two
+  functions, `heal_player` and fight setup; every hit was read.
+  The file's own convention (`action.cc`'s header) is that no other code
+  assigns to HP.
+- The intercept is a plain function with the two checks in StS's order (U1).
+- The revive heal cannot go through `heal_player`, which refuses a player at 0
+  HP (StS's `isDying` guard, which the player never sets). A sibling,
+  `revive_player`, sets HP to 0, adds `boost_player_heal(amount)` (Magic
+  Flower) and clamps to max HP.
+- Fairy: one copy is removed from `CombatState::potions`, and the amount uses
+  `potion_potency` (Sacred Bark). It stays out of the potion mask: it is never
+  drinkable.
+- Lizard Tail: `HeldRelic::counter` 0 (the engine default) means unused, and
+  `kLizardTailUsedUp = -2` means used, the convention Maw Bank, Matryoshka and
+  Wing Boots already use. `RunState::end_combat` already writes every relic
+  counter back, so a used Lizard Tail stays used for the rest of the run.
+
+**The questions as they were put** (rulings in §1.3):
+- **U1. A hook or a fixed intercept.** Task #5 assumed a new
+  `Hook::PlayerDeath`. StS has no hook: `damage` checks the potion and the
+  relic by name, in a fixed order. Recommended the fixed function. A hook would
+  dispatch over relics in bar order, which is the wrong order (the potion goes
+  first and is not a relic), and only these two things can cancel a death.
+- **U2. Lizard Tail's used state is not observed.** A human sees the relic
+  greyed out once it is used. No relic is in the combat observation today, so
+  this is part of that gap, not a new one. Recommended leaving it with #9. The
+  Fairy count is already in the potion block.
+- **U3. Out-of-combat death.** Events call `AbstractPlayer.damage` too, so both
+  revives also save the player from event damage, without Magic Flower's bonus.
+  The run layer has no HP-loss path yet. Recommended recording it as a
+  requirement on the events work (#7) rather than building it now. Likewise,
+  Red Skull (#3) must see the revive heal: StS's `heal` fires `onNotBloodied`
+  when HP rises above half, which removes Red Skull's Strength.
+
+**Tests** (`tests/test_potions.cc`, `DeathIntercept.*`, every fight built, no
+randomness). Enemy hits go through the real `DealDamage` path, all in one
+queue:
+1. Fairy revives at 30%: 80 max HP, an enemy hit to 0 leaves 24, and the
+   potion is gone.
+2. Sacred Bark: 48.
+3. Magic Flower raises either revive: Fairy 36, Lizard Tail 60.
+4. A tiny max HP still revives to 1: the Fairy at max HP 3 (`3 × 30 / 100` is
+   0) and Lizard Tail at max HP 1.
+5. HP loss from a card is intercepted: Bloodletting at 3 HP leaves 24, and the
+   terminal check after the card sees the fight still in progress.
+6. The rest of a multi-hit lands on the revived HP: 5 HP, three hits of 10:
+   24 → 14 → 4. A revive at the end of the drain would leave 24.
+7. Fairy before Lizard Tail: holding both, the first death uses the Fairy and
+   leaves the counter at 0; the second uses Lizard Tail (40, counter -2); the
+   third leaves HP at 0.
+8. Lizard Tail at odd max HP: 81 → 40.
+9. A used Lizard Tail (counter -2) does not revive.
+10. Two Fairies: one death uses one.
+11. Toy Ornithopter does not heal on a Fairy revive: 24, not 29.
+
+Mutation checks, all caught: the revive moved to the end of `drain` (test 6
+alone), Lizard Tail checked first (7), Magic Flower skipped (3), Sacred Bark
+skipped (2), the minimum of 1 dropped (4, both halves), the used-up check
+dropped (7 and 9), every Fairy consumed (10), Toy Ornithopter fired (11), and
+`lose_player_hp` bypassing the intercept (5).
 
 ### 5.5 Smoke Bomb (Q1)
 
@@ -416,7 +536,7 @@ plays has X = the player's energy when the card is taken, and spends no energy
    (S1), minimum picks (S3), Gambling Chip as a real choice (S5), and the
    staged-picks plane (S6, §3.3).
 3. **Card-play potions:** Duplication, Distilled Chaos, Snecko Oil.
-4. **Fairy in a Bottle and Lizard Tail** (§5.4, task #5).
+4. **Fairy in a Bottle and Lizard Tail** (§5.4, task #5). ✅ 2026-10-17.
 5. **Smoke Bomb** (§5.5).
 6. **Entropic Brew, Cauldron, out-of-combat use** (§5.6, §6).
 7. **TUI potion belt** (Q10).

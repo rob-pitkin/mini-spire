@@ -135,6 +135,13 @@ mutates state directly (`effects-architecture.md`).
 | 20 | **EnemyDeath** ⚠️ | 1 | **GremlinHorn** — no site in the reference |
 | 21 | **BlockBroken** ⚠️ | 1 | **HandDrill** — no site in the reference |
 
+**Lizard Tail's three rows are not its behaviour** (corrected 2026-10-17). The
+decompiled class has only `onTrigger` and `setCounter`: nothing at combat start
+or end. Row 15 is not a hook either. StS's `AbstractPlayer.damage` checks Fairy
+in a Bottle and then Lizard Tail by name, and the engine does the same
+(`potion-effects.md` §5.4). Sacred Bark is in row 15 only because it doubles
+the Fairy's heal.
+
 Note **CombatStart is 46 of 140** — a third of the vocabulary on one trigger.
 That is the single largest implementation batch and also the one whose internal
 ordering is most likely to matter (§4.2).
@@ -245,7 +252,7 @@ per §1.
 
 ---
 
-## 7. Status: 119 of 140 wired
+## 7. Status: 120 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -264,7 +271,7 @@ tree appears only on a comment line, so the discrepancy is not comment noise.
 One of the two counts used a different rule and neither recorded which, which is
 the whole argument for pinning the command here.
 
-The 21 remaining are not one backlog. **Most are blocked on engine pieces that
+The 20 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
@@ -279,7 +286,8 @@ have nothing to do with relics**, and those blockers are shared:
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | ~~Gambling Chip~~, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. ✅ **Gambling Chip wired** with potion step 2 (2026-10-10): it is Gambler's Brew's discard-any-then-draw choice on turn 1's post-draw hook (`potion-effects.md` §5.7), and it left `v2-spec.md` §9's divergence table. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed). **A run-layer deck choice now exists** (§6.23, `pending_deck_choices`) — Empty Cage (remove 2) and Astrolabe (transform 3) need a new purpose on it, not a new mechanism |
 | ~~**Nothing blocking**~~ | **0** — ✅ **cleared.** The `~` this row once carried was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. All 17 shipped: Juzu Bracelet and Tiny Chest in §6.18, the three Eggs in §6.19, Matryoshka and Ancient Tea Set in §6.20, Chemical X and Pocketwatch in §6.21, Dead Branch in §6.22, the three Bottled relics in §6.23, Singing Bowl and Wing Boots in §6.25, Unceasing Top in §6.26, Snecko Eye in §6.28 (on the cost layers of §6.27). Every remaining relic waits on another row | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics did need a card-selection screen at pickup, which §6.23 built; the Eggs did not (§6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
-| **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook |
+| **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook. It must also see the revive heal (`potion-effects.md` §1.3 U3) |
+| ~~**Needs a death intercept**~~ | ~~Lizard Tail~~ | ✅ **done** with potion step 4 (2026-10-17, `potion-effects.md` §5.4): a fixed intercept beside Fairy in a Bottle, not a hook (Rob, U1) |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
 was to build the missing Powers and the curse and colorless card gaps before
@@ -660,6 +668,11 @@ guard: there is no previous turn to have played an Attack in.
 PlayerDeath). `Hook::PlayerDeath` does not exist in the enum at all, and adding
 it means intercepting `check_character_terminal` so a listener can cancel the
 death — a change to how a fight ends, not a turn-boundary addition.
+
+**Built 2026-10-17** with potion step 4 (`potion-effects.md` §5.4), and not as
+described above. StS revives the player inside the hit that kills, not at the
+terminal check, and has no hook: the intercept is a fixed function at the end
+of the player's HP loss, Fairy in a Bottle first (Rob, U1).
 
 ### 6.12 The incoming-damage batch, and why there are now two HP-loss hooks
 

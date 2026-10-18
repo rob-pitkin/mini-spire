@@ -56,6 +56,50 @@ int intangible_capped(const CombatState& state, int amount) {
   return 1;
 }
 
+// The revive's heal (potion-effects.md §5.4). StS sets HP to 0 and calls
+// heal(), so Magic Flower applies. heal_player cannot do it: it refuses a
+// player at 0 HP, which is the point of a revive.
+void revive_player(CombatState& state, int amount) {
+  state.character.hp = boost_player_heal(state, amount);
+  if (state.character.hp > state.character.max_hp) {
+    state.character.hp = state.character.max_hp;
+  }
+}
+
+// The death intercept at the end of StS's AbstractPlayer.damage (§5.4, Rob
+// 2026-10-17 U1): once HP is below 1, Fairy in a Bottle revives the player,
+// or else an unused Lizard Tail does. Not a hook — StS checks the potion and
+// the relic by name, potion first. It runs inside the hit, so the rest of a
+// multi-hit attack lands on the revived HP.
+//
+// The Fairy is not drunk: Toy Ornithopter's onUsePotion fires only from
+// PotionPopUp, which this path never reaches.
+void revive_if_dying(CombatState& state) {
+  if (state.character.hp >= 1) return;
+  const auto fairy = std::find(state.potions.begin(), state.potions.end(),
+                               PotionId::FairyPotion);
+  if (fairy != state.potions.end()) {
+    state.potions.erase(fairy);
+    const int percent = potion_potency(state, PotionId::FairyPotion);
+    revive_player(state, std::max(1, state.character.max_hp * percent / 100));
+    return;
+  }
+  for (HeldRelic& r : state.relics) {
+    if (r.id != RelicId::LizardTail || r.counter == kLizardTailUsedUp) continue;
+    r.counter = kLizardTailUsedUp;
+    revive_player(state, std::max(1, state.character.max_hp / 2));
+    return;
+  }
+}
+
+// The one place the player's HP goes down: lose_player_hp and damage_player
+// both end here, so neither can skip the intercept.
+void subtract_player_hp(CombatState& state, int amount) {
+  state.character.hp -= amount;
+  if (state.character.hp < 0) state.character.hp = 0;
+  revive_if_dying(state);
+}
+
 void lose_player_hp(CombatState& state, int amount) {
   if (amount <= 0) return;
   amount = intangible_capped(state, amount);
@@ -64,8 +108,7 @@ void lose_player_hp(CombatState& state, int amount) {
   amount = reduce_player_hp_loss(state, amount, /*from_attack=*/false);
   if (amount <= 0) return;
   if (buffer_absorbs_hp_loss(state)) return;
-  state.character.hp -= amount;
-  if (state.character.hp < 0) state.character.hp = 0;
+  subtract_player_hp(state, amount);
 }
 
 // Damage TO the player: block absorbs first, then Buffer eats whatever would
@@ -103,8 +146,7 @@ bool damage_player(CombatState& state, int amount, bool from_attack) {
   }
 
   if (buffer_absorbs_hp_loss(state)) return false;
-  state.character.hp -= to_hp;
-  if (state.character.hp < 0) state.character.hp = 0;
+  subtract_player_hp(state, to_hp);
   return true;
 }
 
@@ -1565,9 +1607,13 @@ void push_potion_effects(CombatState& state, PotionId id, int target,
       push_draw(q, p);
       q.push_back(make_action(ActionKind::RandomizeHandCosts));
       break;
+    // Fairy in a Bottle is never drunk (FairyPotion.canUse is false); it
+    // revives the player from revive_if_dying instead (§5.4).
+    case PotionId::FairyPotion:
+      assert(false && "Fairy in a Bottle is never drinkable");
+      break;
     // Later steps of potion-effects.md §8; potion_effect_implemented() keeps
     // them out of the mask until then.
-    case PotionId::FairyPotion:
     case PotionId::SmokeBomb:
     case PotionId::EntropicBrew:
       assert(false && "potion not implemented yet; the mask should refuse it");

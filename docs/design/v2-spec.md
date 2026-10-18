@@ -67,7 +67,7 @@ it exists. Sections not listed here have no code behind them yet.
 | 4.2 | potion drops, elite relics, treasure chests | ✅ `run_state.cc` |
 | 4.3 | shops: 5 class cards + 2 colorless + 3 relics + 3 potions, pricing, sale slot, removal | ✅ **complete** — the colorless slots landed with the colorless card effects |
 | 5.1 | `RelicId` (140) and `PotionId` (33) vocabularies | ✅ `relic.{h,cc}`, `potion.{h,cc}` |
-| 3.0.1 | relics/potions as first-class `CombatState` | ✅ held, observed and usable; relic effects 119/140 (`relic-effects.md` §7), potion effects 30/33 (`potion-effects.md` §8 steps 1–3) |
+| 3.0.1 | relics/potions as first-class `CombatState` | ✅ held, observed and usable; relic effects 120/140 (`relic-effects.md` §7), potion effects 31/33 (`potion-effects.md` §8 steps 1–4) |
 | 4.4 | Neow | ❌ |
 | 8 | rest sites (rest / smith) | ✅ `run_state.cc` |
 | 5 | the v2 observation | ❌ — the env still emits v1.0.0's 1,772 floats |
@@ -2033,8 +2033,8 @@ a Linear board disagrees with it, the spec wins.
    design was built around). ⚠️ Lift/Toke/Dig need relics.
 7. Shops ✅ — all 14 slots stock, including the 2 colorless ones, which waited
    on the colorless card effects (`colorless-effects.md`). Relic and potion
-   effects are the remainder of this step: relics 119/140
-   (`relic-effects.md` §7), potions 30/33 (`potion-effects.md` §8).
+   effects are the remainder of this step: relics 120/140
+   (`relic-effects.md` §7), potions 31/33 (`potion-effects.md` §8).
    Events ❌.
 8. Bosses → **M5: an agent that completes a run**.
 

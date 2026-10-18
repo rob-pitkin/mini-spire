@@ -1057,6 +1057,141 @@ TEST(SneckoOil, SacredBarkDrawsTen) {
 }
 
 // ============================================================================
+// Death intercept: Fairy in a Bottle and Lizard Tail (§5.4, step 4)
+// ============================================================================
+
+// Enemy hits on the player through the real DealDamage path, all in ONE queue,
+// so a later hit sees the HP an earlier one left — revived or not.
+void enemy_hits(CombatState& s, std::initializer_list<int> hits) {
+  ActionQueue q;
+  ResolutionContext ctx;
+  for (int amount : hits) {
+    Action a{ActionKind::DealDamage};
+    a.actor = 0;
+    a.target = kPlayerSlot;
+    a.amount = amount;
+    q.push_back(a);
+  }
+  drain(s, q, ctx);
+}
+
+TEST(DeathIntercept, FairyRevivesAtThirtyPercentOfMaxHp) {
+  CombatState s = fight_holding({PotionId::FairyPotion});
+  s.character.hp = 5;
+  enemy_hits(s, {10});
+  EXPECT_EQ(s.character.hp, 80 * 30 / 100);
+  EXPECT_EQ(held(s, PotionId::FairyPotion), 0);
+}
+
+TEST(DeathIntercept, SacredBarkDoublesTheFairysHeal) {
+  CombatState s = fight_holding({PotionId::FairyPotion}, {RelicId::SacredBark});
+  s.character.hp = 5;
+  enemy_hits(s, {10});
+  EXPECT_EQ(s.character.hp, 80 * 60 / 100);
+}
+
+TEST(DeathIntercept, MagicFlowerRaisesEitherRevive) {
+  // The revive is a normal heal: x1.5 in combat, rounded half up.
+  CombatState fairy =
+      fight_holding({PotionId::FairyPotion}, {RelicId::MagicFlower});
+  fairy.character.hp = 5;
+  enemy_hits(fairy, {10});
+  EXPECT_EQ(fairy.character.hp, 36) << "24 x 1.5";
+
+  CombatState tail = fight_holding({}, {RelicId::LizardTail, RelicId::MagicFlower});
+  tail.character.hp = 5;
+  enemy_hits(tail, {10});
+  EXPECT_EQ(tail.character.hp, 60) << "40 x 1.5";
+}
+
+TEST(DeathIntercept, ATinyMaxHpStillRevivesToOne) {
+  // max(1, ...): 3 x 30% truncates to 0, and 1 / 2 to 0.
+  CombatState fairy = fight_holding({PotionId::FairyPotion});
+  fairy.character.max_hp = 3;
+  fairy.character.hp = 1;
+  enemy_hits(fairy, {10});
+  EXPECT_EQ(fairy.character.hp, 1);
+
+  CombatState tail = fight_holding({}, {RelicId::LizardTail});
+  tail.character.max_hp = 1;
+  tail.character.hp = 1;
+  enemy_hits(tail, {10});
+  EXPECT_EQ(tail.character.hp, 1);
+}
+
+TEST(DeathIntercept, HpLossFromACardIsInterceptedAndTheFightGoesOn) {
+  // LoseHp, not damage: Bloodletting's 3 at 3 HP. The terminal check after
+  // the card sees a living player.
+  CombatState s = fight_holding({PotionId::FairyPotion});
+  s.character.hp = 3;
+  s.current_hand = cards({CardId::Bloodletting});
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Bloodletting)));
+  EXPECT_EQ(s.character.hp, 24);
+  EXPECT_EQ(s.outcome, Outcome::InProgress);
+}
+
+TEST(DeathIntercept, TheRestOfAMultiHitLandsOnTheRevivedHp) {
+  // 5 -> 0, revived to 24, then 14, then 4. A revive after the queue had
+  // drained would leave 24.
+  CombatState s = fight_holding({PotionId::FairyPotion});
+  s.character.hp = 5;
+  enemy_hits(s, {10, 10, 10});
+  EXPECT_EQ(s.character.hp, 4);
+}
+
+TEST(DeathIntercept, FairyGoesBeforeLizardTailAndEachSavesOnce) {
+  CombatState s = fight_holding({PotionId::FairyPotion}, {RelicId::LizardTail});
+  s.character.hp = 5;
+
+  enemy_hits(s, {10});
+  EXPECT_EQ(s.character.hp, 24) << "the Fairy, first";
+  EXPECT_EQ(held(s, PotionId::FairyPotion), 0);
+  EXPECT_EQ(counter_of(s, RelicId::LizardTail), 0) << "Lizard Tail unused";
+
+  enemy_hits(s, {100});
+  EXPECT_EQ(s.character.hp, 40) << "then Lizard Tail";
+  EXPECT_EQ(counter_of(s, RelicId::LizardTail), kLizardTailUsedUp);
+
+  enemy_hits(s, {100});
+  EXPECT_EQ(s.character.hp, 0) << "nothing left";
+}
+
+TEST(DeathIntercept, LizardTailHealsHalfOfMaxHpRoundedDown) {
+  CombatState s = fight_holding({}, {RelicId::LizardTail});
+  s.character.max_hp = 81;
+  s.character.hp = 5;
+  enemy_hits(s, {10});
+  EXPECT_EQ(s.character.hp, 40);
+}
+
+TEST(DeathIntercept, AUsedLizardTailDoesNotRevive) {
+  // Used in an earlier fight: RunState carried the counter in.
+  CombatState s = fight_holding({});
+  s.relics.push_back(HeldRelic{RelicId::LizardTail, kLizardTailUsedUp});
+  s.character.hp = 5;
+  enemy_hits(s, {10});
+  EXPECT_EQ(s.character.hp, 0);
+}
+
+TEST(DeathIntercept, OneDeathUsesOneFairy) {
+  CombatState s =
+      fight_holding({PotionId::FairyPotion, PotionId::FairyPotion});
+  s.character.hp = 5;
+  enemy_hits(s, {10});
+  EXPECT_EQ(s.character.hp, 24);
+  EXPECT_EQ(held(s, PotionId::FairyPotion), 1);
+}
+
+TEST(DeathIntercept, AFairyReviveIsNotDrinkingAPotion) {
+  // Toy Ornithopter's onUsePotion fires only from PotionPopUp.
+  CombatState s =
+      fight_holding({PotionId::FairyPotion}, {RelicId::ToyOrnithopter});
+  s.character.hp = 5;
+  enemy_hits(s, {10});
+  EXPECT_EQ(s.character.hp, 24) << "not 29";
+}
+
+// ============================================================================
 // Observation (§3.2)
 // ============================================================================
 

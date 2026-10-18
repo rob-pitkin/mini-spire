@@ -238,6 +238,12 @@ inline constexpr int kPocketwatchDraw = 3;
 inline constexpr int kMagicFlowerHealNumerator = 3;
 inline constexpr int kMagicFlowerHealDenominator = 2;
 
+// Lizard Tail revives the player once per run (potion-effects.md §5.4). The
+// counter's default 0 is unused; -2 is used, the value LizardTail.setCounter
+// treats as used up. RunState carries the counter between fights like any
+// other.
+inline constexpr int kLizardTailUsedUp = -2;
+
 // Charon's Ashes: 3 damage to ALL enemies whenever a card is exhausted.
 // THORNS-type in StS — `createDamageMatrix(3, true)`, the same call Bird-Faced
 // Urn's neighbour uses — so it is unscaled by Strength, Weak and Vulnerable and
