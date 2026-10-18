@@ -3153,5 +3153,167 @@ TEST(RelicTriggers, ChampionBeltDoesNotFireWhenTheENEMYDebuffsYou) {
       << "the player weakened themselves by being made Vulnerable";
 }
 
+// ------------------------------------------------- Red Skull (§6.29)
+//
+// "While your HP is at or below 50%, you have 3 additional Strength." Every
+// fight starts at 80/80 unless built otherwise, so half is 40.
+
+int strength(const CombatState& s) {
+  return get_status(s.character.powers, Power::Strength);
+}
+
+// A fight that starts at `hp` of `max_hp`, with `relics` in that order.
+CombatState fight_at(int hp, int max_hp, std::vector<RelicId> relics) {
+  CombatSetup setup;
+  setup.seed = 1;
+  setup.deck = starter_deck();
+  setup.hp = hp;
+  setup.max_hp = max_hp;
+  for (RelicId id : relics) setup.relics.push_back(HeldRelic{id, 0});
+  return start_combat(setup);
+}
+
+TEST(RedSkull, DroppingToHalfGivesThreeStrengthOnce) {
+  CombatState s = fight_with({RelicId::RedSkull});
+  hit_player(s, 39);  // 41: above half
+  EXPECT_EQ(strength(s), 0);
+  hit_player(s, 1);  // 40: at half
+  EXPECT_EQ(strength(s), 3);
+  hit_player(s, 10);  // still bloodied: no second +3
+  EXPECT_EQ(strength(s), 3);
+}
+
+TEST(RedSkull, HealingAboveHalfTakesItBack) {
+  CombatState s = fight_with({RelicId::RedSkull});
+  hit_player(s, 40);
+  ASSERT_EQ(strength(s), 3);
+  heal_player_by(s, 1);  // 41
+  EXPECT_EQ(strength(s), 0);
+}
+
+TEST(RedSkull, OddMaxHpRoundsDown) {
+  // 81 max: 41 is above half, 40 is not (wiki.gg: "rounding down").
+  CombatState s = fight_at(81, 81, {RelicId::RedSkull});
+  hit_player(s, 40);
+  EXPECT_EQ(strength(s), 0);
+  hit_player(s, 1);
+  EXPECT_EQ(strength(s), 3);
+}
+
+TEST(RedSkull, AnEnemyAttackAndACardsHpLossBothCross) {
+  // Fixed damage is the other tests' path. The enemy's powers are cleared so
+  // whichever enemy was drawn hits for exactly 40.
+  CombatState attacked = fight_with({RelicId::RedSkull});
+  attacked.enemies[0].powers.clear();
+  attacked.enemies[0].debuffs.clear();
+  enemy_attacks_player(attacked, 0, 40);
+  ASSERT_EQ(attacked.character.hp, 40);
+  EXPECT_EQ(strength(attacked), 3);
+
+  CombatState bled = fight_with({RelicId::RedSkull});
+  lose_hp(bled, 40);
+  EXPECT_EQ(strength(bled), 3);
+}
+
+TEST(RedSkull, BloodiedAtTheStartOfAFightGivesIt) {
+  CombatState s = fight_at(40, 80, {RelicId::RedSkull});
+  EXPECT_EQ(strength(s), 3);
+}
+
+TEST(RedSkull, BloodVialHealsBeforeTheCheckInEitherRelicOrder) {
+  // Blood Vial's heal is addToTop and Red Skull's check addToBot, so 40
+  // becomes 42 first and no Strength is given, whichever relic is first.
+  for (const std::vector<RelicId>& order :
+       {std::vector<RelicId>{RelicId::RedSkull, RelicId::BloodVial},
+        std::vector<RelicId>{RelicId::BloodVial, RelicId::RedSkull}}) {
+    CombatState s = fight_at(40, 80, order);
+    EXPECT_EQ(s.character.hp, 42);
+    EXPECT_EQ(strength(s), 0) << "Red Skull first: " << (order[0] == RelicId::RedSkull);
+  }
+}
+
+TEST(RedSkull, ArtifactBlocksTheLossAndTheNextDropAddsThreeMore) {
+  // wiki.gg: "potentially granting 6 total Strength".
+  CombatState s = fight_with({RelicId::RedSkull});
+  s.character.powers[Power::Artifact] = 1;
+  hit_player(s, 40);
+  ASSERT_EQ(strength(s), 3);
+  heal_player_by(s, 1);
+  EXPECT_EQ(strength(s), 3) << "Artifact blocks the -3";
+  EXPECT_EQ(get_status(s.character.powers, Power::Artifact), 0);
+  hit_player(s, 1);
+  EXPECT_EQ(strength(s), 6);
+}
+
+TEST(RedSkull, ItRepeatsOnEveryCrossing) {
+  CombatState s = fight_with({RelicId::RedSkull});
+  hit_player(s, 40);
+  heal_player_by(s, 1);
+  ASSERT_EQ(strength(s), 0);
+  hit_player(s, 1);
+  EXPECT_EQ(strength(s), 3);
+}
+
+TEST(RedSkull, APlainFairyKeepsItASacredBarkFairyTakesItBack) {
+  // The drop to 0 gives +3 before the revive. 30% of 80 is 24, still
+  // bloodied; 60% is 48, above half, so the +3 is taken back.
+  CombatState plain = fight_with({RelicId::RedSkull});
+  plain.potions = {PotionId::FairyPotion};
+  hit_player(plain, 100);
+  ASSERT_EQ(plain.character.hp, 24);
+  EXPECT_EQ(strength(plain), 3);
+
+  CombatState bark = fight_with({RelicId::RedSkull, RelicId::SacredBark});
+  bark.potions = {PotionId::FairyPotion};
+  hit_player(bark, 100);
+  ASSERT_EQ(bark.character.hp, 48);
+  EXPECT_EQ(strength(bark), 0);
+}
+
+TEST(RedSkull, TheDropToZeroCountsBeforeTheReviveEvenWhenItEndsAboveHalf) {
+  // AbstractPlayer.damage sets isBloodied before its death intercept, so a
+  // Sacred Bark Fairy gives +3 and then takes it back — which Artifact can
+  // block, leaving +3 and spending the charge. A check made only after the
+  // revive would see no crossing at all: no Strength, Artifact untouched.
+  CombatState s = fight_with({RelicId::RedSkull, RelicId::SacredBark});
+  s.potions = {PotionId::FairyPotion};
+  s.character.powers[Power::Artifact] = 1;
+  hit_player(s, 100);
+  ASSERT_EQ(s.character.hp, 48);
+  EXPECT_EQ(strength(s), 3);
+  EXPECT_EQ(get_status(s.character.powers, Power::Artifact), 0);
+}
+
+TEST(RedSkull, GainingMaxHpAboveTheLineTakesItBack) {
+  // Feed: 40/80 becomes 43/83, above half.
+  CombatState s = fight_with({RelicId::RedSkull});
+  hit_player(s, 40);
+  ASSERT_EQ(strength(s), 3);
+  gain_max_hp_by(s, 3);
+  EXPECT_EQ(strength(s), 0);
+}
+
+TEST(RedSkull, TheStrengthResolvesBeforeTheNextQueuedAction) {
+  // addToTop: the +3 lands right after the hit that crossed, ahead of an
+  // attack already waiting in the queue, which then deals 6 + 3.
+  CombatState s = fight_with({RelicId::RedSkull});
+  s.enemies[0].hp = 100;
+  s.enemies[0].current_block = 0;
+  s.enemies[0].powers.clear();
+  s.enemies[0].debuffs.clear();
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action hit{ActionKind::DealFixedDamage};
+  hit.target = kPlayerSlot;
+  hit.amount = 40;
+  q.push_back(hit);
+  Action attack{ActionKind::DealDamage};
+  attack.target = 0;
+  attack.amount = 6;
+  q.push_back(attack);
+  drain(s, q, ctx);
+  EXPECT_EQ(s.enemies[0].hp, 100 - 9);
+}
+
 }  // namespace
 }  // namespace minispire

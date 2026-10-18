@@ -53,6 +53,15 @@ struct Character {
   // apply_debuff, cleared by that tick. Not observed (Q2): in Act 1 it is never
   // set at a decision point, which a test pins.
   std::array<bool, kNumDebuffs> debuff_just_applied{};
+  // StS's isBloodied (relic-effects.md §6.29): HP at or below half
+  // (2 × hp ≤ max_hp). Set at the start of a fight, and kept by the HP write
+  // functions, which act on its crossings — down when HP is lost, up when it
+  // is healed. Red Skull is the relic that answers them.
+  bool bloodied = false;
+  // Red Skull's isActive: it has given its +3 Strength and not yet taken it
+  // back. Not the same as `bloodied`: when Artifact blocks the −3, the +3 is
+  // kept and the relic still goes inactive, so the next drop gives +3 again.
+  bool red_skull_active = false;
   // Combust's second counter (Stage 4a): HP lost at end of turn = casts, while
   // Power::Combust stacks = accumulated damage (5/7 per cast — one stack count
   // can't hold both once upgrades mix). Bumped by the ApplyPower executor.
@@ -149,6 +158,15 @@ struct CombatState {
   // buffer rather than reusing ActionQueue.
   PendingChoice pending_choice;
   ActionQueue suspended_queue;
+
+  // Actions staged by code that has no queue — the HP write functions — to
+  // resolve NEXT, as StS's addToTop does. `drain` moves them to the front of
+  // its queue right after the action that staged them, each in front of the
+  // one before (relic-effects.md §6.29). Empty between actions. A fixed array,
+  // so clone() stays a plain copy.
+  static constexpr int kMaxStagedTop = 4;
+  std::array<Action, kMaxStagedTop> staged_top{};
+  int staged_top_count = 0;
 
   // Cards waiting to be played: Double Tap and Duplication replays, and cards
   // Havoc, Mayhem and Distilled Chaos took off the draw pile

@@ -1199,6 +1199,9 @@ CombatState start_combat(CombatSetup setup) {
   state.character.max_hp = setup.max_hp;
   state.character.hp = setup.hp;
   state.character.current_block = 0;
+  // preBattlePrep: `currentHealth <= maxHealth / 2`, before any combat-start
+  // relic runs (relic-effects.md §6.29).
+  state.character.bloodied = 2 * setup.hp <= setup.max_hp;
 
   // Present before anything reads them. A start-of-combat relic effect works
   // off the character's real HP, and one that changes the opening draw has to

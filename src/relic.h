@@ -242,6 +242,9 @@ inline constexpr int kPocketwatchDraw = 3;
 inline constexpr int kMagicFlowerHealNumerator = 3;
 inline constexpr int kMagicFlowerHealDenominator = 2;
 
+// Red Skull: Strength while HP is at or below half (relic-effects.md §6.29).
+inline constexpr int kRedSkullStrength = 3;
+
 // Lizard Tail revives the player once per run (potion-effects.md §5.4). The
 // counter's default 0 is unused; -2 is used, the value LizardTail.setCounter
 // treats as used up. RunState carries the counter between fights like any

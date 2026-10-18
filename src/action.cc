@@ -56,6 +56,50 @@ int intangible_capped(const CombatState& state, int amount) {
   return 1;
 }
 
+// An action to resolve NEXT, from code that has no queue (StS's addToTop).
+// drain moves it to the front once the current action is done (§6.29).
+void stage_top(CombatState& state, const Action& a) {
+  assert(state.staged_top_count < CombatState::kMaxStagedTop &&
+         "staged_top overflow");
+  state.staged_top[state.staged_top_count++] = a;
+}
+
+// Red Skull's +3 or -3 Strength, as an ApplyPowerAction on addToTop. Through
+// the ApplyPower executor, so Artifact can negate the -3.
+void stage_red_skull_strength(CombatState& state, int amount) {
+  Action a;
+  a.kind = ActionKind::ApplyPower;
+  a.target = kPlayerSlot;
+  a.power = Power::Strength;
+  a.amount = amount;
+  stage_top(state, a);
+}
+
+// The crossings of half HP (relic-effects.md §6.29). StS's isBloodied is set
+// in AbstractPlayer.damage and cleared in heal, and each relic answers in
+// onBloodied / onNotBloodied. Red Skull is the only one with an effect; its
+// flag changes here, at once, and the Strength resolves next.
+void cross_into_bloodied(CombatState& state) {
+  Character& c = state.character;
+  if (c.bloodied || 2 * c.hp > c.max_hp) return;
+  c.bloodied = true;
+  if (state.has_relic(RelicId::RedSkull) && !c.red_skull_active) {
+    c.red_skull_active = true;
+    stage_red_skull_strength(state, kRedSkullStrength);
+  }
+}
+
+void cross_out_of_bloodied(CombatState& state) {
+  Character& c = state.character;
+  if (!c.bloodied || 2 * c.hp <= c.max_hp) return;
+  c.bloodied = false;
+  if (!state.has_relic(RelicId::RedSkull)) return;
+  // The -3 only if the +3 was given; the flag clears either way, so a -3 that
+  // Artifact blocks leaves the +3 AND a fresh +3 to come.
+  if (c.red_skull_active) stage_red_skull_strength(state, -kRedSkullStrength);
+  c.red_skull_active = false;
+}
+
 // The revive's heal (potion-effects.md §5.4). StS sets HP to 0 and calls
 // heal(), so Magic Flower applies. heal_player cannot do it: it refuses a
 // player at 0 HP, which is the point of a revive.
@@ -64,6 +108,9 @@ void revive_player(CombatState& state, int amount) {
   if (state.character.hp > state.character.max_hp) {
     state.character.hp = state.character.max_hp;
   }
+  // heal() is where onNotBloodied fires: a revive above half takes Red
+  // Skull's Strength back.
+  cross_out_of_bloodied(state);
 }
 
 // The death intercept at the end of StS's AbstractPlayer.damage (§5.4, Rob
@@ -97,6 +144,9 @@ void revive_if_dying(CombatState& state) {
 void subtract_player_hp(CombatState& state, int amount) {
   state.character.hp -= amount;
   if (state.character.hp < 0) state.character.hp = 0;
+  // AbstractPlayer.damage sets isBloodied before its death intercept, so a
+  // killing blow from above half gives Red Skull's +3 before any revive.
+  cross_into_bloodied(state);
   revive_if_dying(state);
 }
 
@@ -174,6 +224,9 @@ void heal_player(CombatState& state, int amount) {
   if (state.character.hp > state.character.max_hp) {
     state.character.hp = state.character.max_hp;
   }
+  // AbstractCreature.heal's isBloodied check. gain_max_hp heals through here,
+  // with the new maximum, as increaseMaxHp does.
+  cross_out_of_bloodied(state);
 }
 
 void gain_max_hp(CombatState& state, int amount) {
@@ -1105,8 +1158,18 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
           case RelicId::Anchor:
             push_player_block(q, 10);
             break;
-          case RelicId::BloodVial:
-            push_player_heal(q, 2);
+          case RelicId::BloodVial: {
+            // addToTop in StS (Rob R2, relic-effects.md §6.29), so the heal
+            // lands before Red Skull's addToBot check whatever the relic order.
+            Action heal = make_action(ActionKind::Heal);
+            heal.amount = 2;
+            q.push_front(heal);
+            break;
+          }
+          case RelicId::RedSkull:
+            // atBattleStart: a check queued at the back, which gives +3 if the
+            // player is bloodied when it runs — after any heal ahead of it.
+            q.push_back(make_action(ActionKind::RedSkullCombatStart));
             break;
           case RelicId::Lantern:
             push_player_energy(q, 1);
@@ -2446,6 +2509,17 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       state.card_queue.push_back(p);
       break;
     }
+    case ActionKind::RedSkullCombatStart:
+      // RedSkull.atBattleStart's action: if bloodied and not yet active, +3
+      // Strength, added directly (player.addPower), and active.
+      if (state.character.bloodied && !state.character.red_skull_active) {
+        state.character.red_skull_active = true;
+        apply_power(state,
+                    PowerApplication{Power::Strength, kRedSkullStrength,
+                                     Target::Character},
+                    kNoSlot);
+      }
+      break;
     case ActionKind::ObtainPotion:
       // ObtainPotionAction: Sozu flashes and nothing is obtained; otherwise
       // AbstractPlayer.obtainPotion takes the first empty slot, or fails on a
@@ -3202,6 +3276,13 @@ void drain(CombatState& state, ActionQueue& q, ResolutionContext& ctx) {
   while (!q.empty()) {
     Action a = q.pop_front();
     execute(state, a, q, ctx);
+    // What the action staged resolves next (StS's addToTop): each to the
+    // front, in staging order, so the last one staged runs first, as
+    // successive addToTop calls do (relic-effects.md §6.29).
+    for (int i = 0; i < state.staged_top_count; ++i) {
+      q.push_front(state.staged_top[i]);
+    }
+    state.staged_top_count = 0;
     if (state.outcome != Outcome::InProgress) {
       // Terminal short-circuit. A fight that ended mid-resolution discards any
       // pending choice: death takes precedence, and answering a choice on a

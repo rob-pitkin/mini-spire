@@ -93,6 +93,9 @@ enum class ActionKind {
   RandomizeHandCosts,   // Snecko Oil: every hand card with a cost rolls a new
                         // one, 0-3, for the rest of the combat
                         // (RandomizeHandCostAction)
+  RedSkullCombatStart,  // Red Skull's atBattleStart check: +3 Strength if the
+                        // player is bloodied when it runs (relic-effects.md
+                        // §6.29)
   ObtainPotion,         // Entropic Brew: put `amount` (a PotionId, rolled when
                         // the Brew was drunk) in the first empty slot; Sozu or
                         // a full belt loses it (ObtainPotionAction)

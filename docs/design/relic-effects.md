@@ -252,7 +252,7 @@ per §1.
 
 ---
 
-## 7. Status: 121 of 140 wired
+## 7. Status: 122 of 140 wired
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -271,7 +271,7 @@ tree appears only on a comment line, so the discrepancy is not comment noise.
 One of the two counts used a different rule and neither recorded which, which is
 the whole argument for pinning the command here.
 
-The 19 remaining are not one backlog. **Most are blocked on engine pieces that
+The 18 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
@@ -286,7 +286,7 @@ have nothing to do with relics**, and those blockers are shared:
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | ~~Gambling Chip~~, Empty Cage, Astrolabe, Pandora's Box, Calling Bell, **Tiny House** — its card reward only | all pause for player input. ✅ **Gambling Chip wired** with potion step 2 (2026-10-10): it is Gambler's Brew's discard-any-then-draw choice on turn 1's post-draw hook (`potion-effects.md` §5.7), and it left `v2-spec.md` §9's divergence table. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed). **A run-layer deck choice now exists** (§6.23, `pending_deck_choices`) — Empty Cage (remove 2) and Astrolabe (transform 3) need a new purpose on it, not a new mechanism |
 | ~~**Nothing blocking**~~ | **0** — ✅ **cleared.** The `~` this row once carried was drifting: it read ~20 and then ~18 by subtracting shipped relics from a figure nobody had recounted, and the enumeration was 17 the whole time. All 17 shipped: Juzu Bracelet and Tiny Chest in §6.18, the three Eggs in §6.19, Matryoshka and Ancient Tea Set in §6.20, Chemical X and Pocketwatch in §6.21, Dead Branch in §6.22, the three Bottled relics in §6.23, Singing Bowl and Wing Boots in §6.25, Unceasing Top in §6.26, Snecko Eye in §6.28 (on the cost layers of §6.27). Every remaining relic waits on another row | ⚠️ **the "~25" here was an undercount** (corrected 2026-09-20): classifying all 66 then-remaining against the blocker rows left ~42 with nothing blocking them. 6 shipped in §6.11, 5 in §6.12, and Maw Bank, Meal Ticket, Ceramic Fish, Old Coin and Tiny House in §6.14. The Bottled relics did need a card-selection screen at pickup, which §6.23 built; the Eggs did not (§6.19). **Magic Flower needs no funnel** — it is combat-only, and `heal_player` is already the single combat heal path (§6.14 retracts the earlier claim) |
-| **Needs an HP-threshold detector** | Red Skull | §6.12 — it keys on crossing 50% Max HP in BOTH directions, so it fires on healing too and cannot ride the HP-loss hook. It must also see the revive heal (`potion-effects.md` §1.3 U3) |
+| ~~**Needs an HP-threshold detector**~~ | ~~Red Skull~~ | ✅ **done** (2026-10-18, §6.29): a bloodied flag kept by the HP write functions, the revive heal included, with the Strength change queued to resolve next |
 | ~~**Needs a death intercept**~~ | ~~Lizard Tail~~ | ✅ **done** with potion step 4 (2026-10-17, `potion-effects.md` §5.4): a fixed intercept beside Fairy in a Bottle, not a hook (Rob, U1) |
 
 **What this says about sequencing.** Updated 2026-09-20. The earlier advice here
@@ -765,7 +765,9 @@ crossing 50% Max HP in both directions — `onBloodied` and `onNotBloodied` — 
 it fires on HEALING as well as damage and cannot ride this batch's hook. Note
 also the wiki detail that its removal is applied as an invisible debuff, so
 Artifact can block it and leave the player at +3 with another +3 available; that
-is unreachable for us while `Power::Artifact` is enemy-only.
+is unreachable for us while `Power::Artifact` is enemy-only. (Corrected
+2026-10-18: Ancient Potion gives the player Artifact since potion step 1, so it
+is reachable; §6.29.)
 
 ### 6.14 The run-layer batch, and a gold path that was not a path
 
@@ -1582,3 +1584,138 @@ in hand — on every copy, so two Snecko-rolled Strikes showed the same cost. It
 now prints each copy's own cost in the hand, the choice menu, and the discard
 and exhaust piles, from per-copy lists on `StatePiles` and `ChoiceView`
 (2026-10-04).
+
+### 6.29 Red Skull: a bloodied flag on every HP write (task #3)
+
+**Status: agreed with Rob 2026-10-18, and built.** R1: match StS — the
+Strength change is queued to resolve next, not applied in place. R2: Blood
+Vial's heal to the front, as StS.
+
+**Sources.** Decompiled `relics/RedSkull`, `relics/MeatOnTheBone`,
+`relics/BloodVial`, `AbstractPlayer.damage`, `AbstractPlayer.heal`,
+`AbstractPlayer.preBattlePrep`, `AbstractCreature.heal`. A code search finds
+`isBloodied` only in `AbstractCreature`, `AbstractPlayer` and `RedSkull`, and
+`onNotBloodied` only there and in `MeatOnTheBone` and `AbstractRelic`. wiki.gg
+Red Skull, checked 2026-10-18.
+
+**What StS does.**
+- The player's `isBloodied` flag:
+  - Set at the start of every fight in `preBattlePrep`:
+    `currentHealth <= maxHealth / 2`.
+  - Set on the way down in `damage`, after the HP is subtracted and before the
+    death intercept (§5.4 of `potion-effects.md`): if HP ≤ maxHP / 2 and not
+    already bloodied, it is set and every relic's `onBloodied` fires.
+  - Cleared on the way up in every `heal`: if HP > maxHP / 2 and bloodied, it is
+    cleared and every relic's `onNotBloodied` fires. Gaining max HP heals, so it
+    is checked there too.
+  - All three tests are the same as `2 × HP ≤ maxHP` in integers: 40 of 80 is
+    bloodied, 41 is not; of 81, 40 is and 41 is not. wiki.gg: "at or below
+    50%", rounded down, "with 75 max HP, it activates at 37".
+- Red Skull's own `isActive` flag, cleared at the start of a fight and on
+  victory:
+  - At fight start it queues an action (`addToBot`) that, if the player is
+    bloodied and the flag is clear, adds +3 Strength directly and sets the flag.
+  - `onBloodied`, in combat and with the flag clear: +3 Strength through
+    `ApplyPowerAction` on `addToTop`, and the flag is set.
+  - `onNotBloodied`, in combat and with the flag set: −3 Strength through
+    `ApplyPowerAction` on `addToTop`. The flag is cleared either way.
+
+**Consequences.**
+- **Artifact blocks the −3**, which is a negative Strength application. The
+  flag is still cleared, so the next drop to half adds +3 again: 6 Strength in
+  all (wiki.gg). The player can hold Artifact since Ancient Potion (potion step
+  1). Orange Pellets does not undo the −3, which is a number, not a debuff
+  (wiki.gg); in the engine a negative Strength is likewise not a debuff entry.
+- **It repeats** whenever HP crosses the line again in the same fight.
+- **A revive** (`potion-effects.md` §5.4): the drop to 0 sets the flag and
+  gives +3 before Fairy or Lizard Tail heals. A plain Fairy (30%) or Lizard
+  Tail (to exactly half) leaves the player bloodied, so the +3 stays. A Sacred
+  Bark Fairy (60%) or a revive boosted by Magic Flower lifts HP above half:
+  −3.
+- **Blood Vial at fight start** heals 2 with `addToTop`, so it resolves before
+  Red Skull's `addToBot` check, whatever the relic order. At 40 of 80 with both,
+  the heal lands first (42), the flag is cleared, and no Strength is gained.
+
+**Engine design.**
+- `Character::bloodied`, set in `start_combat` before any combat-start hook
+  (`2 × hp ≤ max_hp`), and `Character::red_skull_active`, false there.
+- The crossings are detected in the HP write functions, the single write path:
+  - `subtract_player_hp`, before the revive: a crossing down;
+  - `heal_player` and `revive_player`, after the heal: a crossing up.
+  - `gain_max_hp` heals through `heal_player`, so it is covered.
+- Red Skull's response to a crossing (R1, as ruled): its flag changes at once,
+  as StS's handler sets it, and the +3 or −3 is an `ApplyPower` action that
+  resolves next — StS's `addToTop`. The HP functions have no queue, so they
+  stage the action on `CombatState` (a small fixed array, so `clone()` stays a
+  plain copy), and `drain` moves staged actions to the front of the queue
+  right after the action that staged them. `drain` is the one place an action
+  executes (`execute` has no other caller), and every combat HP change happens
+  inside an executor, so one flush point covers them all. Staged actions go to
+  the front in the order they were staged, each in front of the one before,
+  which is what successive `addToTop` calls do: a death and revive above half
+  stages +3 then −3, and the −3 resolves first. The `ApplyPower` executor is
+  where Artifact negates the −3.
+- The fight-start check is a new action queued by Red Skull's CombatStart hook.
+  It reads `bloodied` when it runs and adds +3 directly.
+- Blood Vial's heal moves to the front of the queue (R2).
+- Nothing outside combat: StS's handlers check for combat, and the next fight
+  recomputes the flag from HP.
+
+**The questions as they were put** (ruled above):
+- **R1. When the Strength changes.** StS queues it with `addToTop`, so it
+  resolves next. Recommended applying it synchronously, inside the HP write
+  function, through `apply_power`; Rob ruled to match StS and queue it, which
+  the staged-action flush in `drain` does without threading the queue through
+  the HP functions.
+  - In every case the engine can reach, nothing reads Strength between the HP
+    write and the next action, so the result is the same as StS's.
+  - It keeps the detector where every HP change already passes. The
+    alternative, queueing the change at the front, needs the queue passed into
+    the HP functions, or a list of pending crossings that every executor calling
+    them must remember to flush. A forgotten flush would lose a crossing
+    silently.
+  - It does break the convention that relics act through queued actions. The
+    death intercept (§5.4) already does the same, as StS does.
+- **R2. Blood Vial's heal to the front of the queue.** StS heals with
+  `addToTop`; the engine queues it at the back, in relic order. Recommended
+  matching StS, so it lands before Red Skull's check whatever the order of the
+  two relics. It changes nothing else that can be seen: no other combat-start
+  action reads HP.
+  - **Correction (2026-10-18, found by mutation testing):** the order is not
+    visible either. With Red Skull's check first, it gives +3 and the heal
+    then takes it back (−3): 0 Strength, the same as StS. Only Artifact held
+    at the very start of a fight could tell the two apart, and nothing gives
+    the player Artifact that early. The proposal said the outcome depended on
+    relic order; it does not. The heal moved to the front anyway, as ruled,
+    since it is StS's order.
+
+**As built.** `stage_top`, `cross_into_bloodied` and `cross_out_of_bloodied`
+in `action.cc`; the flush in `drain`; `ActionKind::RedSkullCombatStart`;
+`Character::bloodied` and `red_skull_active`; `CombatState::staged_top`
+(capacity 4: one action stages at most two, a drop and a revive);
+`kRedSkullStrength`.
+
+**Tests** (`tests/test_relic_triggers.cc`, `RedSkull.*`, every fight built):
+1. Crossing down gives +3, once: 41 → 40 of 80, then another hit adds nothing.
+2. Crossing up removes it: 40 → 41 with a heal.
+3. Odd max HP rounds down: of 81, 41 is not bloodied and 40 is.
+4. An enemy attack and a card's HP loss cross, as fixed damage does in the
+   others. The enemy's powers are cleared, so the encounter drawn cannot
+   change the damage.
+5. Bloodied at the start of a fight: +3.
+6. Blood Vial with Red Skull, in both orders: 42 HP, no Strength.
+7. Artifact blocks the −3, and the next drop adds +3 again (6).
+8. It repeats: down, up, down gives +3.
+9. A plain Fairy keeps the +3; a Sacred Bark Fairy takes it back.
+10. The drop to 0 counts before the revive: a Sacred Bark Fairy with Artifact
+    keeps +3 and spends the charge.
+11. Gaining max HP above the line (Feed) removes it.
+12. The Strength resolves next: a 6-damage attack already queued behind the
+    crossing hit deals 9.
+
+**Mutation checks.** Caught: the crossing checked after the revive (test 10
+only — the others cannot see it, since +3 then −3 nets the same 0 as no
+crossing), staged actions sent to the back (12), the threshold made strict
+(seven tests), no flag at fight start (5), no check in `heal_player` (five
+tests), no check in `revive_player` (9, 10). One survives and is equivalent:
+Blood Vial's heal at the back of the queue (see the R2 correction above).
