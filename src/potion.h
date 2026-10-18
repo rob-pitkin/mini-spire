@@ -2,6 +2,7 @@
 #define MINISPIRE_POTION_H
 
 #include <cstdint>
+#include <random>
 #include <vector>
 
 namespace minispire {
@@ -60,6 +61,20 @@ int potion_base_potency(PotionId id);
 bool potion_effect_implemented(PotionId id);
 
 const std::vector<PotionId>& potion_pool(PotionRarity rarity);
+
+// What a random potion of `rarity` can be: the rarity's pool, without Fruit
+// Juice when `limited` — StS's returnRandomPotion(limited = true), which
+// Entropic Brew uses in combat (docs/design/potion-effects.md §5.6).
+std::vector<PotionId> potion_draw_pool(PotionRarity rarity, bool limited);
+
+// returnRandomPotion(limited): a rarity roll (65 / 25 / 10), then one uniform
+// draw from potion_draw_pool. The engine reproduces StS's distribution, not
+// its stream: StS re-draws from the whole list until the rarity matches.
+PotionId random_potion(std::mt19937& rng, bool limited);
+
+// PotionHelper.getRandomPotion: one uniform draw over all 33, with no rarity
+// roll, so a rare is as likely as a common (Cauldron, §6.2).
+PotionId any_potion(std::mt19937& rng);
 
 }  // namespace minispire
 

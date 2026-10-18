@@ -93,6 +93,9 @@ enum class ActionKind {
   RandomizeHandCosts,   // Snecko Oil: every hand card with a cost rolls a new
                         // one, 0-3, for the rest of the combat
                         // (RandomizeHandCostAction)
+  ObtainPotion,         // Entropic Brew: put `amount` (a PotionId, rolled when
+                        // the Brew was drunk) in the first empty slot; Sozu or
+                        // a full belt loses it (ObtainPotionAction)
   DrawOpeningHand,      // the fight's first hand, Innate-aware. An ACTION so a
                         // pre-draw relic that pauses for a choice (Toolbox)
                         // parks the draw behind it instead of being overtaken

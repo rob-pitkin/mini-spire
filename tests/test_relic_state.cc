@@ -385,6 +385,311 @@ TEST(SmokeBombEscape, OwesNoPrayerWheelScreen) {
   EXPECT_EQ(run.phase, Phase::Map);
 }
 
+// ------------------------------------------------ potions out of combat
+//
+// potion-effects.md §6.1: Blood Potion, Fruit Juice and Entropic Brew override
+// AbstractPotion.canUse, which is otherwise combat-only.
+
+RunState on_the_map(std::vector<PotionId> potions,
+                    std::vector<RelicId> relics = {}) {
+  RunState run = RunState::start(1);
+  for (RelicId r : relics) run.obtain_relic(r);
+  run.potions = std::move(potions);
+  run.phase = Phase::Map;
+  return run;
+}
+
+TEST(PotionsOutOfCombat, BloodPotionHealsTwentyPercentFortyWithSacredBark) {
+  RunState run = on_the_map({PotionId::BloodPotion});
+  run.hp = 40;
+  run.drink_potion(0);
+  EXPECT_EQ(run.hp, 40 + 80 * 20 / 100);
+  EXPECT_TRUE(run.potions.empty());
+
+  RunState bark = on_the_map({PotionId::BloodPotion}, {RelicId::SacredBark});
+  bark.hp = 40;
+  bark.drink_potion(0);
+  EXPECT_EQ(bark.hp, 40 + 80 * 40 / 100);
+}
+
+TEST(PotionsOutOfCombat, FruitJuiceRaisesMaxHpAndHeals) {
+  RunState run = on_the_map({PotionId::FruitJuice});
+  run.hp = 40;
+  run.drink_potion(0);
+  EXPECT_EQ(run.max_hp, 85);
+  EXPECT_EQ(run.hp, 45);
+
+  RunState bark = on_the_map({PotionId::FruitJuice}, {RelicId::SacredBark});
+  bark.drink_potion(0);
+  EXPECT_EQ(bark.max_hp, 90);
+}
+
+TEST(PotionsOutOfCombat, ToyOrnithopterHealsFiveAndMagicFlowerDoesNotApply) {
+  RunState run = on_the_map({PotionId::FruitJuice},
+                            {RelicId::ToyOrnithopter, RelicId::MagicFlower});
+  run.hp = 40;
+  run.drink_potion(0);
+  EXPECT_EQ(run.hp, 40 + 5 + 5) << "Fruit Juice's 5, then Toy Ornithopter's 5";
+}
+
+TEST(PotionsOutOfCombat, OtherPotionsCannotBeDrunk) {
+  RunState run = on_the_map({PotionId::FirePotion, PotionId::BlockPotion});
+  run.drink_potion(0);
+  run.drink_potion(1);
+  EXPECT_EQ(run.potions.size(), 2u);
+}
+
+TEST(PotionsOutOfCombat, NotInCombatPhaseNorDuringADeckChoice) {
+  RunState fighting = on_the_map({PotionId::BloodPotion});
+  fighting.phase = Phase::Combat;
+  fighting.hp = 40;
+  fighting.drink_potion(0);
+  EXPECT_EQ(fighting.hp, 40) << "combat has its own action";
+
+  // Bottled Flame opens a deck choice over the starter's Attacks.
+  RunState choosing = on_the_map({PotionId::BloodPotion});
+  choosing.obtain_relic(RelicId::BottledFlame);
+  ASSERT_TRUE(choosing.has_pending_deck_choice());
+  choosing.hp = 40;
+  choosing.drink_potion(0);
+  EXPECT_EQ(choosing.hp, 40);
+}
+
+TEST(PotionsOutOfCombat, EntropicBrewFillsTheBeltFromTheFloorsStream) {
+  // Its own slot included, one unlimited roll per belt slot.
+  RunState run = on_the_map({PotionId::EntropicBrew, PotionId::FirePotion});
+  std::mt19937 expected = run.potion_rng_for_floor();
+  for (int i = 0; i < kBasePotionSlots; ++i) random_potion(expected, false);
+  run.drink_potion(0);
+  ASSERT_EQ(run.potions.size(), 3u);
+  EXPECT_EQ(run.potions[0], PotionId::FirePotion);
+  EXPECT_TRUE(run.floor_potion_rng == expected);
+}
+
+TEST(PotionsOutOfCombat, EntropicBrewBrewsTheStreamsUnlimitedDraws) {
+  // The potions are the floor stream's next unlimited draws, in order — an
+  // invariant for every seed. A limited draw differs whenever a rare comes up
+  // (its pool is one shorter), which is how a wrong flag here would show.
+  for (uint64_t seed = 1; seed <= 32; ++seed) {
+    RunState run = RunState::start(seed);
+    run.potions = {PotionId::EntropicBrew};
+    run.phase = Phase::Map;
+    std::mt19937 stream = run.potion_rng_for_floor();
+    std::vector<PotionId> predicted;
+    for (int i = 0; i < kBasePotionSlots; ++i) {
+      predicted.push_back(random_potion(stream, /*limited=*/false));
+    }
+    run.drink_potion(0);
+    EXPECT_EQ(run.potions, predicted) << "seed " << seed;
+  }
+}
+
+TEST(PotionsOutOfCombat, EntropicBrewWithSozuRollsNothing) {
+  RunState run = on_the_map({PotionId::EntropicBrew}, {RelicId::Sozu});
+  const std::mt19937 before = run.potion_rng_for_floor();
+  run.drink_potion(0);
+  EXPECT_TRUE(run.potions.empty());
+  EXPECT_TRUE(run.floor_potion_rng == before);
+}
+
+// ------------------------------------------------ the floor's potion stream
+
+TEST(FloorPotionStream, CombatBorrowsTheFloorsGeneratorAsItIs) {
+  // Advanced before the fight (as a potion drunk on this floor would), and
+  // the fight gets it in that state, not a fresh one.
+  RunState run = RunState::start(1);
+  random_potion(run.potion_rng_for_floor(), false);
+  run.begin_combat(EncounterPool::Weak);
+  EXPECT_TRUE(run.combat.potion_rng == run.floor_potion_rng);
+}
+
+TEST(FloorPotionStream, TheDropContinuesWhereTheFightLeftIt) {
+  // An Entropic Brew in the fight advances the borrowed generator; the drop
+  // after the fight must continue from there, not replay the same numbers.
+  RunState run = RunState::start(1);
+  run.potion_chance_bonus = 60;
+  run.begin_combat(EncounterPool::Weak);
+  for (int i = 0; i < kBasePotionSlots; ++i) {
+    random_potion(run.combat.potion_rng, true);
+  }
+  const std::mt19937 after_fight = run.combat.potion_rng;
+  run.end_combat();
+
+  RunState twin = RunState::start(1);
+  twin.potion_chance_bonus = 60;
+  twin.floor_potion_rng = after_fight;
+  twin.floor_potion_rng_floor = twin.floor;
+  twin.roll_potion_drop(/*rewards_already_on_screen=*/2);
+  EXPECT_TRUE(run.floor_potion_rng == twin.floor_potion_rng);
+}
+
+// ------------------------------------------------ the potion reward screen
+//
+// potion-effects.md §6.3, Rob W1.
+
+TEST(PotionRewards, ADropOnAFullBeltWaitsForRoom) {
+  RunState run = RunState::start(1);
+  run.potions = {PotionId::FirePotion, PotionId::FirePotion,
+                 PotionId::FirePotion};
+  run.potion_chance_bonus = 60;  // a certain drop
+  run.begin_combat(EncounterPool::Weak);
+  run.end_combat();
+  ASSERT_EQ(run.pending_potion_rewards.size(), 1u) << "the drop was lost";
+  EXPECT_EQ(run.potions.size(), 3u);
+
+  run.take_potion_reward(0);
+  EXPECT_EQ(run.pending_potion_rewards.size(), 1u) << "claimed on a full belt";
+
+  run.discard_potion(0);
+  run.take_potion_reward(0);
+  EXPECT_TRUE(run.pending_potion_rewards.empty());
+  EXPECT_EQ(run.potions.size(), 3u);
+}
+
+TEST(PotionRewards, LeavingTheRoomLosesWhatWasNotClaimed) {
+  RunState run = RunState::start(1);
+  run.potions = {PotionId::FirePotion, PotionId::FirePotion,
+                 PotionId::FirePotion};
+  run.potion_chance_bonus = 60;
+  run.begin_combat(EncounterPool::Weak);
+  run.end_combat();
+  ASSERT_EQ(run.pending_potion_rewards.size(), 1u);
+  run.skip_card_reward();
+  EXPECT_TRUE(run.pending_potion_rewards.empty());
+  EXPECT_EQ(run.phase, Phase::Map);
+}
+
+TEST(PotionRewards, ADropWithRoomIsTakenAtOnce) {
+  RunState run = RunState::start(1);
+  run.potion_chance_bonus = 60;
+  run.begin_combat(EncounterPool::Weak);
+  run.end_combat();
+  EXPECT_EQ(run.potions.size(), 1u);
+  EXPECT_TRUE(run.pending_potion_rewards.empty());
+}
+
+// ------------------------------------------------ Cauldron (§6.2, Rob W2)
+
+TEST(CauldronRelic, BrewsFiveUniformDrawsFromTheFloorsStream) {
+  // PotionHelper.getRandomPotion: one uniform draw over every potion, no
+  // rarity roll. Predicted with a plain uniform draw, so a rarity-rolling
+  // Cauldron (two draws per potion) cannot match. An invariant for every seed.
+  for (uint64_t seed = 1; seed <= 16; ++seed) {
+    RunState run = RunState::start(seed);
+    run.phase = Phase::Shop;
+    std::mt19937 stream = run.potion_rng_for_floor();
+    std::vector<PotionId> predicted;
+    for (int i = 0; i < kCauldronPotions; ++i) {
+      predicted.push_back(static_cast<PotionId>(
+          std::uniform_int_distribution<int>(0, kNumPotions - 1)(stream)));
+    }
+    run.obtain_relic(RelicId::Cauldron);
+    EXPECT_EQ(run.pending_potion_rewards, predicted) << "seed " << seed;
+  }
+}
+
+TEST(CauldronRelic, FivePotionsWaitWhenTheyDoNotAllFit) {
+  RunState run = RunState::start(1);
+  run.phase = Phase::Shop;
+  run.obtain_relic(RelicId::Cauldron);
+  ASSERT_EQ(run.pending_potion_rewards.size(), 5u);
+  EXPECT_TRUE(run.potions.empty()) << "taken without the player choosing";
+
+  // Claim three of the five; the fourth does not fit until a slot is freed.
+  run.take_potion_reward(4);
+  run.take_potion_reward(0);
+  run.take_potion_reward(0);
+  EXPECT_EQ(run.potions.size(), 3u);
+  EXPECT_EQ(run.pending_potion_rewards.size(), 2u);
+  run.take_potion_reward(0);
+  EXPECT_EQ(run.pending_potion_rewards.size(), 2u);
+  run.discard_potion(0);
+  run.take_potion_reward(0);
+  EXPECT_EQ(run.pending_potion_rewards.size(), 1u);
+
+  run.close_potion_rewards();
+  EXPECT_TRUE(run.pending_potion_rewards.empty());
+  EXPECT_EQ(run.potions.size(), 3u);
+}
+
+TEST(CauldronRelic, WithRoomForAllFiveTheyAreTakenAtOnce) {
+  RunState run = RunState::start(1);
+  run.phase = Phase::Shop;
+  run.obtain_relic(RelicId::PotionBelt);
+  run.obtain_relic(RelicId::Cauldron);
+  EXPECT_EQ(run.potions.size(), 5u);
+  EXPECT_TRUE(run.pending_potion_rewards.empty());
+}
+
+TEST(CauldronRelic, WithSozuNothingIsObtained) {
+  RunState run = RunState::start(1);
+  run.phase = Phase::Shop;
+  run.obtain_relic(RelicId::Sozu);
+  run.obtain_relic(RelicId::Cauldron);
+  EXPECT_TRUE(run.potions.empty());
+  EXPECT_TRUE(run.pending_potion_rewards.empty());
+}
+
+TEST(CauldronRelic, ItsScreenClosesTheShopUntilClosed) {
+  RunState run = RunState::start(1);
+  run.phase = Phase::Shop;
+  run.generate_shop();
+  run.gold = 999;
+  run.obtain_relic(RelicId::Cauldron);
+  ASSERT_TRUE(run.shop_is_covered());
+
+  run.buy_card(0);
+  EXPECT_EQ(run.gold, 999) << "bought through Cauldron's screen";
+  run.leave_shop();
+  EXPECT_EQ(run.phase, Phase::Shop) << "left through Cauldron's screen";
+
+  run.close_potion_rewards();
+  run.leave_shop();
+  EXPECT_EQ(run.phase, Phase::Map);
+}
+
+TEST(CauldronRelic, RollsAndDiscardsACardRewardAtShopOdds) {
+  // The rarity counter must end where a shop-odds card reward leaves it, and
+  // the card offer on screen is untouched. An invariant for every seed; the
+  // shop's 9 differs from a fight's 3 only on a low roll, hence 64 seeds.
+  for (uint64_t seed = 1; seed <= 64; ++seed) {
+    RunState run = RunState::start(seed);
+    run.phase = Phase::Shop;
+    run.card_reward = {Card{CardId::Strike}};
+    run.obtain_relic(RelicId::Cauldron);
+
+    RunState twin = RunState::start(seed);
+    twin.generate_card_reward(RewardSource::Shop);
+
+    EXPECT_EQ(run.card_rarity_factor, twin.card_rarity_factor) << "seed " << seed;
+    ASSERT_EQ(run.card_reward.size(), 1u);
+    EXPECT_EQ(run.card_reward[0].card_id, CardId::Strike);
+  }
+}
+
+TEST(CardRarityOdds, ShopMonsterEliteAndBossThresholds) {
+  // AbstractRoom.getCardRarity with each room's base chances; the roll
+  // already includes the pity counter.
+  EXPECT_EQ(card_rarity_for_roll(8, RewardSource::Shop), CardRarity::Rare);
+  EXPECT_EQ(card_rarity_for_roll(9, RewardSource::Shop), CardRarity::Uncommon);
+  EXPECT_EQ(card_rarity_for_roll(45, RewardSource::Shop), CardRarity::Uncommon);
+  EXPECT_EQ(card_rarity_for_roll(46, RewardSource::Shop), CardRarity::Common);
+
+  EXPECT_EQ(card_rarity_for_roll(2, RewardSource::Monster), CardRarity::Rare);
+  EXPECT_EQ(card_rarity_for_roll(3, RewardSource::Monster),
+            CardRarity::Uncommon);
+  EXPECT_EQ(card_rarity_for_roll(39, RewardSource::Monster),
+            CardRarity::Uncommon);
+  EXPECT_EQ(card_rarity_for_roll(40, RewardSource::Monster), CardRarity::Common);
+
+  EXPECT_EQ(card_rarity_for_roll(9, RewardSource::Elite), CardRarity::Rare);
+  EXPECT_EQ(card_rarity_for_roll(10, RewardSource::Elite), CardRarity::Uncommon);
+  EXPECT_EQ(card_rarity_for_roll(49, RewardSource::Elite), CardRarity::Uncommon);
+  EXPECT_EQ(card_rarity_for_roll(50, RewardSource::Elite), CardRarity::Common);
+
+  EXPECT_EQ(card_rarity_for_roll(99, RewardSource::Boss), CardRarity::Rare);
+}
+
 // White Beast Statue forces the chance to 100, but a full screen still wins.
 TEST(PotionState, AFullScreenSuppressesEvenWhiteBeastStatue) {
   RunState run = RunState::start(1);

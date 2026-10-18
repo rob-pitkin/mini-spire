@@ -1,5 +1,6 @@
 #include "potion.h"
 
+#include <algorithm>
 #include <array>
 
 namespace minispire {
@@ -128,13 +129,12 @@ bool potion_effect_implemented(PotionId id) {
     case PotionId::SneckoOil:
     // Step 5: Smoke Bomb (§5.5).
     case PotionId::SmokeBomb:
+    // Step 6: Entropic Brew (§5.6).
+    case PotionId::EntropicBrew:
       return true;
     // Fairy in a Bottle is built (step 4) but never drinkable: its effect is
     // the death intercept in action.cc (§5.4), and StS's canUse is false.
     case PotionId::FairyPotion:
-      return false;
-    // Later steps.
-    case PotionId::EntropicBrew:
       return false;
   }
   return false;
@@ -152,6 +152,30 @@ const std::vector<PotionId>& potion_pool(PotionRarity rarity) {
     case PotionRarity::Rare: return rare;
   }
   return common;
+}
+
+std::vector<PotionId> potion_draw_pool(PotionRarity rarity, bool limited) {
+  std::vector<PotionId> pool = potion_pool(rarity);
+  if (limited) {
+    pool.erase(std::remove(pool.begin(), pool.end(), PotionId::FruitJuice),
+               pool.end());
+  }
+  return pool;
+}
+
+PotionId random_potion(std::mt19937& rng, bool limited) {
+  // PotionHelper.POTION_COMMON_CHANCE 65, POTION_UNCOMMON_CHANCE 25.
+  const int rarity_roll = std::uniform_int_distribution<int>(0, 99)(rng);
+  const PotionRarity rarity = rarity_roll < 65   ? PotionRarity::Common
+                              : rarity_roll < 90 ? PotionRarity::Uncommon
+                                                 : PotionRarity::Rare;
+  const std::vector<PotionId> pool = potion_draw_pool(rarity, limited);
+  return pool[std::uniform_int_distribution<size_t>(0, pool.size() - 1)(rng)];
+}
+
+PotionId any_potion(std::mt19937& rng) {
+  return static_cast<PotionId>(
+      std::uniform_int_distribution<int>(0, kNumPotions - 1)(rng));
 }
 
 }  // namespace minispire

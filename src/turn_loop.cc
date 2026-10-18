@@ -1191,6 +1191,10 @@ CombatState start_combat(CombatSetup setup) {
   // still differs from its shuffle stream instead of tracking it.
   state.card_rng = std::mt19937(static_cast<std::mt19937::result_type>(
       splitmix64(static_cast<uint64_t>(setup.card_seed) << 32 | setup.seed)));
+  // The floor's potion generator, lent by the run and handed back after the
+  // fight (potion-effects.md §5.6). Taken as it is, not re-derived: the run
+  // may already have drawn from it this floor.
+  state.potion_rng = setup.potion_rng;
 
   state.character.max_hp = setup.max_hp;
   state.character.hp = setup.hp;

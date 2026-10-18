@@ -195,6 +195,10 @@ inline constexpr int kSingingBowlMaxHp = 2;
 inline constexpr int kWingBootsCharges = 3;
 inline constexpr int kWingBootsUsedUp = -2;
 
+// Cauldron brews this many potions onto a reward screen when it is taken
+// (Cauldron.onEquip; potion-effects.md §6.2).
+inline constexpr int kCauldronPotions = 5;
+
 // Snecko Eye: draw this many more cards every turn, the opening hand included
 // (onEquip, `masterHandSize += 2`) — and Confusion, whose roll on each drawn
 // card is 0 to kConfusionMaxCost inclusive (`cardRandomRng.random(3)`).

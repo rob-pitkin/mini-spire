@@ -163,7 +163,7 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
 
   // Potions (potion-effects.md §3.1), restated rather than asked of the
   // engine. Every held potion can be discarded. It can be drunk if its effect
-  // is built — the list of steps 1 to 5, restated here on purpose and widened
+  // is built — the list of steps 1 to 6, restated here on purpose and widened
   // as each step lands — at a living enemy if it targets one, else at slot 0.
   // Smoke Bomb, not in a boss fight (§5.5). Fairy in a Bottle is built but
   // never drinkable, so it is not on the list.
@@ -187,8 +187,8 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
       // Step 3: the card-play potions.
       PotionId::DuplicationPotion, PotionId::DistilledChaos,
       PotionId::SneckoOil,
-      // Step 5.
-      PotionId::SmokeBomb};
+      // Steps 5 and 6.
+      PotionId::SmokeBomb, PotionId::EntropicBrew};
   for (PotionId p : state.potions) {
     const int id = static_cast<int>(p);
     mask[kPotionDiscardBlock + id] = true;

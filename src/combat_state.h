@@ -126,6 +126,11 @@ struct CombatState {
   // combat stream would break both halves of that.
   std::mt19937 card_rng;
 
+  // The floor's potion stream (StS's potionRng), borrowed from the run for
+  // the fight and handed back to it, so Entropic Brew's draws and the
+  // post-combat drop continue one sequence (potion-effects.md §5.6).
+  std::mt19937 potion_rng;
+
   // Suspended mid-card choice (Stage 4c). `pending_choice.active()` means the
   // drain stopped to await the agent; the not-yet-executed actions live in
   // `suspended_queue` and resume when resolve_choice() answers.

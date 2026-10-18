@@ -12,7 +12,11 @@ Double Tap's charge timing and Havoc's and Mayhem's targets (§1.2, §5.8).
 **Step 4 done** (2026-10-17): 31 of 33 — Fairy in a Bottle, never drinkable,
 and Lizard Tail with it, through one death intercept (§1.3, §5.4). **Step 5
 done** (2026-10-17): 32 of 33 — Smoke Bomb, `Outcome::Escaped` scored as a
-win, and the smoked reward screen in the run layer (§1.4, §5.5).
+win, and the smoked reward screen in the run layer (§1.4, §5.5). **Step 6
+done** (2026-10-18): 33 of 33 — Entropic Brew in and out of combat, Blood
+Potion and Fruit Juice out of combat, Cauldron, the floor's shared potion
+stream, and a potion reward screen for potions that do not fit (§1.5, §6).
+Only step 7, the TUI belt, remains.
 
 Potions are first-class combat state (`v2-spec.md` §3.0.1): held in
 `CombatState::potions`, observable, and usable through the combat action space.
@@ -90,6 +94,13 @@ name and targeting already in `src/potion.cc`.
 | V1 | The info dict for an escape | `won` is true, as Q1 scores an escape as a win, and a new `escaped` key is true. `eval.py` records `escaped` per seed. |
 | V2 | What a smoked fight rolls | Match StS where the roll leaves state behind: the potion drop is rolled and not granted (its drift moves), and elite relics are drawn and not obtained (for #22). Gold and the card reward are not rolled. The run leaves the room with no reward decision. |
 | — | The potion drop's count of rewards on screen | Logged as its own issue (#47): StS's count holds gold and relics only, the engine's adds the card reward. |
+
+### 1.5 Step 6 rulings (Rob, 2026-10-18)
+
+| # | question | ruling |
+|---|---|---|
+| W1 | Potion rewards that do not fit | A pending potion reward list (§6.3–§6.4): every offered potion is taken at once if they all fit; otherwise they all wait to be claimed, with discard to make room, and leaving the screen loses the rest. Combat drops on a full belt now wait instead of being lost. |
+| W2 | Cauldron's hidden card reward | Match StS: rolled at shop odds and discarded, so the rarity counter moves. |
 
 ## 2. Using and discarding a potion
 
@@ -529,6 +540,29 @@ obtains each into the first empty slot: Sozu or a full belt drops it, but the ro
 happen regardless. Out of combat it rolls with `limited=false`, and with Sozu rolls
 nothing at all.
 
+**Step 6 detail (2026-10-17, from the decompiled chain).**
+- Why one generator per floor: the run layer builds a fresh generator for each
+  draw site, which is harmless where a floor has one potion draw. With Entropic
+  Brew, Cauldron and the drop all on `potionRng`, two fresh generators on the
+  same floor would replay the same numbers, so the Brew's first rarity roll and
+  the drop's roll would be one number. The run layer keeps the floor's
+  generator, combat receives it through `CombatSetup` and returns it in
+  `CombatState`, and the drop continues it. Shop stock keeps its own stream, as
+  now.
+- `EntropicBrew.use` rolls every potion at use, one per slot the belt has (not
+  per empty slot), and queues one `ObtainPotionAction` per roll. `PotionPopUp`
+  then frees the Brew's own slot, before any of those run, so the Brew refills
+  its own slot (wiki.gg: "including its own slot"). Each obtain takes the first
+  empty slot; Sozu or a full belt loses it. Toy Ornithopter's heal is queued
+  after them.
+- `returnRandomPotion(rarity, limited)`: with `limited` the first draw is always
+  discarded, then draws repeat until one has the rarity and is not Fruit Juice;
+  without it, draws repeat until the rarity matches. The engine does not
+  reproduce StS's stream, only its distribution: a rarity roll (65/25/10), then
+  a uniform draw from that rarity's pool, without Fruit Juice when limited.
+  wiki.gg: "Cannot generate Fruit Juice while in combat".
+- Sacred Bark does not change it: its potency is the slot count.
+
 ### 5.7 Multi-select choices: Elixir, Gambler's Brew, Gambling Chip, Liquid Memories
 
 These extend the sequential single-pick model (`colorless-effects.md` D1): each
@@ -644,6 +678,160 @@ plays has X = the player's energy when the card is taken, and spends no energy
   on pickup, through the potion reward screen) in step 6. Sozu, Potion Belt and White
   Beast Statue already work.
 
+**Status of §6.1–§6.6: agreed with Rob 2026-10-18 (§1.5).**
+
+Sources: decompiled `potions/EntropicBrew`, `BloodPotion`, `FruitJuice`,
+`AbstractPotion` (`canUse`, `canDiscard`), `ui/panels/PotionPopUp`,
+`actions/common/ObtainPotionAction`, `AbstractPlayer.obtainPotion`,
+`rewards/RewardItem` (`claimReward`), `relics/Cauldron`,
+`screens/CombatRewardScreen` (`open`, `setupItemReward`), `helpers/PotionHelper`
+(`getRandomPotion`), `AbstractDungeon.returnRandomPotion`. wiki.gg Entropic
+Brew and Cauldron, checked 2026-10-17.
+
+### 6.1 Drinking outside combat
+
+- **Which potions.** `AbstractPotion.canUse` is true only in combat. Three
+  potions override it: Blood Potion, Fruit Juice and Entropic Brew are usable
+  anywhere except during the We Meet Again event (not built; a requirement on
+  #7, which must also block discard there).
+- **When.** In StS, whenever the top panel can be clicked: map, shop, rest
+  site, events, reward screens, chests. The engine allows it in every run phase
+  but Combat, and not while a deck choice is open, which is where
+  `discard_potion` is already refused.
+- **Order** (`PotionPopUp`): the potion's `use`, then every relic's
+  `onUsePotion`, then the slot is freed.
+- **Effects.** Blood Potion heals `(int)(maxHP × potency / 100)`: 20%, 40% with
+  Sacred Bark. Fruit Juice raises max HP by 5 (10) and heals as much. Entropic
+  Brew (§5.6), unlimited, and nothing at all with Sozu. Toy Ornithopter heals 5.
+  Magic Flower does not apply out of combat. The integer form of Blood
+  Potion's percentage is exact, for the reason given for Fairy in a Bottle
+  (§5.4).
+- **API.** `RunState::drink_potion(index)`, a no-op for any other potion or a
+  refused phase.
+
+### 6.2 Cauldron
+
+- `onEquip` adds five potions to the room's rewards with
+  `PotionHelper.getRandomPotion()`: one uniform draw over the class's whole
+  pool. There is no rarity roll, so a rare is as likely as a common, and Fruit
+  Juice can appear (wiki.gg: "Uniquely able to generate Fruit Juice";
+  duplicates allowed). The draws use `potionRng`, so the floor's generator.
+- It then opens the reward screen with `open()`, whose `setupItemReward`
+  creates a card reward, rolling its cards, before `onEquip` removes it. The
+  roll moves the card rarity counter (W2).
+- The screen holds the five potions (§6.3). Proceed returns to the shop,
+  where Cauldron is sold. Unclaimed potions are lost.
+- Sozu: every claim is consumed with nothing obtained (`claimReward`), so the
+  potions are lost (wiki.gg: "completely useless").
+
+### 6.3 Potion rewards that do not fit
+
+`RewardItem.claimReward` for a potion returns false when the belt is full, and
+the reward stays on the screen. The player can discard a held potion from the
+top panel and claim it then. The engine today grants a combat drop at once and
+loses it when the belt is full (`roll_potion_drop`), so that choice does not
+exist. Cauldron's five potions make it unavoidable.
+
+### 6.4 The questions as they were put (rulings in §1.5)
+
+- **W1. A potion reward screen.** Recommended `pending_potion_rewards` on
+  `RunState`:
+  - If every offered potion fits in the free slots, they are all taken at
+    once. Taking a potion is never worse than leaving it, since discard is free
+    and always available, so nothing is decided by the automatic take.
+  - Otherwise they all wait: `take_potion_reward(i)` claims one if a slot is
+    free, and `discard_potion` makes room. Leaving the screen loses the rest.
+  - After a fight, the screen ends when the card reward is taken or skipped, so
+    the potions are claimed first. Cauldron's screen is modal in the shop: the
+    shop is closed to purchases until `close_potion_rewards()`.
+  - This changes combat drops with a full belt, which wait instead of being
+    lost.
+  - With Sozu a claim consumes the reward and obtains nothing, so there is no
+    decision: the rewards are lost at once, as now.
+  The alternative is to keep losing a reward that does not fit, record it as a
+  divergence, and have Cauldron take the first potions that fit. That removes a
+  real choice (which three of five), so it is not recommended.
+- **W2. Cauldron's hidden card reward.** Recommended rolling it and discarding it,
+  as StS does. `getRewardCards` rolls each card's rarity through the room, and
+  a shop's `getCardRarity` uses rare 9 and uncommon 37 with no relic changes,
+  the counter added to the roll as for the shop's own cards. The counter then
+  moves as after a fight (a rare resets it, a common lowers it). Three cards,
+  with Question Card and Busted Crown applied. Its only visible effect is on
+  later card rewards, which is the reason to keep it. The engine adds a
+  `RewardSource::Shop` with those odds.
+
+### 6.5 Engine design
+
+- `RunState`: the floor's potion generator, made on the first potion draw of a
+  floor and kept for the rest of it; `roll_potion_drop`, Cauldron and
+  out-of-combat Entropic Brew draw from it. `CombatSetup` passes it into
+  combat and `end_combat` takes it back before the drop.
+- `CombatState::potion_rng`. A standalone `CombatEnv` seeds it from a
+  constant, as its card stream defaults to seed 0.
+- Combat Entropic Brew: rolls every potion when drunk and queues an
+  `ObtainPotion` action for each; the executor fills the first empty slot
+  unless Sozu or a full belt.
+- Cauldron in `obtain_relic`: five uniform draws to `pending_potion_rewards`,
+  the hidden card reward rolled and discarded, the screen open (W1).
+
+As built:
+- `potion.h`: `potion_draw_pool(rarity, limited)`, `random_potion(rng,
+  limited)` and `any_potion(rng)`. The post-combat drop now uses
+  `random_potion` too, with the same draws as before.
+- `RunState`: `floor_potion_rng` and the floor it belongs to,
+  `potion_rng_for_floor()`, `potion_potency`, `heal`, `drink_potion`,
+  `pending_potion_rewards` with `offer_potion_rewards`, `take_potion_reward`
+  and `close_potion_rewards`, and `shop_is_covered()`, which the five shop
+  actions check. `leave_room` clears the pending rewards. `end_combat` records
+  the floor along with the generator it takes back, so the drop can never take
+  the generator as stale and derive a fresh one over it.
+- `card_rarity_for_roll(roll, source)`, a pure function with the thresholds,
+  and `RewardSource::Shop` (9 / 37).
+- `ActionKind::ObtainPotion` for combat Entropic Brew.
+
+### 6.6 Tests
+
+- `tests/test_potions.cc`:
+  - `PotionDraws`: the limited pool is the pool without Fruit Juice, and the
+    unlimited rare pool contains it.
+  - `EntropicBrew`: fills every empty slot, its own included; rolls once per
+    belt slot (checked against the stream); never makes Fruit Juice (an
+    invariant over 200 seeds); obtains nothing with Sozu.
+- `tests/test_relic_state.cc`:
+  - `PotionsOutOfCombat`: Blood Potion 20% and 40%; Fruit Juice +5 and +10;
+    Toy Ornithopter +5 with no Magic Flower bonus; other potions refused; not
+    in Combat phase or during a deck choice; Entropic Brew fills the belt from
+    the floor's stream; its potions are the stream's unlimited draws (32
+    seeds); with Sozu it rolls nothing.
+  - `FloorPotionStream`: combat borrows the floor's generator as it is; the
+    drop continues where the fight left it.
+  - `PotionRewards`: a drop on a full belt waits, cannot be claimed until a
+    slot is free, and is lost when the room is left; a drop with room is taken
+    at once.
+  - `CauldronRelic`: five uniform draws from the floor's stream, predicted
+    with a plain uniform draw (16 seeds); five wait when they do not fit, and
+    the claim and discard order works; all five taken with Potion Belt; none
+    with Sozu; the screen closes the shop until closed; the hidden card reward
+    leaves the rarity counter where a shop-odds reward does and the offer on
+    screen untouched (64 seeds).
+  - `CardRarityOdds`: the shop, fight, elite and boss thresholds, exhaustively
+    at each boundary.
+- `tests/test_mask_oracle.cc`: Entropic Brew joins the drinkable list.
+
+Mutation checks, all caught: combat Brew rolling per empty slot; combat Brew
+unlimited; out-of-combat Brew limited; Cauldron with a rarity roll; the hidden
+reward at a fight's odds; potions auto-taken when they do not all fit;
+`leave_room` keeping pending rewards; the shop not closed by Cauldron's screen;
+`end_combat` not taking the generator back; `begin_combat` lending a fresh one;
+a full-belt drop lost as before; drinking in Combat phase; no Toy Ornithopter
+heal out of combat; Sacred Bark ignored out of combat; Sozu ignored in combat.
+
+Two of those were caught only after a test was added for them. A limited draw
+consumes the stream exactly as an unlimited one does, so a stream check could
+not tell them apart; the prediction test compares the potions themselves,
+which differ whenever a rare is rolled. A one-roll-per-potion Cauldron was
+likewise invisible until its draws were predicted.
+
 ## 7. Divergences
 
 - Discovery potions draw exactly three cards (§5.2): the same offers as StS, with a
@@ -663,5 +851,5 @@ plays has X = the player's energy when the card is taken, and spends no energy
 3. **Card-play potions:** Duplication, Distilled Chaos, Snecko Oil.
 4. **Fairy in a Bottle and Lizard Tail** (§5.4, task #5). ✅ 2026-10-17.
 5. **Smoke Bomb** (§5.5). ✅ 2026-10-17.
-6. **Entropic Brew, Cauldron, out-of-combat use** (§5.6, §6).
+6. **Entropic Brew, Cauldron, out-of-combat use** (§5.6, §6). ✅ 2026-10-18.
 7. **TUI potion belt** (Q10).

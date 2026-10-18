@@ -82,6 +82,10 @@ struct CombatSetup {
   // The belt's capacity, which the run owns (Potion Belt raises it). A
   // standalone fight keeps the base 3.
   int potion_slots = kBasePotionSlots;
+  // The floor's potion generator, which the run lends the fight and takes
+  // back (potion-effects.md §5.6). A standalone fight keeps the default-seeded
+  // one, so it still generates deterministically.
+  std::mt19937 potion_rng;
 };
 
 // Constructs an initial CombatState (ROB-66): seeded RNG, the character at the

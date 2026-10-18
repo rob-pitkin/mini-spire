@@ -115,10 +115,10 @@ TEST(PotionActions, OnlyHeldPotionsAreLit) {
   EXPECT_EQ(held(s, PotionId::BlockPotion), 1);
 }
 
-TEST(PotionActions, APotionNotYetBuiltCanBeDiscardedButNotDrunk) {
-  // Potions land in steps (§8); until its step, a potion is masked off rather
-  // than doing nothing. Fairy in a Bottle is never drinkable (§5.4).
-  for (PotionId p : {PotionId::FairyPotion, PotionId::EntropicBrew}) {
+TEST(PotionActions, FairyInABottleCanBeDiscardedButNeverDrunk) {
+  // Every potion is built (§8, steps 1-6), but Fairy in a Bottle's effect is
+  // the death intercept (§5.4): StS's canUse is false, so it is masked off.
+  for (PotionId p : {PotionId::FairyPotion}) {
     CombatState s = fight_holding({p});
     const auto mask = valid_actions(s);
     for (int t = 0; t < kMaxEnemies; ++t) {
@@ -1239,6 +1239,68 @@ TEST(SmokeBomb, AWinIsNotAnEscape) {
   ASSERT_EQ(env.outcome(), Outcome::Won);
   EXPECT_TRUE(env.won());
   EXPECT_FALSE(env.escaped());
+}
+
+// ============================================================================
+// Entropic Brew in combat (§5.6, step 6), and the draw pools behind it
+// ============================================================================
+
+TEST(PotionDraws, TheLimitedPoolIsThePoolWithoutFruitJuice) {
+  // returnRandomPotion(limited = true) skips Fruit Juice and nothing else.
+  for (PotionRarity r :
+       {PotionRarity::Common, PotionRarity::Uncommon, PotionRarity::Rare}) {
+    std::vector<PotionId> expected = potion_pool(r);
+    EXPECT_EQ(potion_draw_pool(r, /*limited=*/false), expected);
+    expected.erase(
+        std::remove(expected.begin(), expected.end(), PotionId::FruitJuice),
+        expected.end());
+    EXPECT_EQ(potion_draw_pool(r, /*limited=*/true), expected);
+  }
+  // Out of combat, Fruit Juice can appear (wiki.gg).
+  const std::vector<PotionId> rare = potion_draw_pool(PotionRarity::Rare, false);
+  EXPECT_NE(std::find(rare.begin(), rare.end(), PotionId::FruitJuice),
+            rare.end());
+}
+
+TEST(EntropicBrew, FillsEveryEmptySlotItsOwnIncluded) {
+  // Three slots holding the Brew and a Fire Potion. The Brew's slot is freed
+  // before its potions land, so two arrive.
+  CombatState s =
+      fight_holding({PotionId::EntropicBrew, PotionId::FirePotion});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::EntropicBrew)));
+  ASSERT_EQ(s.potions.size(), 3u);
+  EXPECT_EQ(s.potions[0], PotionId::FirePotion);
+}
+
+TEST(EntropicBrew, RollsOncePerBeltSlotNotPerEmptySlot) {
+  // One slot is free once the Brew is gone, but all three are rolled, from
+  // the fight's potion stream, at the moment it is drunk.
+  CombatState s = fight_holding({PotionId::EntropicBrew, PotionId::FirePotion,
+                                 PotionId::BlockPotion});
+  std::mt19937 expected = s.potion_rng;
+  for (int i = 0; i < kBasePotionSlots; ++i) random_potion(expected, true);
+  ASSERT_TRUE(apply_action(s, drink(PotionId::EntropicBrew)));
+  EXPECT_EQ(s.potions.size(), 3u);
+  EXPECT_TRUE(s.potion_rng == expected);
+}
+
+TEST(EntropicBrew, NeverMakesFruitJuiceInCombat) {
+  // An invariant over every draw (wiki.gg: "Cannot generate Fruit Juice while
+  // in combat").
+  for (uint32_t seed = 0; seed < 200; ++seed) {
+    CombatState s = fight_holding({PotionId::EntropicBrew});
+    s.potion_rng = std::mt19937(seed);
+    ASSERT_TRUE(apply_action(s, drink(PotionId::EntropicBrew)));
+    for (PotionId p : s.potions) {
+      EXPECT_NE(p, PotionId::FruitJuice) << "seed " << seed;
+    }
+  }
+}
+
+TEST(EntropicBrew, WithSozuObtainsNothing) {
+  CombatState s = fight_holding({PotionId::EntropicBrew}, {RelicId::Sozu});
+  ASSERT_TRUE(apply_action(s, drink(PotionId::EntropicBrew)));
+  EXPECT_TRUE(s.potions.empty());
 }
 
 // ============================================================================

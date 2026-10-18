@@ -1617,10 +1617,17 @@ void push_potion_effects(CombatState& state, PotionId id, int target,
     // (§5.5).
     case PotionId::SmokeBomb:
       break;
-    // Later steps of potion-effects.md §8; potion_effect_implemented() keeps
-    // them out of the mask until then.
     case PotionId::EntropicBrew:
-      assert(false && "potion not implemented yet; the mask should refuse it");
+      // EntropicBrew.use in combat (§5.6): every potion is rolled NOW, one per
+      // belt slot rather than per empty one, from the floor's potion stream,
+      // limited (no Fruit Juice). Each lands when its ObtainPotion runs, after
+      // use_potion has freed the Brew's own slot, so it refills that too.
+      for (int i = 0; i < state.potion_slots; ++i) {
+        Action obtain = make_action(ActionKind::ObtainPotion);
+        obtain.amount =
+            static_cast<int>(random_potion(state.potion_rng, /*limited=*/true));
+        q.push_back(obtain);
+      }
       break;
   }
 }
@@ -2439,6 +2446,14 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       state.card_queue.push_back(p);
       break;
     }
+    case ActionKind::ObtainPotion:
+      // ObtainPotionAction: Sozu flashes and nothing is obtained; otherwise
+      // AbstractPlayer.obtainPotion takes the first empty slot, or fails on a
+      // full belt and the potion is lost.
+      if (state.has_relic(RelicId::Sozu)) break;
+      if (static_cast<int>(state.potions.size()) >= state.potion_slots) break;
+      state.potions.push_back(static_cast<PotionId>(a.amount));
+      break;
     case ActionKind::MayhemRoll: {
       // MayhemPower's wrapper: roll the target when this runs — after the
       // turn-start relics' actions, so Mercury Hourglass's kills are already

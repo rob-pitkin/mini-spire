@@ -44,8 +44,15 @@ enum class CardRarity { Common, Uncommon, Rare };
 inline constexpr int kCardRewardSize = 3;
 
 // The room a reward came from. Elites roll better, and a boss reward is always
-// rare (§4.2).
-enum class RewardSource { Monster, Elite, Boss };
+// rare (§4.2). Shop is a card reward rolled in a shop — only Cauldron's, which
+// StS creates and then removes (potion-effects.md §6.2, Rob W2).
+enum class RewardSource { Monster, Elite, Boss, Shop };
+
+// The rarity a card-reward roll lands on, the pity counter already added:
+// AbstractRoom.getCardRarity's thresholds for the room. Rare below the rare
+// chance (3, elite 10, shop 9), then uncommon for the next 37 (elite 40).
+// A boss reward never rolls. Pure, so the thresholds are tested exhaustively.
+CardRarity card_rarity_for_roll(int roll, RewardSource source);
 
 // The pool a CARD REWARD draws from at one rarity. `prismatic` widens it to
 // include the Colorless cards of that rarity (§6.16, §6.8's ruling).
@@ -308,6 +315,21 @@ struct RunState {
   // one would make potions far too common.
   int potion_chance_bonus = 0;
 
+  // The current floor's potion generator (potion-effects.md §5.6). Every
+  // potion draw on a floor continues it — combat's Entropic Brew, the drop,
+  // Cauldron, an Entropic Brew drunk out of combat — so no two of them replay
+  // the same numbers, as two freshly derived generators would. Combat borrows
+  // it through CombatSetup and end_combat takes it back. Shop stock keeps its
+  // own stream. Read it through potion_rng_for_floor().
+  std::mt19937 floor_potion_rng;
+  int floor_potion_rng_floor = -1;
+
+  // Potion rewards waiting to be claimed (potion-effects.md §6.3, Rob W1).
+  // Empty unless more potions were offered than the belt had room for: when
+  // they all fit they are taken at once. Leaving the room, or closing
+  // Cauldron's screen, loses what is left.
+  std::vector<PotionId> pending_potion_rewards;
+
   // Puts a card into the master deck, giving it a fresh identity. This is the
   // ONLY place a run-scoped uid is minted.
   void add_card(Card card);
@@ -509,6 +531,35 @@ struct RunState {
   // (potion-effects.md §5.5).
   void roll_potion_drop(int rewards_already_on_screen, bool grant = true);
 
+  // The floor's potion generator, made from (seed, Potion, floor) on the
+  // floor's first potion draw and continued after that.
+  std::mt19937& potion_rng_for_floor();
+
+  // A potion's getPotency with Sacred Bark's doubling, for run-layer use.
+  int potion_potency(PotionId id) const;
+
+  // Puts potions on the reward screen (§6.3). All taken at once if they all
+  // fit; otherwise all left in pending_potion_rewards for the player to
+  // choose from. With Sozu a claim obtains nothing, so they are lost.
+  void offer_potion_rewards(const std::vector<PotionId>& offered);
+
+  // Claims pending_potion_rewards[index] into a free slot. Refused when the
+  // belt is full: discard_potion makes room.
+  void take_potion_reward(int index);
+
+  // Proceed on a potion reward screen: whatever was not claimed is lost.
+  void close_potion_rewards();
+
+  // Drinks potions[index] out of combat (potion-effects.md §6.1). Only Blood
+  // Potion, Fruit Juice and Entropic Brew can be; refused for any other, in
+  // Phase::Combat (combat has its own action), and while a deck choice is
+  // open. Toy Ornithopter heals 5.
+  void drink_potion(int index);
+
+  // Heals the player outside combat, capped at max HP. Magic Flower does not
+  // apply out of combat.
+  void heal(int amount);
+
   // Draws a relic of `tier`, excluding any already held so a run never sees a
   // duplicate offered.
   // Empty when the tier is exhausted — every relic in it is already held. That
@@ -559,6 +610,10 @@ struct RunState {
 
   // Leaves the shop.
   void leave_shop();
+
+  // True while Cauldron's potion screen is open over the shop, which closes
+  // the shelves and the exit until close_potion_rewards().
+  bool shop_is_covered() const;
 
   // Card reward screens still owed after the current one (Prayer Wheel). A
   // COUNT of screens rather than extra cards, because the relic gives a second

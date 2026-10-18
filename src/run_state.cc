@@ -363,6 +363,24 @@ bool RunState::obtain_relic(RelicId id) {
       held_relic(id)->counter = kWingBootsCharges;
       break;
 
+    // Cauldron (potion-effects.md §6.2, Rob W2): five uniform draws over every
+    // potion, on the floor's potion stream, onto a reward screen. StS opens
+    // that screen with open(), whose setupItemReward rolls a card reward that
+    // onEquip then removes; the roll is kept for its effect on the rarity
+    // counter, at shop odds. The offer the player may already be looking at is
+    // left as it was.
+    case RelicId::Cauldron: {
+      std::vector<PotionId> brewed;
+      for (int i = 0; i < kCauldronPotions; ++i) {
+        brewed.push_back(any_potion(potion_rng_for_floor()));
+      }
+      const std::vector<Card> on_screen = card_reward;
+      generate_card_reward(RewardSource::Shop);
+      card_reward = on_screen;
+      offer_potion_rewards(brewed);
+      break;
+    }
+
     // The Bottles open a forced choice over the deck (§6.23). StS opens it only
     // when a candidate exists; with none, the relic is simply held. Spawn
     // gating makes that unreachable for a DRAWN Bottle, but the check keeps an
@@ -451,6 +469,94 @@ void RunState::discard_potion(int index) {
   potions.erase(potions.begin() + index);
 }
 
+std::mt19937& RunState::potion_rng_for_floor() {
+  if (floor_potion_rng_floor != floor) {
+    floor_potion_rng =
+        make_stream(run_seed, RngStream::Potion, static_cast<uint32_t>(floor));
+    floor_potion_rng_floor = floor;
+  }
+  return floor_potion_rng;
+}
+
+int RunState::potion_potency(PotionId id) const {
+  const int base = potion_base_potency(id);
+  return has_relic(RelicId::SacredBark) ? base * 2 : base;
+}
+
+void RunState::offer_potion_rewards(const std::vector<PotionId>& offered) {
+  // RewardItem.claimReward with Sozu flashes the relic and consumes the
+  // reward: nothing to choose, so nothing waits.
+  if (has_relic(RelicId::Sozu)) return;
+  std::vector<PotionId> all = pending_potion_rewards;
+  all.insert(all.end(), offered.begin(), offered.end());
+  // All fit: take them all. Holding a potion is never worse than leaving it,
+  // since discard is free, so the automatic take decides nothing.
+  const int free_slots = potion_slots - static_cast<int>(potions.size());
+  if (static_cast<int>(all.size()) <= free_slots) {
+    for (PotionId id : all) obtain_potion(id);
+    pending_potion_rewards.clear();
+    return;
+  }
+  pending_potion_rewards = all;
+}
+
+void RunState::take_potion_reward(int index) {
+  if (has_pending_deck_choice()) return;
+  if (index < 0 || index >= static_cast<int>(pending_potion_rewards.size())) {
+    return;
+  }
+  // claimReward returns false on a full belt and the reward stays.
+  if (!obtain_potion(pending_potion_rewards[index])) return;
+  pending_potion_rewards.erase(pending_potion_rewards.begin() + index);
+}
+
+void RunState::close_potion_rewards() { pending_potion_rewards.clear(); }
+
+void RunState::heal(int amount) {
+  if (amount <= 0) return;
+  hp = std::min(max_hp, hp + amount);
+}
+
+void RunState::drink_potion(int index) {
+  if (phase == Phase::Combat || has_pending_deck_choice()) return;
+  if (index < 0 || index >= static_cast<int>(potions.size())) return;
+  const PotionId id = potions[index];
+  // AbstractPotion.canUse is combat-only; these three override it.
+  if (id != PotionId::BloodPotion && id != PotionId::FruitJuice &&
+      id != PotionId::EntropicBrew) {
+    return;
+  }
+
+  // PotionPopUp: the potion's use, every relic's onUsePotion, then the slot
+  // is freed. Entropic Brew's potions arrive as effects that run after that,
+  // so it refills its own slot.
+  std::vector<PotionId> brewed;
+  switch (id) {
+    case PotionId::BloodPotion:
+      // (int)(maxHealth * potency / 100f); the integer form is exact (§5.4).
+      heal(max_hp * potion_potency(id) / 100);
+      break;
+    case PotionId::FruitJuice:
+      gain_max_hp(potion_potency(id));
+      break;
+    case PotionId::EntropicBrew:
+      // Out of combat: unlimited (Fruit Juice can appear), one roll per belt
+      // slot, and with Sozu nothing is rolled at all.
+      if (!has_relic(RelicId::Sozu)) {
+        for (int i = 0; i < potion_slots; ++i) {
+          brewed.push_back(random_potion(potion_rng_for_floor(), false));
+        }
+      }
+      break;
+    default:
+      break;
+  }
+  // Out of combat, so Magic Flower does not apply.
+  if (has_relic(RelicId::ToyOrnithopter)) heal(kToyOrnithopterHeal);
+  potions.erase(potions.begin() + index);
+  for (PotionId p : brewed) obtain_potion(p);
+}
+
 RelicTier relic_tier_standard(std::mt19937& rng) {
   const int roll = std::uniform_int_distribution<int>(0, 99)(rng);
   if (roll < kRelicTierChances[0]) return RelicTier::Common;
@@ -486,8 +592,10 @@ std::optional<RelicId> RunState::random_relic(
 }
 
 void RunState::roll_potion_drop(int rewards_already_on_screen, bool grant) {
-  std::mt19937 rng =
-      make_stream(run_seed, RngStream::Potion, static_cast<uint32_t>(floor));
+  // The floor's generator, continued — after a fight it is the one combat
+  // handed back, so an Entropic Brew drunk there and this roll never share
+  // numbers (§5.6).
+  std::mt19937& rng = potion_rng_for_floor();
 
   // Elite and normal fights drop potions at the same rate — the fight's kind
   // does not enter into it, which is why this takes no RewardSource.
@@ -515,17 +623,12 @@ void RunState::roll_potion_drop(int rewards_already_on_screen, bool grant) {
   // Hit: the chance goes DOWN. Symmetric drift, not a one-way pity counter.
   potion_chance_bonus -= 10;
 
-  // Rarity roll, then draw. Common 65 / uncommon 25 / rare 10.
-  const int rarity_roll = std::uniform_int_distribution<int>(0, 99)(rng);
-  const PotionRarity rarity = rarity_roll < 65    ? PotionRarity::Common
-                              : rarity_roll < 90  ? PotionRarity::Uncommon
-                                                  : PotionRarity::Rare;
-  const std::vector<PotionId>& pool = potion_pool(rarity);
-  const PotionId drop =
-      pool[std::uniform_int_distribution<size_t>(0, pool.size() - 1)(rng)];
+  // returnRandomPotion(): rarity roll (65 / 25 / 10), then a draw.
+  const PotionId drop = random_potion(rng, /*limited=*/false);
 
-  // A full belt simply means the drop is lost, which is what happens in game.
-  if (grant) obtain_potion(drop);
+  // Onto the reward screen: taken at once if there is room, else it waits
+  // for the player to make room (Rob W1, §6.3) — it is no longer lost.
+  if (grant) offer_potion_rewards({drop});
 }
 
 ChestSize chest_size_for_roll(int size_roll) {
@@ -1055,8 +1158,14 @@ int RunState::removal_price() const {
                           kRemovePriceIncrease * shop_remove_count);
 }
 
+// Cauldron's reward screen sits over the shop: until it is closed, nothing on
+// the shelves can be bought and the shop cannot be left (§6.2).
+bool RunState::shop_is_covered() const {
+  return phase == Phase::Shop && !pending_potion_rewards.empty();
+}
+
 void RunState::buy_relic(int index) {
-  if (has_pending_deck_choice()) return;
+  if (has_pending_deck_choice() || shop_is_covered()) return;
   if (phase != Phase::Shop) return;
   if (index < 0 || index >= static_cast<int>(shop_relics.size())) return;
   ShopRelic& offer = shop_relics[index];
@@ -1071,7 +1180,7 @@ void RunState::buy_relic(int index) {
 }
 
 void RunState::buy_potion(int index) {
-  if (has_pending_deck_choice()) return;
+  if (has_pending_deck_choice() || shop_is_covered()) return;
   if (phase != Phase::Shop) return;
   if (index < 0 || index >= static_cast<int>(shop_potions.size())) return;
   ShopPotion& offer = shop_potions[index];
@@ -1086,7 +1195,7 @@ void RunState::buy_potion(int index) {
 }
 
 void RunState::buy_card(int index) {
-  if (has_pending_deck_choice()) return;
+  if (has_pending_deck_choice() || shop_is_covered()) return;
   if (phase != Phase::Shop) return;
   if (index < 0 || index >= static_cast<int>(shop_cards.size())) return;
   ShopItem& item = shop_cards[index];
@@ -1100,7 +1209,7 @@ void RunState::buy_card(int index) {
 }
 
 void RunState::buy_card_removal(int deck_index) {
-  if (has_pending_deck_choice()) return;
+  if (has_pending_deck_choice() || shop_is_covered()) return;
   if (phase != Phase::Shop) return;
   if (shop_remove_price < 0 || gold < shop_remove_price) return;
 
@@ -1116,7 +1225,7 @@ void RunState::buy_card_removal(int deck_index) {
 }
 
 void RunState::leave_shop() {
-  if (has_pending_deck_choice()) return;
+  if (has_pending_deck_choice() || shop_is_covered()) return;
   if (phase != Phase::Shop) return;
   // All three shelves, not just the cards: the header documents the whole block
   // as empty outside Phase::Shop, and anything reading it later — the v2
@@ -1348,6 +1457,8 @@ void RunState::begin_combat(EncounterPool pool) {
   setup.relics = relics;
   setup.potions = potions;
   setup.potion_slots = potion_slots;
+  // Lent to the fight and taken back by end_combat (potion-effects.md §5.6).
+  setup.potion_rng = potion_rng_for_floor();
   combat = start_combat(std::move(setup));
 
   in_combat = true;
@@ -1390,6 +1501,12 @@ void RunState::end_combat() {
   // (§3.3). Potions carry too, so any drunk during the fight are simply gone.
   relics = combat.relics;
   potions = combat.potions;
+  // The floor's potion generator comes back as the fight left it, so the drop
+  // below continues after any Entropic Brew drunk in the fight (§5.6). The
+  // floor is recorded with it, or the drop would take a generator from a
+  // different floor as stale and derive a fresh one over it.
+  floor_potion_rng = combat.potion_rng;
+  floor_potion_rng_floor = floor;
 
   // Discarded: every pile. The master deck is the truth, so combat's copies —
   // including any Wound/Dazed/Slimed/Burn the enemy added — simply go away.
@@ -1502,6 +1619,29 @@ void RunState::advance_to_next_floor(EncounterPool pool) {
   begin_combat(pool);
 }
 
+CardRarity card_rarity_for_roll(int roll, RewardSource source) {
+  int rare_chance = 3;
+  int uncommon_chance = 37;
+  switch (source) {
+    case RewardSource::Elite:
+      rare_chance = 10;
+      uncommon_chance = 40;
+      break;
+    case RewardSource::Shop:
+      // ShopRoom's baseRareCardChance, and getCardRarity(roll, false): no
+      // relic alters a shop's odds.
+      rare_chance = 9;
+      break;
+    case RewardSource::Boss:
+      return CardRarity::Rare;
+    case RewardSource::Monster:
+      break;
+  }
+  if (roll < rare_chance) return CardRarity::Rare;
+  if (roll < rare_chance + uncommon_chance) return CardRarity::Uncommon;
+  return CardRarity::Common;
+}
+
 CardRarity RunState::roll_card_rarity(std::mt19937& rng, RewardSource source) {
   // A boss reward is always rare, and bypasses the roll entirely — but it still
   // resets the pity counter, which is easy to miss.
@@ -1510,23 +1650,11 @@ CardRarity RunState::roll_card_rarity(std::mt19937& rng, RewardSource source) {
     return CardRarity::Rare;
   }
 
-  const bool elite = source == RewardSource::Elite;
-  const int rare_chance = elite ? 10 : 3;
-  const int uncommon_chance = elite ? 40 : 37;
-
   // random(99) is inclusive of 99 in the source we ported from.
   const int roll =
       static_cast<int>(std::uniform_int_distribution<int>(0, 99)(rng)) +
       card_rarity_factor;
-
-  CardRarity rarity;
-  if (roll < rare_chance) {
-    rarity = CardRarity::Rare;
-  } else if (roll < rare_chance + uncommon_chance) {
-    rarity = CardRarity::Uncommon;
-  } else {
-    rarity = CardRarity::Common;
-  }
+  const CardRarity rarity = card_rarity_for_roll(roll, source);
 
   // Drift. Uncommon leaves the counter ALONE — only commons walk it down and
   // only a rare resets it. Treating uncommon as a decrement would make rares
@@ -1632,6 +1760,8 @@ void RunState::skip_card_reward() {
 
 void RunState::leave_room() {
   if (is_terminal()) return;
+  // Potion rewards left on the screen are lost with it (§6.3).
+  pending_potion_rewards.clear();
 
   // A room that pays a Bottled relic — a chest, a Dig — does not exit while
   // the choice is open: in StS the grid select sits over the room. The exit is
