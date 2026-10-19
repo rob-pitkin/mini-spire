@@ -252,7 +252,12 @@ per §1.
 
 ---
 
-## 7. Status: 126 of 140 wired
+## 7. Status: 129 of 140 wired
+
+The 11 not wired, enumerated against the `RelicId` enum on 2026-10-18 (not
+estimated): Pantograph; Orrery, Dolly's Mirror; Frozen Eye; Neow's Lament, Odd
+Mushroom, Warped Tongs, Spirit Poop, Face of Cleric, Ssserpent Head, N'loth's
+Hungry Face. The table below groups them by blocker.
 
 ⚠️ **Velvet Choker was counted for 125 while only half wired** (found
 2026-10-18, task #51): its +1 energy sat in the energy-relic list, so the
@@ -278,17 +283,18 @@ tree appears only on a comment line, so the discrepancy is not comment noise.
 One of the two counts used a different rule and neither recorded which, which is
 the whole argument for pinning the command here.
 
-The 14 remaining are not one backlog. **Most are blocked on engine pieces that
+The 11 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
 |---|---|---|
 | ~~**Missing `Power`s**~~ | ~~Bronze Scales, Akabeko, Incense Burner, Fossilized Helix, Thread and Needle, Pen Nib~~ | ✅ **done.** All six Powers exist: Vigor, PenNibCharge, Intangible, Buffer, Thorns, PlatedArmor. Intangible is the one power that ticks — a named exception to the status model (Rob, 2026-09-12). Regen and Duplication have since joined it, and since 2026-10-10 it ticks at the end of the round rather than the player's turn, so Incense Burner's Intangible protects the enemy phase (`debuff-timing.md`). |
-| **No curse acquisition** | Omamori, Darkstone Periapt, Calling Bell, and the unreachable halves of Du-Vu Doll and Cursed Key | §6.4. ✅ **All eleven curses' effects now work** (2026-10-18, `curse-effects.md`), and **Blue Candle is wired** with them: it is combat-only. What is left needs a single path by which a curse enters the deck (`curse-effects.md` §6). Calling Bell moved here from the choice-screen row (Rob, §6.30 P1): its Curse of the Bell must pass through Omamori and Darkstone Periapt |
+| ~~**No curse acquisition**~~ | ~~Omamori, Darkstone Periapt, Calling Bell, and the unreachable halves of Du-Vu Doll and Cursed Key~~ | ✅ **cleared** (2026-10-18, `curse-effects.md`). All eleven curses' effects work, Blue Candle with them, and `add_card` is the obtain step: Omamori negates first, Darkstone Periapt counts what gets through, Calling Bell and Cursed Key bring curses in (§6 there). Calling Bell and Cursed Key stay unreachable until Neow. One gap is recorded: leaving a chest closed under Cursed Key (`v2-spec.md` §9) |
 | ~~**No colorless cards**~~ | ~~Toolbox, half of Prismatic Shard~~ | ✅ **cleared.** All 35 colorless cards are implemented (`colorless-effects.md`) and the shop's 2 colorless slots now stock. **Toolbox** is wired: a 1-of-3 colorless choice that pauses combat setup BEFORE the opening hand (§6.9 — Rob ruled, 2026-09-20). **Prismatic Shard** is now unblocked: §6.8 was ruled (Rob, 2026-09-21) to the Colorless half only, a deliberate divergence recorded in the README. ⚠️ CORRECTED earlier: Orrery, Dolly's Mirror and Cauldron never needed colorless — Cauldron is potions only, and the other two need a shop CHOICE SCREEN over normal card rewards. |
 | **Needs a shop choice screen** | Orrery, Dolly's Mirror | moved here from the colorless row |
 | ~~**Needs potion effects**~~ | ~~Cauldron~~ | ✅ **done** with potion step 6 (2026-10-18, `potion-effects.md` §6.2): five uniform potions onto a potion reward screen, and the hidden card reward StS rolls and removes. Cauldron moved here from the colorless row. ✅ **Toy Ornithopter and Sacred Bark wired** with potion step 1 (2026-10-05): `Hook::PotionDrunk` fires after a potion's effects, and Sacred Bark doubles `potion_potency`. |
-| **No events** | Neow's Lament, Odd Mushroom, Warped Tongs, Spirit Poop, and the 5 Face Trader masks | 10 of the special-tier relics |
+| **No events** | Neow's Lament, Odd Mushroom, Warped Tongs, Spirit Poop, Face of Cleric, Ssserpent Head, N'loth's Hungry Face | 7 of the 10 special-tier relics (recounted 2026-10-18; this row said "10" and listed all five masks). Golden Idol, Gremlin Visage and Cultist Headpiece are referenced from code already |
+| **Excluded by design** | Frozen Eye | not in any pool: it reveals draw-pile order, which nothing can show (`v2-spec.md` §9). Missing from this table until the 2026-10-18 recount |
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |
 | **No boss encounter** | Pantograph | heals only at the start of a boss fight |
 | **Needs a choice screen** | ~~Gambling Chip~~, ~~Empty Cage~~, ~~Astrolabe~~, ~~Pandora's Box~~, **Tiny House** — its card reward only | all pause for player input. ✅ **Empty Cage, Astrolabe and Pandora's Box wired** (2026-10-18, §6.30) on the run-layer deck choice with new Remove and Transform purposes; Pandora's Box turned out to need no choice at all. Calling Bell moved to the curse row. ✅ **Gambling Chip wired** with potion step 2 (2026-10-10): it is Gambler's Brew's discard-any-then-draw choice on turn 1's post-draw hook (`potion-effects.md` §5.7), and it left `v2-spec.md` §9's divergence table. Tiny House is the one relic that is half wired: its other four payouts shipped in §6.14, and its card reward did not (§6.14 explains why that half was missed). **A run-layer deck choice now exists** (§6.23, `pending_deck_choices`) — Empty Cage (remove 2) and Astrolabe (transform 3) need a new purpose on it, not a new mechanism |
@@ -344,7 +350,7 @@ than the real relic.**
 | Fusion Hammer | cannot Smith | ✅ done (batch 2b) |
 | Ectoplasm | cannot gain gold | ✅ done (batch 2d) |
 | Busted Crown | fewer card reward options | ✅ done (batch 2d) |
-| Cursed Key | chests give a Curse | **blocked** — needs curses in the deck |
+| Cursed Key | chests give a Curse | ✅ done (2026-10-18, `curse-effects.md` §6). Leaving a chest closed to avoid it is a recorded gap until Neow (`v2-spec.md` §9) |
 | Philosopher's Stone | all enemies +1 Strength | batch 3 (combat start) |
 | Mark of Pain | 2 Wounds into the draw pile | batch 3 — needs card generation |
 | Velvet Choker | max 6 cards per turn | ✅ done (2026-10-18, `curse-effects.md` §3.3): the cards-played counter Normality also reads, and an `is_playable` rule |

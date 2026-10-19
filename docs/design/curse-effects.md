@@ -12,8 +12,11 @@ overruled, so card damage is computed when the card is played, as in StS
 3. **Built:** §3.3, §3.4, §3.6, §3.7. Pain, Normality, Velvet Choker, Blue
    Candle and the cards-played counter. Tests and mutations in §5.3.
 
-All five data-only curses now have effects. What remains of task #4 is curse
-acquisition (§6).
+All five data-only curses now have effects.
+
+4. **Built:** §6, curse acquisition: Omamori, Darkstone Periapt, Calling Bell
+   and Cursed Key's chest curse. One gap is recorded rather than built: a
+   player leaving a chest closed under Cursed Key (§6.4 D3).
 
 Five curses exist as card data with no reader: Regret, Doubt, Shame, Pain and
 Normality (`card.h`'s curse block). Three of them act at the end of the turn on
@@ -538,10 +541,174 @@ assertion stayed, and the Buffer–Hemokinesis test was added to pin the order.
 One planned mutation was dropped as unobservable: counting end-of-turn cards
 as plays. The count resets at the next turn's start, before anything reads it.
 
-## 6. Next: curse acquisition
+## 6. Curse acquisition — design
 
-The other half of task #4's relics needs a single path by which a curse enters
-the deck. Omamori negates it, Darkstone Periapt gives Max HP, Calling Bell grants
-Curse of the Bell plus three relics, and Cursed Key's chests give one. Du-Vu Doll
-already counts curses at fight start (`action.cc`, `RelicId::DuVuDoll`) and only
-needs them to arrive. This is its own design, still to be written.
+**Status:** agreed with Rob, 2026-10-18: D1–D5 as recommended. Built (§6.5,
+§6.6).
+
+Four relics act when a curse joins the deck: Omamori negates it, Darkstone
+Periapt gives Max HP for it, and Calling Bell and Cursed Key are two ways it
+arrives. Du-Vu Doll already counts curses at fight start (`action.cc`,
+`RelicId::DuVuDoll`) and needs nothing.
+
+### 6.1 What StS does
+
+Sources: decompiled `relics/{Omamori,DarkstonePeriapt,CallingBell,CursedKey}`,
+`vfx/cardManip/ShowCardAndObtainEffect`, `vfx/FastCardObtainEffect`,
+`screens/select/GridCardSelectScreen` (the confirmation grid),
+`rewards/chests/AbstractChest.open`, `helpers/CardLibrary.getCurse`,
+`dungeons/AbstractDungeon` (`returnRandomCurse`,
+`returnRandomScreenlessRelic`). Wiki.gg Omamori, Darkstone Periapt, Calling
+Bell and Cursed Key, checked 2026-10-18; all agree with the Java.
+
+**Obtaining a card.** A card joins the deck through one of two effects,
+`ShowCardAndObtainEffect` (events, chests, transforms) or `FastCardObtainEffect`
+(the confirmation grid Calling Bell opens). Both do the same three things in
+order:
+
+1. **Omamori**, in the constructor: if the card is a curse and Omamori's counter
+   is not 0, `use()` takes a charge and the effect ends before anything else.
+   The card is not added, and no relic hears about it.
+2. Every relic's `onObtainCard`, in acquisition order: Ceramic Fish's 9 gold,
+   the Eggs' upgrade, **Darkstone Periapt**: a curse gives `increaseMaxHp(6)`,
+   which also heals 6.
+3. The card is added to the deck.
+
+So a negated curse gives no Max HP and no Ceramic Fish gold (wiki Omamori:
+"Curses blocked by Omamori will not trigger the Max HP gain"). A curse
+transformed into a curse with Omamori held is negated, which removes the
+original (wiki: "effectively remove the original curse from the deck").
+Omamori starts at 2 charges and is spent at 0.
+
+**Calling Bell** (`onEquip`): Curse of the Bell is obtained through the
+confirmation grid, so through `FastCardObtainEffect`, Omamori and Darkstone
+included. Only then, in `update`, a reward screen offers a Common, an Uncommon
+and a Rare relic from `returnRandomScreenlessRelic`, which redraws Bottled Flame,
+Bottled Lightning, Bottled Tornado and Whetstone. Because the curse comes
+first, an Omamori or Darkstone Periapt among the three relics does not act on
+it (both wiki pages say so).
+
+**Cursed Key** (`onChestOpen`, non-boss chests only): `AbstractChest.open` fires
+every relic's `onChestOpen` before the chest rolls its gold and adds its relic.
+Cursed Key obtains `returnRandomCurse()` there: `CardLibrary.getCurse`, a
+uniform pick over the curses except Ascender's Bane, Necronomicurse, Curse of
+the Bell and Pride, drawn from `cardRng`, the card-reward stream. So an Omamori
+from that chest cannot block it. The wiki adds that a player who does not open
+the chest gets no curse.
+
+### 6.2 What the engine has
+
+- `RunState::add_card` is the one path into the deck. The starter deck, card
+  rewards, shop purchases, Astrolabe and Pandora's Box all go through it (read
+  at each call site). A search for `push_back`, `emplace_back` and `insert` on
+  a deck in `src/` matched only `add_card`'s own line; that pattern would miss
+  an assignment to the whole vector. It applies the Eggs, adds the card, then
+  pays Ceramic Fish.
+- `open_chest` rolls the chest on the Relic stream, then handles Matryoshka,
+  then obtains the chest's relic. Every chest is opened; the treasure room is a
+  pass-through with no decision (`v2-spec.md` §4, §6.4).
+- `random_relic(tier, rng, exclude)` draws without replacement from a tier,
+  skipping held and excluded relics.
+- `gain_max_hp` raises Max HP and heals by the same amount.
+- `CURSE_POOL` holds exactly `getCurse`'s ten curses.
+- Calling Bell and Cursed Key are boss relics. No boss relic can be obtained in
+  an Act 1 run until Neow exists (`relic-effects.md` §6.2), so both are latent.
+  Omamori and Darkstone Periapt can be obtained today, but no curse reaches a
+  deck in a run yet, so they have nothing to act on.
+
+### 6.3 Design
+
+1. **`add_card` follows the obtain effects.** First: a curse with Omamori held
+   and its counter above 0 takes a charge and is not added. Nothing else
+   happens: no Eggs, no Ceramic Fish, no Darkstone. Otherwise the current
+   steps, plus Darkstone Periapt: a curse calls `gain_max_hp(6)`. Order among
+   the `onObtainCard` effects cannot be observed (gold, Max HP and an upgrade
+   do not interact), so they stay where they are.
+2. **Omamori** starts at 2 in `obtain_relic`'s counter setup, beside Matryoshka;
+   0 is spent, as in StS.
+3. **Cursed Key** in `open_chest`, first, before the chest's own rolls and before
+   Matryoshka: obtain a uniform curse from `CURSE_POOL` through `add_card`. The
+   draw comes from its own stream (D2), so it cannot shift the chest's rolls.
+4. **Calling Bell** in `obtain_relic`: `add_card(Curse of the Bell)`, then obtain
+   a Common, an Uncommon and a Rare relic in that order, each from
+   `random_relic` with the four non-screenless relics excluded, drawn from
+   `make_stream(run_seed, RelicEffect, CallingBell)` as Astrolabe and Pandora's
+   Box do (D4).
+
+### 6.4 Questions for Rob
+
+Ruled 2026-10-18; each answer follows its question.
+
+**D1. `add_card` as the obtain funnel, with Omamori first (§6.3 1)?** Recommend
+yes. It is the one deck path already, and it puts the transform case right
+without a special rule. **Ruled: yes.**
+
+**D2. Cursed Key's stream.** StS draws from `cardRng`, the card-reward RNG.
+Recommend the CardReward stream at the chest's floor. A treasure floor draws no
+card reward, so this cannot collide, and the coupling to later card rewards
+that StS has cannot exist anyway: the engine's streams are per floor.
+**Ruled: as recommended.**
+
+**D3. Skipping the chest.** With Cursed Key a human can decline to open a chest
+and avoid the curse; the engine opens every chest. Options: (a) keep opening
+automatically, record it as a divergence, and add the choice when Neow makes
+Cursed Key obtainable; (b) add an open-or-skip decision to the treasure room
+now. Recommend (a): the choice cannot arise until then, and it is a new
+decision point in the treasure room's design, not part of this relic.
+**Ruled: (a).** Recorded as a known gap in `v2-spec.md` §9's auto-resolve
+table, with a task to build the decision alongside Neow.
+
+**D4. Calling Bell's three relics.** StS puts them on a reward screen. The
+engine grants chest and elite relics automatically (`v2-spec.md` §6.4).
+Recommend granting these the same way. Their stream: RelicEffect indexed by
+Calling Bell, which cannot collide with the floor's other relic draws.
+**Ruled: as recommended.**
+
+**D5. Latent relics.** Calling Bell and Cursed Key cannot be obtained in a run
+until Neow exists. Recommend building them now, as with Velvet Choker, so the
+relic count is real and the tests pin them. **Ruled: as recommended.**
+
+### 6.5 As built
+
+As §6.3, in `run_state.cc`: `add_card` (Omamori, then the existing steps, then
+Darkstone), `obtain_relic`'s Omamori and Calling Bell cases, and the Cursed Key
+block at the top of `open_chest`. Constants `kOmamoriCharges`,
+`kDarkstoneMaxHp` in `relic.h`. Relics 129/140.
+
+### 6.6 Tests and mutations
+
+`tests/test_relic_state.cc`, `CurseAcquisition.*` (13). No test depends on a
+draw. Where a test needs a particular relic granted, it holds every other
+candidate of that tier (`hold_all_of_tier_except`, pushed without their
+pickup effects), so the draw has one possible answer; where it checks a draw it
+checks an invariant (in `CURSE_POOL`, one relic per tier).
+
+- Omamori negates two curses and then not a third, and a negated curse pays no
+  Ceramic Fish gold. It ignores a Strike and a Wound.
+- Darkstone Periapt: +6 Max HP and +6 HP per curse, nothing for a Strike, and
+  nothing for a curse Omamori negates.
+- Astrolabe transforming a curse with Omamori held leaves no curse and spends
+  a charge.
+- Cursed Key: a chest adds exactly one curse, from `CURSE_POOL`; no chest card
+  without it; an Omamori already held blocks it.
+- Calling Bell: Curse of the Bell, then one relic each of Common, Uncommon and
+  Rare; never one of the four screen relics (every other candidate held, so a
+  broken exclusion would have to grant one); an Omamori already held blocks the
+  curse and a Darkstone already held counts it; an Omamori and a Darkstone
+  granted by the Bell itself do neither.
+
+**Mutations, all caught:**
+- a negated curse paying Ceramic Fish;
+- a negated curse giving Darkstone's Max HP;
+- Darkstone counting every card;
+- Calling Bell's relics before its curse;
+- Calling Bell's curse added to the deck directly, past `add_card`;
+- the screen-relic exclusion removed;
+- Cursed Key's curse added past `add_card`;
+- Omamori's counter not set to 2;
+- a negated curse still added.
+
+**Not tested: Cursed Key's curse arriving before the chest's own relic.** It
+shows only when the chest's relic is an Omamori, and which tier the chest gives
+is its own random roll. A test would need that roll fixtured. The order is the
+code's: the Cursed Key block is the first thing `open_chest` does.

@@ -2248,5 +2248,168 @@ TEST(DeckChange, PandorasBoxReplacesEveryStrikeAndDefend) {
   EXPECT_EQ(run.gold, gold + 5 * kCeramicFishGold);
 }
 
+// ===================================================== curse acquisition
+// curse-effects.md §6. Draws are never fixtured: a test that needs a particular
+// relic drawn holds every other candidate of that tier, so the draw has one
+// possible answer.
+
+// Hold every relic of `tier` except `keep`, WITHOUT their pickup effects, so a
+// draw from the tier can only be one of `keep`.
+void hold_all_of_tier_except(RunState& run, RelicTier tier,
+                             std::vector<RelicId> keep) {
+  for (RelicId id : relic_pool(tier)) {
+    if (std::find(keep.begin(), keep.end(), id) != keep.end()) continue;
+    if (!run.has_relic(id)) run.relics.push_back(HeldRelic{id, 0});
+  }
+}
+
+int counter_of(RunState& run, RelicId id) { return run.held_relic(id)->counter; }
+
+TEST(CurseAcquisition, OmamoriNegatesTwoCursesAndNotAThird) {
+  // A negated curse never reaches onObtainCard: no Ceramic Fish gold for it.
+  RunState run = with_deck({}, {RelicId::Omamori, RelicId::CeramicFish});
+  ASSERT_EQ(counter_of(run, RelicId::Omamori), kOmamoriCharges);
+  const int gold = run.gold;
+  for (int i = 0; i < 3; ++i) run.add_card(Card{CardId::Injury});
+  EXPECT_EQ(count_id(run, CardId::Injury), 1);
+  EXPECT_EQ(counter_of(run, RelicId::Omamori), 0);
+  EXPECT_EQ(run.gold, gold + kCeramicFishGold);
+}
+
+TEST(CurseAcquisition, OmamoriIgnoresCardsThatAreNotCurses) {
+  RunState run = with_deck({}, {RelicId::Omamori});
+  run.add_card(Card{CardId::Strike});
+  run.add_card(Card{CardId::Wound});  // a Status is not a curse
+  EXPECT_EQ(run.master_deck.size(), 2u);
+  EXPECT_EQ(counter_of(run, RelicId::Omamori), kOmamoriCharges);
+}
+
+TEST(CurseAcquisition, DarkstonePeriaptGivesMaxHpAndHpPerCurse) {
+  RunState run = with_deck({}, {RelicId::DarkstonePeriapt});
+  run.hp = 50;
+  const int max_hp = run.max_hp;
+  run.add_card(Card{CardId::Injury});
+  EXPECT_EQ(run.max_hp, max_hp + kDarkstoneMaxHp);
+  EXPECT_EQ(run.hp, 50 + kDarkstoneMaxHp);
+  run.add_card(Card{CardId::Strike});
+  EXPECT_EQ(run.max_hp, max_hp + kDarkstoneMaxHp) << "a Strike is not a curse";
+}
+
+TEST(CurseAcquisition, ACurseOmamoriNegatesGivesDarkstoneNothing) {
+  RunState run = with_deck({}, {RelicId::Omamori, RelicId::DarkstonePeriapt});
+  const int max_hp = run.max_hp;
+  run.add_card(Card{CardId::Injury});
+  EXPECT_EQ(count_id(run, CardId::Injury), 0);
+  EXPECT_EQ(run.max_hp, max_hp);
+}
+
+TEST(CurseAcquisition, AstrolabeTransformingACurseUnderOmamoriRemovesIt) {
+  // Three purgeable cards, so Astrolabe takes all of them at once. The curse's
+  // replacement is another curse, which Omamori negates (wiki.gg Omamori).
+  RunState run = with_deck({CardId::Injury, CardId::Strike, CardId::Defend},
+                           {RelicId::Omamori});
+  run.obtain_relic(RelicId::Astrolabe);
+  ASSERT_FALSE(run.has_pending_deck_choice());
+  EXPECT_EQ(run.master_deck.size(), 2u);
+  for (const Card& c : run.master_deck) {
+    EXPECT_NE(CARD_DATABASE.at(c.card_id).type, CardType::Curse);
+  }
+  EXPECT_EQ(counter_of(run, RelicId::Omamori), kOmamoriCharges - 1);
+}
+
+TEST(CurseAcquisition, CursedKeyAddsACurseFromThePoolWhenAChestOpens) {
+  RunState run = with_deck({}, {RelicId::CursedKey});
+  run.open_chest();
+  int curses = 0;
+  for (const Card& c : run.master_deck) {
+    if (CARD_DATABASE.at(c.card_id).type != CardType::Curse) continue;
+    ++curses;
+    EXPECT_EQ(std::count(CURSE_POOL.begin(), CURSE_POOL.end(), c.card_id), 1)
+        << "not one of getCurse's ten";
+  }
+  EXPECT_EQ(curses, 1);
+}
+
+TEST(CurseAcquisition, AChestWithoutCursedKeyAddsNoCard) {
+  RunState run = with_deck({}, {});
+  run.open_chest();
+  EXPECT_TRUE(run.master_deck.empty());
+}
+
+TEST(CurseAcquisition, OmamoriAlreadyHeldBlocksCursedKeysCurse) {
+  RunState run = with_deck({}, {RelicId::Omamori, RelicId::CursedKey});
+  run.open_chest();
+  EXPECT_TRUE(run.master_deck.empty());
+  EXPECT_EQ(counter_of(run, RelicId::Omamori), kOmamoriCharges - 1);
+}
+
+TEST(CurseAcquisition, CallingBellGivesItsCurseAndOneRelicOfEachTier) {
+  RunState run = with_deck({}, {});
+  const std::size_t held_before = run.relics.size();
+  run.obtain_relic(RelicId::CallingBell);
+  EXPECT_EQ(count_id(run, CardId::CurseOfTheBell), 1);
+  ASSERT_EQ(run.relics.size(), held_before + 4);  // the Bell and three more
+  std::vector<RelicTier> tiers;
+  for (std::size_t i = held_before + 1; i < run.relics.size(); ++i) {
+    tiers.push_back(relic_tier(run.relics[i].id));
+  }
+  EXPECT_EQ(tiers, (std::vector<RelicTier>{RelicTier::Common,
+                                           RelicTier::Uncommon,
+                                           RelicTier::Rare}));
+}
+
+TEST(CurseAcquisition, CallingBellNeverGivesARelicThatOpensAScreen) {
+  // Every candidate held but the four returnRandomScreenlessRelic redraws: no
+  // tier has anything left to give.
+  const std::vector<RelicId> screens = {RelicId::BottledFlame,
+                                        RelicId::BottledLightning,
+                                        RelicId::BottledTornado,
+                                        RelicId::Whetstone};
+  RunState run = with_deck({}, {});
+  for (RelicTier tier :
+       {RelicTier::Common, RelicTier::Uncommon, RelicTier::Rare}) {
+    hold_all_of_tier_except(run, tier, screens);
+  }
+  run.obtain_relic(RelicId::CallingBell);
+  for (RelicId id : screens) EXPECT_FALSE(run.has_relic(id));
+}
+
+TEST(CurseAcquisition, OmamoriAlreadyHeldBlocksTheBellsCurse) {
+  RunState run = with_deck({}, {RelicId::Omamori});
+  run.obtain_relic(RelicId::CallingBell);
+  EXPECT_EQ(count_id(run, CardId::CurseOfTheBell), 0);
+  EXPECT_EQ(counter_of(run, RelicId::Omamori), kOmamoriCharges - 1);
+}
+
+TEST(CurseAcquisition, DarkstoneAlreadyHeldCountsTheBellsCurse) {
+  // Every Common, Uncommon and Rare is held, so the Bell grants no relic and
+  // nothing else can move Max HP: the +6 is Darkstone's, for the curse.
+  RunState run = with_deck({}, {RelicId::DarkstonePeriapt});
+  for (RelicTier tier :
+       {RelicTier::Common, RelicTier::Uncommon, RelicTier::Rare}) {
+    hold_all_of_tier_except(run, tier, {});
+  }
+  const int max_hp = run.max_hp;
+  run.obtain_relic(RelicId::CallingBell);
+  EXPECT_EQ(run.max_hp, max_hp + kDarkstoneMaxHp);
+}
+
+TEST(CurseAcquisition, TheBellsOwnOmamoriAndDarkstoneComeTooLateForItsCurse) {
+  // The Common draw can only be Omamori and the Uncommon only Darkstone
+  // Periapt; every Rare is held, so the Rare draw gives nothing. The curse
+  // arrives first, so neither acts on it.
+  RunState run = with_deck({}, {});
+  hold_all_of_tier_except(run, RelicTier::Common, {RelicId::Omamori});
+  hold_all_of_tier_except(run, RelicTier::Uncommon, {RelicId::DarkstonePeriapt});
+  hold_all_of_tier_except(run, RelicTier::Rare, {});
+  const int max_hp = run.max_hp;
+  run.obtain_relic(RelicId::CallingBell);
+  ASSERT_TRUE(run.has_relic(RelicId::Omamori));
+  ASSERT_TRUE(run.has_relic(RelicId::DarkstonePeriapt));
+  EXPECT_EQ(count_id(run, CardId::CurseOfTheBell), 1);
+  EXPECT_EQ(counter_of(run, RelicId::Omamori), kOmamoriCharges);
+  EXPECT_EQ(run.max_hp, max_hp);
+}
+
 }  // namespace
 }  // namespace minispire

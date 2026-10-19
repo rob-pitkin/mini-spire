@@ -67,7 +67,7 @@ it exists. Sections not listed here have no code behind them yet.
 | 4.2 | potion drops, elite relics, treasure chests | ✅ `run_state.cc` |
 | 4.3 | shops: 5 class cards + 2 colorless + 3 relics + 3 potions, pricing, sale slot, removal | ✅ **complete** — the colorless slots landed with the colorless card effects |
 | 5.1 | `RelicId` (140) and `PotionId` (33) vocabularies | ✅ `relic.{h,cc}`, `potion.{h,cc}` |
-| 3.0.1 | relics/potions as first-class `CombatState` | ✅ held, observed and usable; relic effects 126/140 (`relic-effects.md` §7), potion effects 33/33 (`potion-effects.md` §8 steps 1–6; the TUI belt is step 7) |
+| 3.0.1 | relics/potions as first-class `CombatState` | ✅ held, observed and usable; relic effects 129/140 (`relic-effects.md` §7), potion effects 33/33 (`potion-effects.md` §8 steps 1–6; the TUI belt is step 7) |
 | 4.4 | Neow | ❌ |
 | 8 | rest sites (rest / smith) | ✅ `run_state.cc` |
 | 5 | the v2 observation | ❌ — the env still emits v1.0.0's 1,772 floats |
@@ -1847,6 +1847,7 @@ would change the run's distribution.
 |---|---|
 | **Match and Keep!** (shrine: 12 face-down cards, 6 pairs, duplicate entities) | engine picks uniformly at random |
 | **Frozen Eye** (shows draw-pile *order*; informational, so auto-resolve does not apply) | **excluded from the shop pool** — the only true exclusion |
+| **Cursed Key: leaving a chest closed** (a human can skip a non-boss chest to avoid its curse) | the engine always opens the chest. **Temporary** (Rob, 2026-10-18, `curse-effects.md` §6.4 D3): the open-or-skip decision lands with Neow, which is what makes Cursed Key reachable |
 
 > **Gambling Chip left this table (Rob, 2026-10-05).** It was listed as "engine
 > discards nothing" because the engine could not express "discard any number".
@@ -2041,7 +2042,7 @@ a Linear board disagrees with it, the spec wins.
    design was built around). ⚠️ Lift/Toke/Dig need relics.
 7. Shops ✅ — all 14 slots stock, including the 2 colorless ones, which waited
    on the colorless card effects (`colorless-effects.md`). Relic and potion
-   effects are the remainder of this step: relics 126/140
+   effects are the remainder of this step: relics 129/140
    (`relic-effects.md` §7), potions 33/33 (`potion-effects.md` §8).
    Events ❌.
 8. Bosses → **M5: an agent that completes a run**.

@@ -258,6 +258,12 @@ inline constexpr int kVelvetChokerCards = 6;
 // curse-effects.md §3.6).
 inline constexpr int kBlueCandleHpLoss = 1;
 
+// Omamori: curses negated before it is spent (its constructor's counter; 0 is
+// spent, as Omamori.use leaves it). Darkstone Periapt: Max HP per curse
+// obtained (curse-effects.md §6).
+inline constexpr int kOmamoriCharges = 2;
+inline constexpr int kDarkstoneMaxHp = 6;
+
 // Lizard Tail revives the player once per run (potion-effects.md §5.4). The
 // counter's default 0 is unused; -2 is used, the value LizardTail.setCounter
 // treats as used up. RunState carries the counter between fights like any

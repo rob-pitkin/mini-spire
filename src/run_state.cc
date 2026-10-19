@@ -20,6 +20,20 @@ void RunState::apply_egg_upgrades(Card& card) const {
 }
 
 void RunState::add_card(Card card) {
+  // Omamori FIRST, as both StS obtain effects check it in their constructors:
+  // a curse it negates takes a charge and never joins the deck, and no relic
+  // hears of it — no Eggs, no Ceramic Fish, no Darkstone Periapt
+  // (curse-effects.md §6.1). A curse transformed into a curse is negated the
+  // same way, which is how Astrolabe ends up removing it (wiki.gg Omamori).
+  const bool curse = CARD_DATABASE.at(card.card_id).type == CardType::Curse;
+  if (curse) {
+    HeldRelic* omamori = held_relic(RelicId::Omamori);
+    if (omamori && omamori->counter > 0) {
+      --omamori->counter;
+      return;
+    }
+  }
+
   // Eggs BEFORE the card joins the deck: StS fires onObtainCard ahead of
   // souls.obtain, which is what adds it. A card offered by a reward or the shop
   // was already previewed and arrives upgraded; this call is what catches every
@@ -40,6 +54,12 @@ void RunState::add_card(Card card) {
   // guarded, and worth re-checking if a Neow bonus ever hands out a relic
   // before the deck exists.
   if (has_relic(RelicId::CeramicFish)) gain_gold(kCeramicFishGold);
+
+  // Darkstone Periapt: increaseMaxHp(6), which heals 6 as well, for every
+  // curse obtained — one Omamori did not negate, above.
+  if (curse && has_relic(RelicId::DarkstonePeriapt)) {
+    gain_max_hp(kDarkstoneMaxHp);
+  }
 }
 
 RunState RunState::start(uint64_t run_seed) {
@@ -508,6 +528,12 @@ bool RunState::obtain_relic(RelicId id) {
       held_relic(id)->counter = kWingBootsCharges;
       break;
 
+    // And at 2 (Omamori's constructor). add_card spends them (curse-effects.md
+    // §6.3).
+    case RelicId::Omamori:
+      held_relic(id)->counter = kOmamoriCharges;
+      break;
+
     // Empty Cage and Astrolabe (§6.30): a grid select over the purgeable cards,
     // exactly N, no cancel — unless there are N or fewer, which are all taken
     // at once.
@@ -551,6 +577,31 @@ bool RunState::obtain_relic(RelicId id) {
       const std::vector<CardId> pool = class_card_pool();
       // add_card applies the Eggs (StS's onPreviewObtainCard) and Ceramic Fish.
       for (int i = 0; i < count; ++i) add_card(Card{draw_from(pool, rng)});
+      break;
+    }
+
+    // Calling Bell (curse-effects.md §6.3, Rob D4): Curse of the Bell first,
+    // through add_card, so an Omamori or Darkstone Periapt ALREADY held acts on
+    // it. Then a Common, an Uncommon and a Rare relic, granted as the engine
+    // grants chest and elite relics (v2-spec.md §6.4) rather than on StS's
+    // reward screen. Because they arrive after the curse, an Omamori or
+    // Darkstone among them is too late for it (wiki.gg, both relics).
+    // returnRandomScreenlessRelic redraws the four relics that open a screen on
+    // pickup, so they are excluded here.
+    case RelicId::CallingBell: {
+      add_card(Card{CardId::CurseOfTheBell});
+      std::mt19937 rng = make_stream(run_seed, RngStream::RelicEffect,
+                                     static_cast<uint32_t>(id));
+      static const std::vector<RelicId> kNotScreenless = {
+          RelicId::BottledFlame, RelicId::BottledLightning,
+          RelicId::BottledTornado, RelicId::Whetstone};
+      for (RelicTier tier :
+           {RelicTier::Common, RelicTier::Uncommon, RelicTier::Rare}) {
+        if (const std::optional<RelicId> granted =
+                random_relic(tier, rng, kNotScreenless)) {
+          obtain_relic(*granted);
+        }
+      }
       break;
     }
 
@@ -854,6 +905,20 @@ int chest_gold_for_roll(ChestSize size, int roll) {
 }
 
 void RunState::open_chest() {
+  // Cursed Key (curse-effects.md §6.3): AbstractChest.open fires onChestOpen
+  // BEFORE the chest rolls or adds anything, so the curse is in the deck before
+  // the chest's relic — an Omamori from this chest cannot block it. A uniform
+  // pick over CURSE_POOL, which is getCurse's ten. StS draws it from cardRng,
+  // the card-reward stream; this is the floor's CardReward stream, which a
+  // treasure floor never otherwise draws from (Rob, D2). Every chest here is a
+  // non-boss chest. The engine opens every chest; that a human could leave one
+  // closed to avoid the curse is a recorded gap (Rob, D3).
+  if (has_relic(RelicId::CursedKey)) {
+    std::mt19937 curse_rng = make_stream(run_seed, RngStream::CardReward,
+                                         static_cast<uint32_t>(floor));
+    add_card(Card{draw_from(CURSE_POOL, curse_rng)});
+  }
+
   // The RELIC stream, not the treasure stream — §4 and RngStream's own comment
   // both assign a chest's relic here, and it is the stream the elite reward
   // already uses. The two relic sources agreeing matters more than the name:
