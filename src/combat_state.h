@@ -106,6 +106,13 @@ struct Character {
   bool played_attack_this_turn = false;
   bool played_skill_this_turn = false;
   bool played_power_this_turn = false;
+  // Cards played this turn, every type: StS's cardsPlayedThisTurn, which
+  // Normality's cap of 3 and Velvet Choker's 6 read (curse-effects.md §3.3).
+  // Counted by the CardPlayedHook executor, so hand plays, cards taken by
+  // Havoc or Mayhem, replays and Blue Candle curse plays all count, and
+  // end-of-turn autoplays and unusable queued cards do not. Reset at the start
+  // of the player's turn. Observed: Normality's text shows it (§3.7).
+  int cards_played_this_turn = 0;
   // "This card costs 0" is NOT tracked here. It was, as a per-card-type counter
   // (`free_this_turn`), which could say "one copy of this type is free" but
   // never WHICH copy. Since colorless-effects.md D2 the discount lives on the

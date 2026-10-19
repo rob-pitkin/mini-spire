@@ -220,6 +220,26 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
   ActionQueue q;
   ResolutionContext ctx;
 
+  // Pain: each one in hand loses 1 HP when another card is played, ahead of
+  // everything the card does (curse-effects.md §3.4). StS's useCard calls
+  // hand.triggerOnOtherCardPlayed after use() has queued the card's actions,
+  // and Pain's LoseHPAction goes on top of them. Counted here, after the card
+  // left the hand — so a Pain played under Blue Candle does not count itself —
+  // and before Sever Soul, True Grit or Fiend Fire take cards out of it: those
+  // are actions in StS, still queued when Pain fires. The damage this card
+  // deals was fixed at play (§3.8), so Strength the loss triggers (Rupture, Red
+  // Skull) does not reach it. Every play through here counts; an end-of-turn
+  // autoplay or an unusable queued card never comes here, as StS skips Pain
+  // for dontTriggerOnUseCard.
+  for (const Card& c : state.current_hand) {
+    const int loss = CARD_DATABASE.at(c.card_id).hp_loss_in_hand_per_card_played;
+    if (loss <= 0) continue;
+    Action a;
+    a.kind = ActionKind::LoseHp;
+    a.amount = loss;
+    q.push_back(a);
+  }
+
   // 3a. Pre-damage hand/block effects (Stage 4b). These resolve BEFORE the
   // card's damage: Sever Soul's exhausts must feed Feel No Pain first, and
   // Entrench's doubling must land before a Body Slam reads block.
@@ -539,6 +559,19 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
   if (data.shuffles_discard_into_draw) {
     q.push_back(Action{ActionKind::ShuffleDiscardIntoDraw});
   }
+  // Blue Candle: a curse played under it costs 1 HP (BlueCandle.onUseCard,
+  // addToBot, in UseCardAction's constructor — so after the card's own
+  // actions, of which a curse has none, and before its pile move). It fires for
+  // every play, a Duplication replay included, which is why it sits outside the
+  // pile-move block below.
+  const bool blue_candle_curse =
+      data.type == CardType::Curse && state.has_relic(RelicId::BlueCandle);
+  if (blue_candle_curse) {
+    Action a;
+    a.kind = ActionKind::LoseHp;
+    a.amount = kBlueCandleHpLoss;
+    q.push_back(a);
+  }
   if (data.type != CardType::Power && ctx_play.enters_pile) {
     // Corruption also EXHAUSTS every Skill played (not just making them free).
     const bool corrupted_skill =
@@ -550,8 +583,10 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
         data.type == CardType::Status &&
         state.has_relic(RelicId::MedicalKit);
     // Havoc forces its card to exhaust regardless of what it would normally do.
+    // Blue Candle exhausts the curse it lets through, as Medical Kit does a
+    // Status (both set action.exhaustCard, so Strange Spoon still applies).
     bool exhausts = data.exhaust || corrupted_skill || ctx_play.force_exhaust ||
-                    medical_kit_status;
+                    medical_kit_status || blue_candle_curse;
     // Strange Spoon: a card that would exhaust DISCARDS instead, half the time.
     // Rolled from the card RNG, as StS does (cardRandomRng.randomBoolean in
     // UseCardAction), and only for the PLAYED card's own exhaust — a card
@@ -1114,6 +1149,9 @@ void handle_end_turn(CombatState& state) {
   // Panache's countdown restarts every turn: four cards this turn and one the
   // next must not set it off.
   state.character.panache_counter = kPanacheCardsPerTrigger;
+  // Normality and Velvet Choker count from zero again (StS clears
+  // cardsPlayedThisTurn in the same turn-start block).
+  state.character.cards_played_this_turn = 0;
   // Battle Trance's NoDraw needs no clear here — it is a Debuff now (ROB-40 B2)
   // and the end-of-turn tick already expired it.
   // The turn cost layer ends here, wherever the card sits — StS's endTurn runs

@@ -11,6 +11,7 @@
 
 #include "action.h"
 #include "card.h"
+#include "combat_env.h"
 #include "combat_state.h"
 #include "enemy.h"
 #include "query.h"
@@ -477,6 +478,363 @@ TEST(CardDamageAtPlay, AnAoeCardComputesEachTargetsDamageSeparately) {
 
   EXPECT_EQ(s.enemies[0].hp, 200 - 8);
   EXPECT_EQ(s.enemies[1].hp, 200 - 12);
+}
+
+// ============================================================================
+// Pain (§3.4)
+// ============================================================================
+
+namespace {
+
+bool play(CombatState& s, CardId id, int target = 0) {
+  return apply_action(s, card_action(id, target));
+}
+
+bool legal(const CombatState& s, int action) {
+  return valid_actions(s)[static_cast<std::size_t>(action)];
+}
+
+}  // namespace
+
+// Each Pain in hand costs 1 HP per other card played.
+TEST(Pain, EachOneLosesOneHpPerOtherCardPlayed) {
+  CombatState s = fight();
+  s.current_hand.push_back(Card{CardId::Pain});
+  s.current_hand.push_back(Card{CardId::Pain});
+  s.current_hand.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(play(s, CardId::Defend));
+
+  EXPECT_EQ(s.character.hp, 78);
+}
+
+// A Pain played under Blue Candle has left the hand: the other Pain fires, it
+// does not fire for itself. 1 from the other Pain, 1 from Blue Candle.
+TEST(Pain, APainPlayedUnderBlueCandleDoesNotTriggerItself) {
+  CombatState s = fight();
+  s.relics.push_back(HeldRelic{RelicId::BlueCandle, 0});
+  s.current_hand.push_back(Card{CardId::Pain});
+  s.current_hand.push_back(Card{CardId::Pain});
+
+  ASSERT_TRUE(play(s, CardId::Pain));
+
+  EXPECT_EQ(s.character.hp, 78);
+}
+
+// Second Wind exhausts the Pain, but only as an action that runs after Pain has
+// fired, so the Pain still costs its 1.
+TEST(Pain, ACardThatExhaustsItStillTriggersIt) {
+  CombatState s = fight();
+  s.current_hand.push_back(Card{CardId::Pain});
+  s.current_hand.push_back(Card{CardId::SecondWind});
+
+  ASSERT_TRUE(play(s, CardId::SecondWind));
+
+  ASSERT_EQ(count_in(s.exhaust_pile, CardId::Pain), 1);
+  EXPECT_EQ(s.character.hp, 79);
+}
+
+// Havoc is a card played, and so is the card it plays.
+TEST(Pain, HavocTriggersItTwice) {
+  CombatState s = fight();
+  s.current_hand.push_back(Card{CardId::Pain});
+  s.current_hand.push_back(Card{CardId::Havoc});
+  s.draw_pile.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(play(s, CardId::Havoc));
+
+  ASSERT_EQ(s.exhaust_pile.size(), 1u) << "Havoc did not play its card";
+  EXPECT_EQ(s.character.hp, 78);
+}
+
+TEST(Pain, ADoubleTapReplayTriggersIt) {
+  CombatState s = fight();
+  s.character.powers[Power::DoubleTap] = 1;
+  s.current_hand.push_back(Card{CardId::Pain});
+  s.current_hand.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(play(s, CardId::Strike));
+
+  ASSERT_EQ(s.enemies[0].hp, 200 - 12) << "the replay did not happen";
+  EXPECT_EQ(s.character.hp, 78);
+}
+
+// Pain's loss comes before the card resolves (wiki: "before Thorns, Sharp Hide,
+// Beat of Death, or any card-specific HP loss"). Buffer shows it: it stops the
+// first loss to arrive, so with Pain first it is spent on Pain's 1 and
+// Hemokinesis costs its 2. With Pain last it would stop the 2 instead.
+TEST(Pain, ItsLossComesBeforeTheCardsOwnHpLoss) {
+  CombatState s = fight();
+  s.character.powers[Power::Buffer] = 1;
+  s.current_hand.push_back(Card{CardId::Pain});
+  s.current_hand.push_back(Card{CardId::Hemokinesis});
+
+  ASSERT_TRUE(play(s, CardId::Hemokinesis));
+
+  EXPECT_EQ(s.character.hp, 78);
+}
+
+// At 1 HP, Pain's loss kills the player, and the fight is lost even though the
+// Strike kills the last enemy. (StS stops resolving at the death screen, so the
+// Strike never lands; the engine resolves it, and the player's death takes
+// precedence. Either way the fight is lost.)
+TEST(Pain, KillingThePlayerLosesTheFightTheCardWouldHaveWon) {
+  CombatState s = fight();
+  s.character.hp = 1;
+  s.enemies[0].hp = 6;
+  s.current_hand.push_back(Card{CardId::Pain});
+  s.current_hand.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(play(s, CardId::Strike));
+
+  EXPECT_EQ(s.outcome, Outcome::Lost);
+}
+
+// Rupture's Strength from Pain's loss misses the card that triggered it and
+// reaches the next one (wiki Rupture page).
+TEST(Pain, RupturesStrengthReachesTheNextCardNotThisOne) {
+  CombatState s = fight();
+  s.character.powers[Power::Rupture] = 1;
+  s.current_hand.push_back(Card{CardId::Pain});
+  s.current_hand.push_back(Card{CardId::Strike});
+  s.current_hand.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(play(s, CardId::Strike));
+  EXPECT_EQ(s.enemies[0].hp, 200 - 6);
+  ASSERT_TRUE(play(s, CardId::Strike));
+  EXPECT_EQ(s.enemies[0].hp, 200 - 6 - 7);
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 2);
+}
+
+// The same for Red Skull, whose +3 resolves right after the loss that crosses
+// half HP: the triggering Strike was computed before it (§3.8).
+TEST(Pain, RedSkullsStrengthDoesNotReachTheTriggeringCard) {
+  CombatState s = fight();
+  s.relics.push_back(HeldRelic{RelicId::RedSkull, 0});
+  s.character.hp = 41;
+  s.current_hand.push_back(Card{CardId::Pain});
+  s.current_hand.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(play(s, CardId::Strike));
+
+  ASSERT_EQ(get_status(s.character.powers, Power::Strength), 3);
+  EXPECT_EQ(s.enemies[0].hp, 200 - 6);
+}
+
+// End-of-turn autoplays are dontTriggerOnUseCard: Burn costs its 2, Pain
+// nothing.
+TEST(Pain, EndOfTurnCardsDoNotTriggerIt) {
+  CombatState s = fight();
+  s.current_hand.push_back(Card{CardId::Pain});
+  s.current_hand.push_back(Card{CardId::Burn});
+
+  end_turn_then_win(s);
+
+  EXPECT_EQ(s.character.hp, 78);
+}
+
+// Tungsten Rod takes each trigger to nothing, and nothing then fires.
+TEST(Pain, TungstenRodCancelsEachTrigger) {
+  CombatState s = fight();
+  s.relics.push_back(HeldRelic{RelicId::TungstenRod, 0});
+  s.character.powers[Power::Rupture] = 1;
+  s.current_hand.push_back(Card{CardId::Pain});
+  s.current_hand.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(play(s, CardId::Defend));
+
+  EXPECT_EQ(s.character.hp, 80);
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 0);
+}
+
+// ============================================================================
+// Normality and Velvet Choker (§3.3)
+// ============================================================================
+
+TEST(Normality, AfterThreePlaysNoCardIsPlayable) {
+  CombatState s = fight();
+  s.character.energy = 99;
+  s.current_hand.push_back(Card{CardId::Normality});
+  for (int i = 0; i < 4; ++i) s.current_hand.push_back(Card{CardId::Defend});
+  s.potions = {PotionId::BlockPotion};
+
+  for (int i = 0; i < 3; ++i) ASSERT_TRUE(play(s, CardId::Defend));
+
+  EXPECT_FALSE(legal(s, card_action(CardId::Defend)));
+  EXPECT_FALSE(play(s, CardId::Defend)) << "the apply path disagrees with the mask";
+  EXPECT_TRUE(legal(s, encode_action(ActionBlock::PotionUse,
+                                     static_cast<int>(PotionId::BlockPotion), 0)));
+  EXPECT_TRUE(legal(s, kEndTurnAction));
+}
+
+// The count is the turn's, not Normality's: plays made before it reached the
+// hand count.
+TEST(Normality, PlaysBeforeItWasDrawnCount) {
+  CombatState s = fight();
+  s.character.energy = 99;
+  for (int i = 0; i < 4; ++i) s.current_hand.push_back(Card{CardId::Defend});
+  for (int i = 0; i < 3; ++i) ASSERT_TRUE(play(s, CardId::Defend));
+  ASSERT_TRUE(legal(s, card_action(CardId::Defend)));
+
+  s.current_hand.push_back(Card{CardId::Normality});
+
+  EXPECT_FALSE(legal(s, card_action(CardId::Defend)));
+}
+
+// Only while it is in hand: Second Wind as the third play exhausts it, and the
+// fourth card can be played.
+TEST(Normality, ExhaustingItLiftsTheCap) {
+  CombatState s = fight();
+  s.character.energy = 99;
+  s.current_hand.push_back(Card{CardId::Normality});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::SecondWind});
+  s.current_hand.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(play(s, CardId::Defend));
+  ASSERT_TRUE(play(s, CardId::Defend));
+  ASSERT_TRUE(play(s, CardId::SecondWind));
+  ASSERT_EQ(count_in(s.exhaust_pile, CardId::Normality), 1);
+
+  EXPECT_TRUE(play(s, CardId::Strike));
+}
+
+// The cap binds cards played from the card queue too (canUse runs
+// hasEnoughEnergy for them): Havoc as the third play takes its card and cannot
+// play it, so the card only exhausts.
+TEST(Normality, HavocAsTheThirdPlayCannotPlayItsCard) {
+  CombatState s = fight();
+  s.character.energy = 99;
+  s.current_hand.push_back(Card{CardId::Normality});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Havoc});
+  s.draw_pile.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(play(s, CardId::Defend));
+  ASSERT_TRUE(play(s, CardId::Defend));
+  ASSERT_TRUE(play(s, CardId::Havoc));
+
+  EXPECT_EQ(s.enemies[0].hp, 200) << "the taken Strike was played";
+  EXPECT_EQ(count_in(s.exhaust_pile, CardId::Strike), 1);
+  EXPECT_EQ(s.character.cards_played_this_turn, 3);
+}
+
+// A Double Tap replay of the third play is a fourth play, which the cap stops;
+// a blocked replay simply vanishes.
+TEST(Normality, ADoubleTapReplayOfTheThirdPlayVanishes) {
+  CombatState s = fight();
+  s.character.energy = 99;
+  s.character.powers[Power::DoubleTap] = 1;
+  s.current_hand.push_back(Card{CardId::Normality});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Strike});
+
+  ASSERT_TRUE(play(s, CardId::Defend));
+  ASSERT_TRUE(play(s, CardId::Defend));
+  ASSERT_TRUE(play(s, CardId::Strike));
+
+  EXPECT_EQ(s.enemies[0].hp, 200 - 6) << "the replay was played";
+  EXPECT_EQ(count_in(s.discard_pile, CardId::Strike), 1);
+}
+
+TEST(Normality, TheCountResetsNextTurn) {
+  CombatState s = fight();
+  s.character.energy = 99;
+  s.current_hand.push_back(Card{CardId::Normality});
+  for (int i = 0; i < 3; ++i) s.current_hand.push_back(Card{CardId::Defend});
+  for (int i = 0; i < 10; ++i) s.draw_pile.push_back(Card{CardId::Defend});
+  for (int i = 0; i < 3; ++i) ASSERT_TRUE(play(s, CardId::Defend));
+  ASSERT_EQ(s.character.cards_played_this_turn, 3);
+
+  ASSERT_TRUE(apply_action(s, kEndTurnAction));
+  ASSERT_EQ(s.outcome, Outcome::InProgress);
+
+  EXPECT_EQ(s.character.cards_played_this_turn, 0);
+}
+
+// Velvet Choker: a sixth play is legal, a seventh is not.
+TEST(VelvetChoker, StopsTheSeventhPlay) {
+  CombatState s = fight();
+  s.relics.push_back(HeldRelic{RelicId::VelvetChoker, 0});
+  s.character.energy = 99;
+  for (int i = 0; i < 7; ++i) s.current_hand.push_back(Card{CardId::Defend});
+
+  for (int i = 0; i < 6; ++i) ASSERT_TRUE(play(s, CardId::Defend)) << i;
+
+  EXPECT_FALSE(legal(s, card_action(CardId::Defend)));
+}
+
+// ============================================================================
+// Blue Candle (§3.6)
+// ============================================================================
+
+TEST(BlueCandle, ACurseIsPlayableAtNoEnergyExhaustsAndCostsOneHp) {
+  CombatState s = fight();
+  s.relics.push_back(HeldRelic{RelicId::BlueCandle, 0});
+  s.character.energy = 0;
+  s.current_hand.push_back(Card{CardId::Injury});
+
+  ASSERT_TRUE(play(s, CardId::Injury));
+
+  EXPECT_EQ(s.character.hp, 79);
+  EXPECT_EQ(s.character.energy, 0);
+  EXPECT_EQ(count_in(s.exhaust_pile, CardId::Injury), 1);
+  EXPECT_TRUE(s.current_hand.empty());
+}
+
+// It is a card played (wiki: it triggers Rupture, and counts for Normality).
+TEST(BlueCandle, ItFiresRuptureAndCountsAsAPlay) {
+  CombatState s = fight();
+  s.relics.push_back(HeldRelic{RelicId::BlueCandle, 0});
+  s.character.powers[Power::Rupture] = 1;
+  s.current_hand.push_back(Card{CardId::Injury});
+
+  ASSERT_TRUE(play(s, CardId::Injury));
+
+  EXPECT_EQ(get_status(s.character.powers, Power::Strength), 1);
+  EXPECT_EQ(s.character.cards_played_this_turn, 1);
+}
+
+// Normality can be played to exhaust it, but only below its own cap.
+TEST(BlueCandle, NormalityCanBePlayedOnlyBelowItsCap) {
+  CombatState s = fight();
+  s.relics.push_back(HeldRelic{RelicId::BlueCandle, 0});
+  s.current_hand.push_back(Card{CardId::Normality});
+
+  s.character.cards_played_this_turn = 3;
+  EXPECT_FALSE(legal(s, card_action(CardId::Normality)));
+  s.character.cards_played_this_turn = 2;
+  EXPECT_TRUE(legal(s, card_action(CardId::Normality)));
+}
+
+TEST(BlueCandle, WithoutItACurseIsUnplayable) {
+  CombatState s = fight();
+  s.current_hand.push_back(Card{CardId::Injury});
+
+  EXPECT_FALSE(legal(s, card_action(CardId::Injury)));
+  EXPECT_FALSE(play(s, CardId::Injury));
+}
+
+// ============================================================================
+// The observation (§3.7)
+// ============================================================================
+
+// The last player-base slot carries the cards played this turn.
+TEST(CardsPlayedObservation, IsWrittenToThePlayerBlock) {
+  CombatState s = fight();
+  s.character.energy = 99;
+  for (int i = 0; i < 3; ++i) s.current_hand.push_back(Card{CardId::Defend});
+  CombatEnv env(s);
+  constexpr int kSlot = CombatEnv::kPlayerBaseSize - 1;
+  ASSERT_EQ(env.obs()[kSlot], 0.0f);
+
+  env.step(card_action(CardId::Defend));
+  env.step(card_action(CardId::Defend));
+
+  EXPECT_EQ(env.obs()[kSlot], 2.0f);
 }
 
 // Fixed damage with no player source is not the player's own and does not fire

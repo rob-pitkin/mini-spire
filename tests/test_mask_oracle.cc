@@ -96,6 +96,23 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
   auto it = state.character.debuffs.find(Debuff::Entangle);
   if (it != state.character.debuffs.end() && it->second > 0) entangled = true;
 
+  // Cards-played caps (curse-effects.md §3.3), restated from the cards and
+  // relics by name: Normality in hand stops every card at 3 plays, Velvet
+  // Choker at 6. Neither reads the engine's cap field.
+  bool capped = false;
+  for (const Card& c : state.current_hand) {
+    if (c.card_id == CardId::Normality &&
+        state.character.cards_played_this_turn >= 3) {
+      capped = true;
+    }
+  }
+  bool has_choker = false, has_candle = false;
+  for (const HeldRelic& r : state.relics) {
+    if (r.id == RelicId::VelvetChoker) has_choker = true;
+    if (r.id == RelicId::BlueCandle) has_candle = true;
+  }
+  if (has_choker && state.character.cards_played_this_turn >= 6) capped = true;
+
   // Combat indices decoded with RAW arithmetic, deliberately. This oracle is
   // only worth anything if it is independent of the code under test, so it does
   // not call decode_action — which makes it the one INTENTIONAL cross-check of
@@ -109,7 +126,11 @@ std::vector<bool> reference_valid_actions(const CombatState& state) {
     if (card_idx < 0 || card_idx >= num_card_ids) continue;
     const CardId card = static_cast<CardId>(card_idx);
     const CardData& data = CARD_DATABASE.at(card);
-    if (data.unplayable) continue;
+    // Blue Candle lets a curse be played; nothing else unplayable is.
+    if (data.unplayable && !(has_candle && data.type == CardType::Curse)) {
+      continue;
+    }
+    if (capped) continue;
 
     // A copy of this card AT THIS COLUMN must be in hand; its own cost decides
     // affordability. Every copy in one column costs the same, so the first
@@ -221,7 +242,8 @@ TEST(MaskOracle, EngineMaskMatchesAnIndependentDerivation) {
   // as long as it did.
   long long saw_choice = 0, saw_free = 0, saw_entangle = 0, saw_rung = 0,
             saw_potion = 0, saw_staged = 0, saw_required = 0,
-            saw_boss_smoke = 0;
+            saw_boss_smoke = 0, saw_normality_cap = 0, saw_choker_cap = 0,
+            saw_candle_curse = 0;
 
   for (uint32_t seed = 0; seed < 300; ++seed) {
     for (EncounterPool pool : {EncounterPool::Weak, EncounterPool::Strong,
@@ -263,6 +285,38 @@ TEST(MaskOracle, EngineMaskMatchesAnIndependentDerivation) {
         // Query-layer state: Corruption, Barricade.
         if (rng() % 9 == 0) s.character.powers[Power::Corruption] = 1;
         if (rng() % 9 == 0) s.character.powers[Power::Barricade] = 1;
+        // The cards-played caps and Blue Candle (curse-effects.md §3.3, §3.6):
+        // the count set directly, Normality and the two relics toggled in.
+        if (rng() % 9 == 0) {
+          s.character.cards_played_this_turn = static_cast<int>(rng() % 8);
+        }
+        if (rng() % 12 == 0) s.current_hand.push_back(Card{CardId::Normality});
+        for (RelicId toggled : {RelicId::VelvetChoker, RelicId::BlueCandle}) {
+          if (rng() % 12 != 0) continue;
+          auto held = std::find_if(
+              s.relics.begin(), s.relics.end(),
+              [&](const HeldRelic& r) { return r.id == toggled; });
+          if (held == s.relics.end()) {
+            s.relics.push_back(HeldRelic{toggled, 0});
+          } else {
+            s.relics.erase(held);
+          }
+        }
+        {
+          const int played = s.character.cards_played_this_turn;
+          bool normality = false, curse = false;
+          for (const Card& c : s.current_hand) {
+            if (c.card_id == CardId::Normality) normality = true;
+            if (CARD_DATABASE.at(c.card_id).type == CardType::Curse) curse = true;
+          }
+          if (normality && played >= 3) ++saw_normality_cap;
+          if (s.has_relic(RelicId::VelvetChoker) && played >= 6) {
+            ++saw_choker_cap;
+          }
+          if (s.has_relic(RelicId::BlueCandle) && curse && played < 3) {
+            ++saw_candle_curse;
+          }
+        }
         // Per-instance cost layers (§6.27), each on ONE copy — which is what
         // the instance layers buy over the per-type counter they replaced: the
         // oracle and the engine must agree that a second copy still pays.
@@ -356,4 +410,7 @@ TEST(MaskOracle, EngineMaskMatchesAnIndependentDerivation) {
   EXPECT_GT(saw_staged, 100) << "multi-select staging barely exercised";
   EXPECT_GT(saw_required, 20) << "required picks barely exercised";
   EXPECT_GT(saw_boss_smoke, 20) << "Smoke Bomb in a boss fight barely exercised";
+  EXPECT_GT(saw_normality_cap, 50) << "Normality's cap barely exercised";
+  EXPECT_GT(saw_choker_cap, 20) << "Velvet Choker's cap barely exercised";
+  EXPECT_GT(saw_candle_curse, 50) << "Blue Candle curse plays barely exercised";
 }

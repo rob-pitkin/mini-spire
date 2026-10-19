@@ -7,10 +7,13 @@ overruled, so card damage is computed when the card is played, as in StS
 1. **Built** (`c35a43f`): §3.1, §3.2, §3.5. The end of turn, Burn, Decay,
    Regret, Doubt and Shame, the HP-loss reactions and Plated Armor. Tests and
    mutations in §5.1.
-2. **Built:** §3.8, card damage at play time, and Fiend Fire's hits (§3.8
-   "Found while building"). Tests and mutations in §5.2.
-3. **Next:** §3.3, §3.4, §3.6, §3.7. Pain, Normality, Velvet Choker, Blue
-   Candle and the cards-played counter.
+2. **Built** (`238fa88`): §3.8, card damage at play time, and Fiend Fire's
+   hits (§3.8 "Found while building"). Tests and mutations in §5.2.
+3. **Built:** §3.3, §3.4, §3.6, §3.7. Pain, Normality, Velvet Choker, Blue
+   Candle and the cards-played counter. Tests and mutations in §5.3.
+
+All five data-only curses now have effects. What remains of task #4 is curse
+acquisition (§6).
 
 Five curses exist as card data with no reader: Regret, Doubt, Shame, Pain and
 Normality (`card.h`'s curse block). Three of them act at the end of the turn on
@@ -470,39 +473,70 @@ Phase A. `apply_action` already clears it, so the clear was removed (§3.1).
 - every AoE target computed from the first target's debuffs. Only the new Cleave
   test caught this one; no existing test covered it.
 
-### 5.3 Step 3, planned
+### 5.3 Step 3, as built
+
+`tests/test_curse_effects.cc`: `Pain.*` (11), `Normality.*` (6),
+`VelvetChoker.*` (1), `BlueCandle.*` (4), `CardsPlayedObservation.*` (1).
+`MaskOracle` restates the three new playability rules on its own (Normality by
+id, the relics by id) and gained coverage floors for each.
 
 **Pain**
 - One HP per Pain in hand per other card played.
 - A Pain played under Blue Candle does not trigger itself; another Pain does.
-- Havoc triggers Pain twice: for Havoc and for the card it plays.
-- Double Tap's replay triggers it.
-- At 1 HP, a lethal Strike with Pain in hand loses the fight.
-- With Rupture: the triggering card does not get the Strength; the next does.
+- Second Wind, which exhausts the Pain, still triggers it.
+- Havoc triggers it twice; a Double Tap replay triggers it.
+- It comes before the card's own HP loss: with Buffer, Hemokinesis still
+  costs 2.
+- At 1 HP it loses the fight a lethal Strike would have won.
+- Rupture's and Red Skull's Strength from it miss the triggering card; Rupture's
+  reaches the next.
+- End-of-turn cards do not trigger it; Tungsten Rod cancels each trigger.
 
 **Normality and Velvet Choker**
-- After 3 plays, no card is playable; potions and End Turn still are.
-- Plays before Normality was drawn count.
-- Exhausting Normality lifts the cap.
-- Havoc as the third play: the taken card is not played and is exhausted.
-- A Double Tap replay of the third play vanishes.
+- After 3 plays no card is playable; a potion and End Turn still are.
+- Plays made before Normality reached the hand count.
+- Second Wind exhausting it lifts the cap.
+- Havoc as the third play cannot play its card, which only exhausts; a Double
+  Tap replay of the third play vanishes.
 - The count resets next turn.
-- Velvet Choker: a 6th play is legal, a 7th is not.
+- Velvet Choker allows a sixth play and stops the seventh.
 
 **Blue Candle**
 - A curse is playable at no energy, exhausts, and costs 1 HP.
-- It fires Rupture, counts as a play, and Strange Spoon can save it.
-- Without Blue Candle a curse is still unplayable.
+- It fires Rupture and counts as a play.
+- Normality can be played under it only below its own cap.
+- Without it a curse is still unplayable.
+
+Strange Spoon is not tested here. Its roll is random, so no test of this case
+can depend on it; Blue Candle reaches it through the exhaust path Medical Kit
+already uses and tests.
 
 **Observation**
-- `cards_played_this_turn` is written to its slot and reset next turn.
+- `cards_played_this_turn` is written to the player block.
 
-**Mutations planned** (each must be caught):
-- the play count incremented for end-of-turn autoplays;
-- Normality's cap applied only to the mask and not to queued plays;
-- Pain triggered by its own play, or by end-of-turn autoplays;
-- Pain's loss at the back of the card's queue;
-- Blue Candle's curse discarded instead of exhausted.
+**One test was rewritten before it could mislead.** The first version of the
+Pain death test also asserted that the lethal Strike never lands. StS does stop
+resolving at the death screen and the engine does not, but the fight is lost
+either way, so the difference cannot be observed. Worse, the test could not
+tell whether Pain fired first: with Pain last the player dies too. Its outcome
+assertion stayed, and the Buffer–Hemokinesis test was added to pin the order.
+
+**Mutations, all caught:**
+- Pain's losses at the back of the card's queue (only the Hemokinesis test
+  catches it);
+- Pain counted after a hand-exhausting card removes it;
+- a played Pain triggering itself;
+- end-of-turn cards triggering Pain;
+- the caps not applied to queued plays (both queued-play tests);
+- Blue Candle's curse discarded, not exhausted;
+- Blue Candle's 1 HP missing;
+- the count not reset at turn start;
+- Velvet Choker off by one (its test and the oracle);
+- Normality capping from the exhaust pile;
+- the observation slot not written.
+
+One planned mutation was dropped as unobservable: counting end-of-turn cards
+as plays. The count resets at the next turn's start, before anything reads it.
 
 ## 6. Next: curse acquisition
 
@@ -510,4 +544,4 @@ The other half of task #4's relics needs a single path by which a curse enters
 the deck. Omamori negates it, Darkstone Periapt gives Max HP, Calling Bell grants
 Curse of the Bell plus three relics, and Cursed Key's chests give one. Du-Vu Doll
 already counts curses at fight start (`action.cc`, `RelicId::DuVuDoll`) and only
-needs them to arrive. This will be its own design once this one is agreed.
+needs them to arrive. This is its own design, still to be written.

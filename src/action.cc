@@ -2643,6 +2643,7 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // Orange Pellets (all three). Recorded here rather than at translation so
       // a card played from inside a resolution — Havoc, Mayhem, Double Tap —
       // counts exactly as a hand-played one does; they all reach this hook.
+      ++state.character.cards_played_this_turn;
       switch (CARD_DATABASE.at(a.card).type) {
         case CardType::Attack: state.character.played_attack_this_turn = true; break;
         case CardType::Skill:  state.character.played_skill_this_turn = true; break;

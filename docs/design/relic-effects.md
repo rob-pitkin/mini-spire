@@ -252,7 +252,14 @@ per §1.
 
 ---
 
-## 7. Status: 125 of 140 wired
+## 7. Status: 126 of 140 wired
+
+⚠️ **Velvet Choker was counted for 125 while only half wired** (found
+2026-10-18, task #51): its +1 energy sat in the energy-relic list, so the
+command below counted it, and its 6-card cap did not exist. The cap shipped
+with the curse work (`curse-effects.md` §3.3), so the count is now whole again.
+Tiny House is still the one relic counted with a half missing (its card
+reward).
 
 Counted from the source, not estimated — a relic counts as wired when its
 `RelicId` is referenced from code (not from the pool tables or a comment).
@@ -271,13 +278,13 @@ tree appears only on a comment line, so the discrepancy is not comment noise.
 One of the two counts used a different rule and neither recorded which, which is
 the whole argument for pinning the command here.
 
-The 15 remaining are not one backlog. **Most are blocked on engine pieces that
+The 14 remaining are not one backlog. **Most are blocked on engine pieces that
 have nothing to do with relics**, and those blockers are shared:
 
 | blocker | relics waiting | note |
 |---|---|---|
 | ~~**Missing `Power`s**~~ | ~~Bronze Scales, Akabeko, Incense Burner, Fossilized Helix, Thread and Needle, Pen Nib~~ | ✅ **done.** All six Powers exist: Vigor, PenNibCharge, Intangible, Buffer, Thorns, PlatedArmor. Intangible is the one power that ticks — a named exception to the status model (Rob, 2026-09-12). Regen and Duplication have since joined it, and since 2026-10-10 it ticks at the end of the round rather than the player's turn, so Incense Burner's Intangible protects the enemy phase (`debuff-timing.md`). |
-| **No curse cards** | Omamori, Darkstone Periapt, Blue Candle, Calling Bell, and the unreachable halves of Du-Vu Doll and Cursed Key | §6.4. The curses now exist as cards; five of their effects are data-only (task #4). Calling Bell moved here from the choice-screen row (Rob, §6.30 P1): its Curse of the Bell must pass through Omamori and Darkstone Periapt |
+| **No curse acquisition** | Omamori, Darkstone Periapt, Calling Bell, and the unreachable halves of Du-Vu Doll and Cursed Key | §6.4. ✅ **All eleven curses' effects now work** (2026-10-18, `curse-effects.md`), and **Blue Candle is wired** with them: it is combat-only. What is left needs a single path by which a curse enters the deck (`curse-effects.md` §6). Calling Bell moved here from the choice-screen row (Rob, §6.30 P1): its Curse of the Bell must pass through Omamori and Darkstone Periapt |
 | ~~**No colorless cards**~~ | ~~Toolbox, half of Prismatic Shard~~ | ✅ **cleared.** All 35 colorless cards are implemented (`colorless-effects.md`) and the shop's 2 colorless slots now stock. **Toolbox** is wired: a 1-of-3 colorless choice that pauses combat setup BEFORE the opening hand (§6.9 — Rob ruled, 2026-09-20). **Prismatic Shard** is now unblocked: §6.8 was ruled (Rob, 2026-09-21) to the Colorless half only, a deliberate divergence recorded in the README. ⚠️ CORRECTED earlier: Orrery, Dolly's Mirror and Cauldron never needed colorless — Cauldron is potions only, and the other two need a shop CHOICE SCREEN over normal card rewards. |
 | **Needs a shop choice screen** | Orrery, Dolly's Mirror | moved here from the colorless row |
 | ~~**Needs potion effects**~~ | ~~Cauldron~~ | ✅ **done** with potion step 6 (2026-10-18, `potion-effects.md` §6.2): five uniform potions onto a potion reward screen, and the hidden card reward StS rolls and removes. Cauldron moved here from the colorless row. ✅ **Toy Ornithopter and Sacred Bark wired** with potion step 1 (2026-10-05): `Hook::PotionDrunk` fires after a potion's effects, and Sacred Bark doubles `potion_potency`. |
@@ -340,7 +347,7 @@ than the real relic.**
 | Cursed Key | chests give a Curse | **blocked** — needs curses in the deck |
 | Philosopher's Stone | all enemies +1 Strength | batch 3 (combat start) |
 | Mark of Pain | 2 Wounds into the draw pile | batch 3 — needs card generation |
-| Velvet Choker | max 6 cards per turn | batch 5 — needs a per-turn play counter and a mask rule |
+| Velvet Choker | max 6 cards per turn | ✅ done (2026-10-18, `curse-effects.md` §3.3): the cards-played counter Normality also reads, and an `is_playable` rule |
 | Runic Dome | cannot see enemy intent | **needs the v2 observation** |
 | Slaver's Collar | none (conditional upside) | ✅ complete |
 
@@ -723,9 +730,9 @@ change what happens when a card is PLAYED, which is why they batch together.
 
 **Medical Kit** is a query-layer exception, not an effect: `is_playable` lets a
 Status through when the relic is held, and the pile move exhausts it. Status
-only — Blue Candle is the curse equivalent and stays blocked on curses reaching
-a deck. Slimed is untouched by either: it is already playable by design (cost 1,
-exhausts), exactly as in StS.
+only — Blue Candle is the curse equivalent, wired since 2026-10-18 on the same
+two sites plus its 1 HP (`curse-effects.md` §3.6). Slimed is untouched by
+either: it is already playable by design (cost 1, exhausts), exactly as in StS.
 
 **Strange Spoon** rolls 50% to discard a card that would exhaust. Three details
 from the source rather than the card text: it applies only to the PLAYED card's

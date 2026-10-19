@@ -2318,7 +2318,9 @@ inline const std::unordered_map<CardId, CardData> CARD_DATABASE = {
      }()},
 
     // Normality: "Unplayable. While in hand, you cannot play more than 3 cards
-    // this turn." A restriction on the MASK rather than an effect.
+    // this turn." A playability rule rather than an effect: is_playable reads
+    // it, so it binds the mask and cards played from the card queue alike
+    // (curse-effects.md §3.3).
     {CardId::Normality, [] {
        CardData d = curse("Normality");
        d.cards_playable_cap_in_hand = 3;

@@ -364,13 +364,28 @@ int strength_multiplier(CardId card) {
 bool is_playable(const CombatState& state, CardId card) {
   const CardData& data = CARD_DATABASE.at(card);
   if (data.unplayable) {
-    // Medical Kit: "Unplayable Status cards can now be played." STATUS only —
-    // Blue Candle is the curse equivalent and is blocked on curses reaching a
-    // deck. Slimed is untouched either way: it is already playable by design
-    // (cost 1, exhausts on play), exactly as in StS.
+    // Medical Kit: "Unplayable Status cards can now be played." Blue Candle is
+    // the curse equivalent: AbstractCard.canUse lets a curse through when it is
+    // held (curse-effects.md §3.6). Slimed is untouched either way: it is
+    // already playable by design (cost 1, exhausts on play), exactly as in StS.
     const bool medical_kit_status =
         data.type == CardType::Status && state.has_relic(RelicId::MedicalKit);
-    if (!medical_kit_status) return false;  // Dazed etc. (ROB-65)
+    const bool blue_candle_curse =
+        data.type == CardType::Curse && state.has_relic(RelicId::BlueCandle);
+    if (!medical_kit_status && !blue_candle_curse) return false;  // ROB-65
+  }
+  // Normality and Velvet Choker cap the cards played this turn. Both are
+  // canPlay checks inside StS's hasEnoughEnergy, so they bind every card,
+  // including one Havoc or Mayhem plays from the card queue, and a curse Blue
+  // Candle would let through — Normality included (curse-effects.md §3.3).
+  // Normality only while it is in hand: exhausting it lifts the cap.
+  const int played = state.character.cards_played_this_turn;
+  if (state.has_relic(RelicId::VelvetChoker) && played >= kVelvetChokerCards) {
+    return false;
+  }
+  for (const Card& c : state.current_hand) {
+    const int cap = CARD_DATABASE.at(c.card_id).cards_playable_cap_in_hand;
+    if (cap > 0 && played >= cap) return false;
   }
   // Entangle blocks all Attack-type cards for a turn (ROB-75).
   if (data.type == CardType::Attack &&

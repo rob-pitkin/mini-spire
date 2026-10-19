@@ -250,6 +250,14 @@ inline constexpr int kMagicFlowerHealDenominator = 2;
 // Red Skull: Strength while HP is at or below half (relic-effects.md §6.29).
 inline constexpr int kRedSkullStrength = 3;
 
+// Velvet Choker: no card can be played once this many have been this turn
+// (VelvetChoker.canPlay, curse-effects.md §3.3).
+inline constexpr int kVelvetChokerCards = 6;
+
+// Blue Candle: HP lost when a curse is played under it (BlueCandle.onUseCard,
+// curse-effects.md §3.6).
+inline constexpr int kBlueCandleHpLoss = 1;
+
 // Lizard Tail revives the player once per run (potion-effects.md §5.4). The
 // counter's default 0 is unused; -2 is used, the value LizardTail.setCounter
 // treats as used up. RunState carries the counter between fights like any

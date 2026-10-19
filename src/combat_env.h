@@ -102,10 +102,12 @@ class CombatEnv {
   // Juggernaut, ...) — in an enemy block those would be always-zero floats.
   static constexpr int kPlayerStatusSize = kNumDebuffs + kNumPlayerPowers;
   static constexpr int kEnemyStatusSize = kNumDebuffs + kNumEnemyPowers;
-  // hp, max_hp, block, energy, energy_per_turn, then the two query-layer
-  // counters a human can read off the cards (ROB-40 B1): hp_loss_events
-  // (Blood for Blood's displayed cost) and combust_casts (Combust's tooltip).
-  static constexpr int kPlayerBaseSize = 7;
+  // hp, max_hp, block, energy, energy_per_turn, then the query-layer counters
+  // a human can read off the cards (ROB-40 B1): hp_loss_events (Blood for
+  // Blood's displayed cost), combust_casts (Combust's tooltip) and
+  // cards_played_this_turn (Normality's text, Velvet Choker's counter;
+  // curse-effects.md §3.7).
+  static constexpr int kPlayerBaseSize = 8;
   static constexpr int kPlayerObsSize = kPlayerBaseSize + kPlayerStatusSize;
   // intent: is_attacking, atk_dmg, is_blocking, is_buffing, is_debuffing,
   // is_escaping, is_splitting. ROB-96 added the last three and split buff from

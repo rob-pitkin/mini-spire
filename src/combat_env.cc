@@ -206,6 +206,8 @@ void CombatEnv::compute_obs() {
   // displays the HP its casts will cost.
   o[5] = static_cast<float>(c.hp_loss_events);
   o[6] = static_cast<float>(c.combust_casts);
+  // Normality's "you have played N cards this turn" (curse-effects.md §3.7).
+  o[7] = static_cast<float>(c.cards_played_this_turn);
 
   // --- Player status = [debuffs then powers] ---
   constexpr int kStatusBase = CombatEnv::kPlayerBaseSize;

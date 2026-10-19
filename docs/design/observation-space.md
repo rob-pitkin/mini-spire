@@ -229,7 +229,10 @@ Size math for A2 with caps SB@5, Rampage +30/+40:
 Independent of family A; some subset is needed under *any* hand decision.
 
 - **B1 — scalars into the player block**: `hp_loss_events`, `combust_casts` as
-  two floats. Trivial, no downside found. (#4, #5)
+  two floats. Trivial, no downside found. (#4, #5) A third followed the same
+  rule on 2026-10-18: `cards_played_this_turn`, which Normality's text and
+  Velvet Choker's counter show and their caps read (`curse-effects.md` §3.7).
+  The player block is 8 floats.
 - **B2 — No Draw as a real Debuff**: StS shows it as a debuff icon; modelling it
   as `Debuff::NoDraw` puts it in the existing debuff block and retires the
   `no_draw_this_turn` bool. Slightly more engine work than a raw float, but the
