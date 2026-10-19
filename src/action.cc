@@ -1967,17 +1967,16 @@ void apply_fixed_damage(CombatState& state, int slot, int amount,
 }
 
 // One player attack landing on one enemy slot: the shared damage path for
-// targeted attacks and for Sword Boomerang's random hits.
-void player_attack_enemy(CombatState& state, int slot, int base,
-                         int strength_mult, ActionQueue& q,
-                         ResolutionContext& ctx) {
+// targeted attacks and for Sword Boomerang's random hits. `dmg` is FINAL —
+// Strength, Vigor, Weak, Vulnerable and Pen Nib are already in it, applied once
+// when the card was played (curse-effects.md §3.8, StS's calculateCardDamage in
+// useCard). What happens here is what StS's AbstractMonster.damage does with
+// the number it is handed: block, The Boot, the on-damaged hooks.
+void player_attack_enemy(CombatState& state, int slot, int dmg,
+                         ActionQueue& q, ResolutionContext& ctx) {
   if (!valid_enemy_slot(state, slot)) return;
   if (state.enemies[slot].hp <= 0) return;
   const int hp_before = state.enemies[slot].hp;
-  const int dmg = compute_attack_damage(
-      base, state.character.powers, state.character.debuffs,
-      state.enemies[slot].debuffs, strength_mult,
-      vulnerable_damage_multiplier(state));
 
   // The Boot acts on what is left AFTER block, so the block subtraction is
   // done here rather than inside apply_damage_to_hp_block: the relic needs to
@@ -2051,16 +2050,25 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
                                 a.actor);
         break;
       }
-      // Player -> enemy.
-      player_attack_enemy(state, a.target, a.amount, a.strength_mult, q, ctx);
+      // Player -> enemy. The amount is final: handle_play_card computed it
+      // when the card was played (curse-effects.md §3.8), so Strength gained
+      // since — Red Skull's +3 from a loss mid-card — does not reach this hit.
+      player_attack_enemy(state, a.target, a.amount, q, ctx);
       break;
     }
     case ActionKind::DamageRandomEnemyAttack: {
       // Sword Boomerang: each hit rolls its own target at EXECUTION time, so a
-      // hit that kills an enemy changes the pool for the next hit.
+      // hit that kills an enemy changes the pool for the next hit. The damage
+      // is computed here too, against the target just rolled: StS's
+      // AttackDamageRandomEnemyAction calls calculateCardDamage when it runs,
+      // the one card damage that is not fixed at play.
       const int slot = pick_random_living_enemy(state);
       if (slot >= 0) {
-        player_attack_enemy(state, slot, a.amount, a.strength_mult, q, ctx);
+        const int dmg = compute_attack_damage(
+            a.amount, state.character.powers, state.character.debuffs,
+            state.enemies[slot].debuffs, a.strength_mult,
+            vulnerable_damage_multiplier(state));
+        player_attack_enemy(state, slot, dmg, q, ctx);
       }
       break;
     }

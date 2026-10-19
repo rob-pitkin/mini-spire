@@ -4,10 +4,12 @@
 overruled, so card damage is computed when the card is played, as in StS
 (§3.8). Built in three steps (C8, with the damage change as its own step):
 
-1. **Built:** §3.1, §3.2, §3.5. The end of turn, Burn, Decay, Regret, Doubt
-   and Shame, the HP-loss reactions and Plated Armor. Tests and mutations in §5.
-2. **Next:** §3.8, card damage at play time.
-3. **Then:** §3.3, §3.4, §3.6, §3.7. Pain, Normality, Velvet Choker, Blue
+1. **Built** (`c35a43f`): §3.1, §3.2, §3.5. The end of turn, Burn, Decay,
+   Regret, Doubt and Shame, the HP-loss reactions and Plated Armor. Tests and
+   mutations in §5.1.
+2. **Built:** §3.8, card damage at play time, and Fiend Fire's hits (§3.8
+   "Found while building"). Tests and mutations in §5.2.
+3. **Next:** §3.3, §3.4, §3.6, §3.7. Pain, Normality, Velvet Choker, Blue
    Candle and the cards-played counter.
 
 Five curses exist as card data with no reader: Regret, Doubt, Shame, Pain and
@@ -321,9 +323,26 @@ mid-card Strength change, such as an enemy's thorns damage crossing Red Skull's
 threshold between hits once those enemies exist. Vigor and Pen Nib are spent in
 the `CardPlayedHook`, after the hits, so they are unchanged.
 
-**To check when building.** Every producer of a player-to-enemy `DealDamage`
-(cards, and any potion or relic that uses it) must hand over a final number, so
-each is read before the executor changes.
+**As built.** Every producer was read before the executor changed: in `src/`,
+the card translation in `handle_play_card` is the only one. Potions and relics
+deal fixed damage (`DealFixedDamage`, `DamageAllEnemies`), and enemy moves aim
+`DealDamage` at the player. `player_attack_enemy` now takes the final damage.
+Its `DamageRandomEnemyAttack` caller computes it first; the `DealDamage` caller
+passes the amount through. `Action::strength_mult` is read only by Sword
+Boomerang now.
+
+**Found while building: Fiend Fire was one hit.** The engine dealt one hit of
+7 × N with Strength added once. `FiendFireAction` queues one `DamageAction` per
+card exhausted, each carrying the damage computed at play, and wiki.gg says
+the same: "Benefits once from Strength or Vigor per hit, so per card
+Exhausted." With 3 Strength and 5 cards, StS deals 50 and the engine dealt 38.
+It is now N hits of 7 (10 upgraded). This is a parity fix under CLAUDE.md rule
+2, made in the code this step was already changing; it needed no ruling.
+
+One existing test changed: `RedSkull.TheStrengthResolvesBeforeTheNextQueuedAction`
+showed the +3 resolving ahead of the next queued action by queuing an attack
+behind it. A queued hit no longer reads Strength, so the follow-up is now a
+Limit Break, which does.
 
 ## 4. Questions for Rob
 
@@ -433,7 +452,25 @@ engine-wide change, as its own commit between the two.
 One mutation was equivalent: clearing the card queue when the fight ends in
 Phase A. `apply_action` already clears it, so the clear was removed (§3.1).
 
-### 5.2 Steps 2 and 3, planned
+### 5.2 Step 2, as built
+
+`tests/test_curse_effects.cc`, `CardDamageAtPlay.*` (5):
+- a queued targeted hit keeps the damage it was played with when Red Skull's +3
+  lands in between;
+- Sword Boomerang's hit, queued the same way, does get the +3;
+- Twin Strike applies Strength to both hits;
+- Fiend Fire with 2 Strength and 3 exhausted cards deals 3 × 9;
+- Cleave against two enemies, one Vulnerable, computes each target's damage
+  separately.
+
+**Mutations, all caught:**
+- the old behaviour, base damage on the hit and modifiers at execution;
+- Sword Boomerang using the queued amount as it is;
+- Fiend Fire back to one hit of 7 × N;
+- every AoE target computed from the first target's debuffs. Only the new Cleave
+  test caught this one; no existing test covered it.
+
+### 5.3 Step 3, planned
 
 **Pain**
 - One HP per Pain in hand per other card played.
@@ -459,12 +496,6 @@ Phase A. `apply_action` already clears it, so the clear was removed (§3.1).
 
 **Observation**
 - `cards_played_this_turn` is written to its slot and reset next turn.
-
-**Card damage at play (§3.8)**
-- A hit's damage does not change when Strength changes between the play and
-  the hit.
-- Sword Boomerang still computes against the target each hit rolls.
-- Every existing damage test still passes.
 
 **Mutations planned** (each must be caught):
 - the play count incremented for end-of-turn autoplays;

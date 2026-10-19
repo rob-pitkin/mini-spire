@@ -167,6 +167,16 @@ Strike-holder, a block gain landing between hits — cannot retroactively alter
 already-queued damage. This matches what the player sees when choosing the
 card.
 
+**Since 2026-10-18 the modifiers are fixed at play too** (`curse-effects.md`
+§3.8, Rob's C4 ruling). `handle_play_card` runs `compute_attack_damage`
+(Strength, Vigor, Weak, Vulnerable, Pen Nib, Heavy Blade's multiplier) once per
+target at translation, and every `DealDamage` hit carries the final number, as
+StS's `useCard` → `calculateCardDamage` does. Before, the modifiers were applied
+per hit at execution, so Strength gained mid-card reached the later hits. The
+one exception is Sword Boomerang's `DamageRandomEnemyAttack`, which computes
+when it lands against the target it rolls (`AttackDamageRandomEnemyAction`).
+Enemy attacks are unchanged: they still compute at execution (§4).
+
 ### 13. Perfected Strike counts hand + draw + discard, NOT exhaust
 
 StS1: exhausting a Strike *reduces* Perfected Strike's damage (verified on the

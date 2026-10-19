@@ -168,10 +168,11 @@ struct Action {
   // CardPlayedHook, AddCardToPile, ArmBomb, PlaceOnBottomOfDraw, and the
   // Double Tap replay) or never reads it on the cardless path.
   CardId card = CardId::None;
-  // Strength multiplier for this hit (Heavy Blade's 3x/5x, Stage 4b). Set from
-  // the card at translation; 1 for enemy attacks and fixed damage, which have
-  // no card. Explicit rather than re-derived from `card`, whose default would
-  // silently stand in for "no card".
+  // Strength multiplier for this hit (Heavy Blade's 3x/5x, Stage 4b), read
+  // only by DamageRandomEnemyAttack, the one player hit whose damage is
+  // computed at execution (curse-effects.md §3.8). A targeted DealDamage
+  // carries damage that already includes it. Explicit rather than re-derived
+  // from `card`, whose default would silently stand in for "no card".
   int strength_mult = 1;
   Debuff debuff = Debuff::None;    // ApplyDebuff payload
   Power power = Power::None;       // ApplyPower / RemovePower payload

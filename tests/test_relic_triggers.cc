@@ -3353,25 +3353,23 @@ TEST(RedSkull, GainingMaxHpAboveTheLineTakesItBack) {
 }
 
 TEST(RedSkull, TheStrengthResolvesBeforeTheNextQueuedAction) {
-  // addToTop: the +3 lands right after the hit that crossed, ahead of an
-  // attack already waiting in the queue, which then deals 6 + 3.
+  // addToTop: the +3 lands right after the hit that crossed, ahead of a Limit
+  // Break already waiting in the queue, which then doubles it to 6. Behind the
+  // Limit Break it would end at 3. (This used a queued attack until card damage
+  // moved to play time: a queued hit's damage no longer reads Strength,
+  // curse-effects.md §3.8.)
   CombatState s = fight_with({RelicId::RedSkull});
-  s.enemies[0].hp = 100;
-  s.enemies[0].current_block = 0;
-  s.enemies[0].powers.clear();
-  s.enemies[0].debuffs.clear();
   ActionQueue q;
   ResolutionContext ctx;
   Action hit{ActionKind::DealFixedDamage};
   hit.target = kPlayerSlot;
   hit.amount = 40;
   q.push_back(hit);
-  Action attack{ActionKind::DealDamage};
-  attack.target = 0;
-  attack.amount = 6;
-  q.push_back(attack);
+  Action limit_break{ActionKind::MultiplyStrength};
+  limit_break.amount = 2;
+  q.push_back(limit_break);
   drain(s, q, ctx);
-  EXPECT_EQ(s.enemies[0].hp, 100 - 9);
+  EXPECT_EQ(strength(s), 6);
 }
 
 }  // namespace

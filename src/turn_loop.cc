@@ -292,12 +292,16 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
   // Damage is read from the INSTANCE (Rampage's accumulated bonus, Searing
   // Blow's upgrade count) BEFORE Rampage's growth is applied below — the card
   // reads "deal 8 damage, [then] increase this card's damage by 5".
-  // Fiend Fire deals damage_per_exhausted for EACH card its hand-wipe
-  // exhausted, so its damage is only known after that count is final.
-  const int card_damage =
-      data.damage_per_exhausted > 0
-          ? data.damage_per_exhausted * exhausted_from_hand
-          : instance_card_damage(state, played);
+  // Fiend Fire deals damage_per_exhausted ONCE PER card its hand-wipe
+  // exhausted: FiendFireAction queues one DamageAction per card, so Strength,
+  // Vigor and Pen Nib apply to every hit (wiki: "Benefits once from Strength or
+  // Vigor per hit, so per card Exhausted"). Its hit count is only known once
+  // that count is final.
+  const int card_damage = data.damage_per_exhausted > 0
+                              ? data.damage_per_exhausted
+                              : instance_card_damage(state, played);
+  const int hit_count =
+      data.damage_per_exhausted > 0 ? exhausted_from_hand : hits;
   // Rampage: this copy permanently gains damage for the rest of the combat.
   // Applied after the damage read, before the pile move, so the growth rides
   // back into the pile on this instance.
@@ -309,11 +313,12 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
   if (data.bonus_damage_per_play > 0) grow_copy(played, data);
   if (card_damage > 0) {
     // One DealDamage per hit per target; a multi-hit AoE (Whirlwind) sweeps
-    // all targets each swing. Damage math runs at execution (Strength per hit).
+    // all targets each swing.
     if (data.hits_random_enemies) {
       // Sword Boomerang: each hit rolls its own target, at EXECUTION time, so
-      // a hit that kills an enemy changes the pool for the next one.
-      for (int h = 0; h < hits; ++h) {
+      // a hit that kills an enemy changes the pool for the next one. Its damage
+      // is computed there too, against that target (§3.8's one exception).
+      for (int h = 0; h < hit_count; ++h) {
         Action a;
         a.kind = ActionKind::DamageRandomEnemyAttack;
         a.actor = kPlayerSlot;
@@ -323,15 +328,29 @@ void handle_play_card(CombatState& state, CardId card_id, int target,
         q.push_back(a);
       }
     } else {
-      for (int h = 0; h < hits; ++h) {
-        for (int slot : target_slots) {
+      // The damage is computed NOW, once per target, and every hit carries the
+      // final number: StS's useCard calls calculateCardDamage before use(), and
+      // the actions use() queues carry what it produced (curse-effects.md
+      // §3.8). Strength gained between this play and a hit — Red Skull's +3
+      // when Pain's loss crosses half — does not reach it. Heavy Blade's 3x/5x
+      // is part of the computation.
+      const float vulnerable_mult = vulnerable_damage_multiplier(state);
+      std::vector<int> per_target;
+      per_target.reserve(target_slots.size());
+      for (int slot : target_slots) {
+        per_target.push_back(compute_attack_damage(
+            card_damage, state.character.powers, state.character.debuffs,
+            state.enemies[slot].debuffs, strength_multiplier(card_id),
+            vulnerable_mult));
+      }
+      for (int h = 0; h < hit_count; ++h) {
+        for (std::size_t t = 0; t < target_slots.size(); ++t) {
           Action a;
           a.kind = ActionKind::DealDamage;
           a.actor = kPlayerSlot;
-          a.target = slot;
-          a.amount = card_damage;
+          a.target = target_slots[t];
+          a.amount = per_target[t];
           a.card = card_id;
-          a.strength_mult = strength_multiplier(card_id);  // Heavy Blade 3x/5x
           q.push_back(a);
         }
       }

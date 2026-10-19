@@ -382,6 +382,103 @@ TEST(HpLossReactions, BurnFullyBlockedDoesNotFireRupture) {
   EXPECT_EQ(get_status(s.character.powers, Power::Strength), 0);
 }
 
+// ============================================================================
+// Card damage is computed when the card is played (§3.8)
+// ============================================================================
+
+namespace {
+
+// Drain a 40-point hit that takes 80 HP to 40, crossing Red Skull's half-HP
+// line, followed by `next`. Red Skull's +3 is staged to resolve right after the
+// hit, so it is in place before `next` runs.
+void cross_red_skull_then(CombatState& s, const Action& next) {
+  ActionQueue q;
+  ResolutionContext ctx;
+  Action hit{ActionKind::DealFixedDamage};
+  hit.target = kPlayerSlot;
+  hit.amount = 40;
+  q.push_back(hit);
+  q.push_back(next);
+  drain(s, q, ctx);
+  ASSERT_EQ(get_status(s.character.powers, Power::Strength), 3)
+      << "Red Skull did not fire";
+}
+
+}  // namespace
+
+// A targeted hit carries the damage computed when its card was played, so
+// Strength gained after that — here Red Skull's +3, landing between the play
+// and the hit — does not reach it. This is the shape handle_play_card emits.
+TEST(CardDamageAtPlay, AQueuedHitKeepsTheDamageItWasPlayedWith) {
+  CombatState s = fight();
+  s.relics.push_back(HeldRelic{RelicId::RedSkull, 0});
+  Action strike{ActionKind::DealDamage};
+  strike.actor = kPlayerSlot;
+  strike.target = 0;
+  strike.amount = 6;
+
+  cross_red_skull_then(s, strike);
+
+  EXPECT_EQ(s.enemies[0].hp, 200 - 6);
+}
+
+// Sword Boomerang is the exception: StS's AttackDamageRandomEnemyAction rolls
+// its target when it runs and computes the damage then, so Strength gained
+// before the hit does reach it.
+TEST(CardDamageAtPlay, SwordBoomerangComputesEachHitWhenItLands) {
+  CombatState s = fight();
+  s.relics.push_back(HeldRelic{RelicId::RedSkull, 0});
+  Action hit{ActionKind::DamageRandomEnemyAttack};
+  hit.actor = kPlayerSlot;
+  hit.amount = 3;
+
+  cross_red_skull_then(s, hit);
+
+  EXPECT_EQ(s.enemies[0].hp, 200 - 6);
+}
+
+// Through a real play: Strength is applied once per hit at play time.
+TEST(CardDamageAtPlay, TwinStrikeAppliesStrengthToBothHits) {
+  CombatState s = fight();
+  s.character.powers[Power::Strength] = 2;
+  s.current_hand.push_back(Card{CardId::TwinStrike});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::TwinStrike, 0)));
+
+  EXPECT_EQ(s.enemies[0].hp, 200 - 2 * (5 + 2));
+}
+
+// Fiend Fire deals one hit per card it exhausts, and each hit gets Strength
+// (wiki: "Benefits once from Strength or Vigor per hit, so per card
+// Exhausted"). One hit of 7 x 3 with Strength added once would deal 23.
+TEST(CardDamageAtPlay, FiendFireAppliesStrengthToEveryHit) {
+  CombatState s = fight();
+  s.character.powers[Power::Strength] = 2;
+  s.current_hand.push_back(Card{CardId::FiendFire});
+  for (int i = 0; i < 3; ++i) s.current_hand.push_back(Card{CardId::Defend});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::FiendFire, 0)));
+
+  EXPECT_EQ(s.enemies[0].hp, 200 - 3 * (7 + 2));
+}
+
+// An AoE card computes per target: Vulnerable on one enemy raises only the
+// damage that enemy takes.
+TEST(CardDamageAtPlay, AnAoeCardComputesEachTargetsDamageSeparately) {
+  CombatState s = fight();
+  std::mt19937 rng(0);
+  s.enemies.push_back(make_jaw_worm(rng));
+  s.enemies[1].hp = s.enemies[1].max_hp = 200;
+  s.enemies[1].current_block = 0;
+  s.enemies[1].debuffs[Debuff::Vulnerable] = 2;
+  s.current_hand.push_back(Card{CardId::Cleave});
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Cleave, 0)));
+
+  EXPECT_EQ(s.enemies[0].hp, 200 - 8);
+  EXPECT_EQ(s.enemies[1].hp, 200 - 12);
+}
+
 // Fixed damage with no player source is not the player's own and does not fire
 // Rupture. Today nothing deals it to the player except Burn and Decay; this
 // pins the source check for the enemy thorns-type damage that will.
