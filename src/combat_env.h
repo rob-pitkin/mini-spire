@@ -106,8 +106,16 @@ class CombatEnv {
   // a human can read off the cards (ROB-40 B1): hp_loss_events (Blood for
   // Blood's displayed cost), combust_casts (Combust's tooltip) and
   // cards_played_this_turn (Normality's text, Velvet Choker's counter;
-  // curse-effects.md §3.7).
-  static constexpr int kPlayerBaseSize = 8;
+  // curse-effects.md §3.7), then gold, which the top bar shows and a Looter
+  // takes mid-fight (thievery.md, Rob L4).
+  static constexpr int kPlayerBaseSize = 9;
+  // The two newest player-block slots, named so nothing finds them by counting
+  // back from the end of the block (which moved when gold was added after the
+  // cards-played count).
+  static constexpr int kCardsPlayedSlot = 7;
+  static constexpr int kGoldSlot = 8;
+  static_assert(kGoldSlot == kPlayerBaseSize - 1,
+                "gold is the player block's last base slot");
   static constexpr int kPlayerObsSize = kPlayerBaseSize + kPlayerStatusSize;
   // intent: is_attacking, atk_dmg, is_blocking, is_buffing, is_debuffing,
   // is_escaping, is_splitting. ROB-96 added the last three and split buff from

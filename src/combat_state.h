@@ -218,13 +218,18 @@ struct CombatState {
   // rather than asking the run (potion-effects.md §5.6).
   int potion_slots = kBasePotionSlots;
 
-  // Gold earned during THIS fight (Hand of Greed's "if Fatal, gain 20 Gold").
-  // Gold itself belongs to RunState; combat only records what it earned, and
-  // RunState::end_combat writes it back through the run's gold-gain path so
-  // Ectoplasm can refuse it (colorless-effects.md D5). A standalone CombatEnv
-  // simply never reads this, which is why the channel is a counter rather than
-  // a reach into the run layer.
-  int gold_gained = 0;
+  // The player's gold, lent by the run for the fight and handed back by
+  // RunState::end_combat (thievery.md §3, Rob L1, 2026-10-21), as potion_rng
+  // is. One number, as StS has: Hand of Greed adds to it, unless Ectoplasm is
+  // held, and a Looter takes from it, so Hand of Greed's gold can be stolen by
+  // the next Mug. This replaced colorless-effects.md D5's gold_gained counter,
+  // which recorded gold earned and paid it at the end. Observed (§L4).
+  int gold = 0;
+  // Gold a thief was carrying when it died, returned as one STOLEN_GOLD reward
+  // (Looter.die → addStolenGoldToRewards). Moved here at the death, not read off
+  // the enemy at the fight's end: a dead enemy's slot can be reused by a split
+  // child.
+  int stolen_gold_reward = 0;
 
   bool has_relic(RelicId id) const {
     for (const HeldRelic& r : relics) {

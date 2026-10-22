@@ -764,11 +764,15 @@ listed as "entirely unspecified"; it is now specified except where marked.
 Golden Idol adds `round(gold * 0.25)` in all three cases. (Ascension ≥13 scales
 boss gold to 75% — not reachable at our pinned A0, §3.0.)
 
+A normal combat whose monsters all escaped pays no gold. A killed thief's stolen
+gold is a separate reward, with no Golden Idol bonus (`thievery.md`).
+
 #### Potion drops
 
 ```
 chance = 40 + potionChance          // potionChance starts at 0
-if White Beast Statue: chance = 100
+    // 0 instead for a normal combat whose monsters all escaped (thievery.md)
+if White Beast Statue: chance = 100 // after the line above, so it overrides it
 if (rewards already on the room's list) >= 4: chance = 0
     // gold + the elite's relic(s) (+ stolen gold, keys) — NOT the card reward
 

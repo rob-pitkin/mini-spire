@@ -54,6 +54,10 @@ static_assert(static_cast<int>(EnemyKind::Sentry) == kNumEnemyKinds - 1,
               "kNumEnemyKinds is out of step with the EnemyKind enum — adding a "
               "kind means widening every enemy block in the observation");
 
+// Thievery: gold the Looter and Mugger take with each Mug and Lunge (their
+// goldAmt below Ascension 17; thievery.md).
+inline constexpr int kThiefGold = 15;
+
 enum class MoveName {
   None,  // sentinel: "no move" (TriggeredEffect::move default when unused)
   Chomp,
@@ -152,6 +156,10 @@ struct Move {
   // the self-wake path clears Metallicize at the END of the 3rd asleep turn
   // (that turn keeps its block; from the next turn on it gets none).
   bool wakes_on_resolve = false;
+  // Gold taken from the player at the start of each hit, before its damage, so
+  // blocking the hit does not save it (the Looter's Mug and Lunge; StS's
+  // DamageAction stealGold, thievery.md §1). 0 = no theft.
+  int steals_gold = 0;
 };
 
 struct MoveTransition {
@@ -264,6 +272,14 @@ struct Enemy {
   // Metallicize until it wakes (self-wake after 3 turns, or damage-wake). The
   // TriggeredAction::Wake action clears this; the requires_asleep guard reads it.
   bool is_asleep = false;
+
+  // Thievery (thievery.md): the gold this enemy has stolen, which it gives back
+  // if it dies (Looter.die → addStolenGoldToRewards) and keeps if it escapes.
+  int stolen_gold = 0;
+  // It left by escaping, not by dying. Both set hp to 0; only this tells them
+  // apart, which the reward rules need: a normal fight whose enemies ALL
+  // escaped pays no gold (MonsterGroup.haveMonstersEscaped).
+  bool escaped = false;
 };
 
 MoveName select_next_move(Enemy& enemy, std::mt19937& rng);

@@ -232,7 +232,9 @@ Independent of family A; some subset is needed under *any* hand decision.
   two floats. Trivial, no downside found. (#4, #5) A third followed the same
   rule on 2026-10-18: `cards_played_this_turn`, which Normality's text and
   Velvet Choker's counter show and their caps read (`curse-effects.md` §3.7).
-  The player block is 8 floats.
+  A fourth on 2026-10-21: `gold`, shown in the top bar and taken by a Looter
+  mid-fight (`thievery.md` L4). The player block is 9 floats; the named slots
+  are `CombatEnv::kCardsPlayedSlot` and `kGoldSlot`.
 - **B2 — No Draw as a real Debuff**: StS shows it as a debuff icon; modelling it
   as `Debuff::NoDraw` puts it in the existing debuff block and retires the
   `no_draw_this_turn` bool. Slightly more engine work than a raw float, but the

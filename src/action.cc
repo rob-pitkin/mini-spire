@@ -2480,10 +2480,24 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       break;
     }
     case ActionKind::GainGold:
-      // Hand of Greed. Combat has no gold of its own; it records what it earned
-      // and RunState writes it back (colorless-effects.md D5).
-      state.gold_gained += a.amount;
+      // Hand of Greed, into the fight's gold, which the run lent and takes back
+      // (thievery.md §3, Rob L1). Ectoplasm is checked here now: player.gainGold
+      // refuses it in StS, and the run's write-back copies the number as it is.
+      if (!state.has_relic(RelicId::Ectoplasm)) state.gold += a.amount;
       break;
+    case ActionKind::StealGold: {
+      // A thief's hit takes gold at its start, before the damage, so block does
+      // not save it (DamageAction.stealGold). Skipped if the thief is dead, as
+      // StS skips it for an attacker that isDying. It takes what the player
+      // has, up to the amount, and the thief carries it (thievery.md §1).
+      if (!valid_enemy_slot(state, a.actor) || state.enemies[a.actor].hp <= 0) {
+        break;
+      }
+      const int taken = std::min(a.amount, state.gold);
+      state.gold -= taken;
+      state.enemies[a.actor].stolen_gold += taken;
+      break;
+    }
     case ActionKind::GenerateCards: {
       // Random in-combat generation: Infernal Blade, Jack of All Trades,
       // Transmutation and Magnetism all land here.
@@ -2634,8 +2648,12 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // acting and its slot frees. NOT a death: on-death hooks don't fire and
       // no death is recorded (a fleeing enemy doesn't split/spore).
       // check_enemy_terminal treats it as gone -> Won if it was the last one.
+      // A thief that escapes keeps what it stole: its stolen_gold is simply never
+      // moved to the reward. `escaped` marks how it left, for the all-escaped
+      // reward rules at the fight's end (thievery.md §1).
       if (valid_enemy_slot(state, a.target)) {
         state.enemies[a.target].hp = 0;
+        state.enemies[a.target].escaped = true;
       }
       break;
     case ActionKind::EnemySplit: {
@@ -2947,6 +2965,14 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // per resolution, not per death, so it can't double-fire.
       for (int i = 0; i < ctx.died_count; ++i) {
         fire_enemy_hooks(state, ctx.died_slots[i], Hook::EnemyDeath, q);
+      }
+      // A thief that dies gives back what it stole, as one STOLEN_GOLD reward
+      // (Looter.die → addStolenGoldToRewards; thievery.md §3). Moved now, while
+      // the slot still holds it; zeroed so a second pass cannot pay twice.
+      for (int i = 0; i < ctx.died_count; ++i) {
+        Enemy& dead = state.enemies[ctx.died_slots[i]];
+        state.stolen_gold_reward += dead.stolen_gold;
+        dead.stolen_gold = 0;
       }
       // Relics answer the same deaths — but NOT the killing blow that ends the
       // fight. Gremlin Horn's energy and card would have nowhere to go, and the

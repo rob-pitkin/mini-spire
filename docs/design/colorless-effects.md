@@ -208,6 +208,12 @@ per-combat `cardRandomRng`. `RngStream::CardRandom` exists in `run_rng.h`, but
 writes it back through the run's gold-gain function, so Ectoplasm ("you can no
 longer gain Gold") can block it. A standalone `CombatEnv` ignores it.
 
+> ⚠️ **Superseded 2026-10-21 (`thievery.md` L1, Rob).** The Looter steals from
+> the player's current gold mid-fight, so the fight now holds the gold: the run
+> lends it in `begin_combat` and copies it back in `end_combat`. Hand of Greed
+> adds to it directly and checks Ectoplasm itself. The guarantee above is kept;
+> the `gold_gained` counter is gone.
+
 ---
 
 ## 5. Batches

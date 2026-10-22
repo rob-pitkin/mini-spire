@@ -382,7 +382,7 @@ TEST(SmokeBombEscape, VictoryRelicsFireAndInFightGoldIsKept) {
   run.begin_combat(EncounterPool::Weak);
   const int gold = run.gold;
   run.combat.character.hp = 50;
-  run.combat.gold_gained = 20;
+  run.combat.gold += 20;  // as Hand of Greed's kill would
   run.combat.outcome = Outcome::Escaped;
   run.end_combat();
   EXPECT_EQ(run.hp, 56);

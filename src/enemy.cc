@@ -562,8 +562,9 @@ Enemy make_red_slaver(std::mt19937& rng) {
 namespace {
 
 // Shared Looter/Mugger factory (ROB-76). Identical scripted AI; they differ
-// only in HP, Lunge damage, and Smoke Bomb block. Thievery/gold DEFERRED to
-// M4/M5 — the escape is modeled, the gold-steal is not.
+// only in HP, Lunge damage, and Smoke Bomb block. Both steal 15 gold with
+// every Mug and Lunge (Thievery, thievery.md): returned if the thief dies,
+// kept if it escapes.
 //   Turn 1-2: Mug (Mug1 -> Mug2). Turn 3: 50% Lunge / 50% Smoke Bomb.
 //   Lunge -> Smoke Bomb -> Escape; Smoke Bomb -> Escape.
 Enemy make_thief(std::mt19937& rng, EnemyKind kind, int hp_lo, int hp_hi,
@@ -575,10 +576,13 @@ Enemy make_thief(std::mt19937& rng, EnemyKind kind, int hp_lo, int hp_hi,
   e.hp = e.max_hp;
   e.current_block = 0;
 
-  const Move mug{MoveName::Mug, 10, 0, {}};
+  Move mug{MoveName::Mug, 10, 0, {}};
+  mug.steals_gold = kThiefGold;
+  Move lunge{MoveName::Lunge, lunge_dmg, 0, {}};
+  lunge.steals_gold = kThiefGold;
   e.moves = {
       {MoveName::Mug, mug},   {MoveName::Mug1, mug}, {MoveName::Mug2, mug},
-      {MoveName::Lunge, {MoveName::Lunge, lunge_dmg, 0, {}}},
+      {MoveName::Lunge, lunge},
       {MoveName::SmokeBomb, {MoveName::SmokeBomb, 0, smoke_block, {}}},
       // Escape leaves the fight (ROB-74). No damage/block.
       {MoveName::Escape, [] { Move m{MoveName::Escape, 0, 0, {}}; m.escapes = true; return m; }()},

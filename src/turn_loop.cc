@@ -880,6 +880,16 @@ int random_living_ally(CombatState& state, int actor_slot) {
 // per-hit; our Move model is one hit per cast until Move grows a `hits` field.
 void translate_enemy_move(CombatState& state, const Move& move, int actor_slot,
                           ActionQueue& q) {
+  // Thievery (thievery.md §3): the gold goes at the start of the hit, before
+  // its damage — StS steals in DamageAction's first frame — so it is queued
+  // right ahead of the hit, and a fully blocked hit still takes it.
+  if (move.steals_gold > 0) {
+    Action steal;
+    steal.kind = ActionKind::StealGold;
+    steal.actor = actor_slot;
+    steal.amount = move.steals_gold;
+    q.push_back(steal);
+  }
   if (move.damage > 0) {
     Action a;
     a.kind = ActionKind::DealDamage;
@@ -1287,6 +1297,8 @@ CombatState start_combat(CombatSetup setup) {
   // fight (potion-effects.md §5.6). Taken as it is, not re-derived: the run
   // may already have drawn from it this floor.
   state.potion_rng = setup.potion_rng;
+  // Lent the same way, and handed back by end_combat (thievery.md §3).
+  state.gold = setup.gold;
 
   state.character.max_hp = setup.max_hp;
   state.character.hp = setup.hp;

@@ -565,8 +565,11 @@ struct RunState {
   //
   // `grant` false rolls without taking the potion: a Smoke Bomb escape still
   // rolls, and moves the drift, but the screen shows nothing
-  // (potion-effects.md §5.5).
-  void roll_potion_drop(int rewards_already_on_screen, bool grant = true);
+  // (potion-effects.md §5.5). `no_chance` makes the base chance 0, for a
+  // normal fight whose enemies all escaped; White Beast Statue still sets 100
+  // over it (thievery.md §1).
+  void roll_potion_drop(int rewards_already_on_screen, bool grant = true,
+                        bool no_chance = false);
 
   // The floor's potion generator, made from (seed, Potion, floor) on the
   // floor's first potion draw and continued after that.

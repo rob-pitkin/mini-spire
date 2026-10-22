@@ -86,6 +86,10 @@ struct CombatSetup {
   // back (potion-effects.md §5.6). A standalone fight keeps the default-seeded
   // one, so it still generates deterministically.
   std::mt19937 potion_rng;
+  // The player's gold, lent the same way and handed back (thievery.md §3, Rob
+  // L1): a Looter steals from it and Hand of Greed adds to it mid-fight. A
+  // standalone fight starts with none.
+  int gold = 0;
 };
 
 // Constructs an initial CombatState (ROB-66): seeded RNG, the character at the

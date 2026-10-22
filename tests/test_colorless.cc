@@ -424,34 +424,55 @@ TEST(Colorless, ArtifactNegatesNoBlock) {
 
 // --------------------------------------------------------- Hand of Greed
 
-TEST(Colorless, HandOfGreedRecordsGoldWhenTheHitIsFatal) {
+// Hand of Greed's kill gold goes straight into the fight's gold, which the run
+// lent and takes back (thievery.md §3, Rob L1; it was colorless-effects.md D5's
+// gold_gained counter).
+TEST(Colorless, HandOfGreedGainsGoldWhenTheHitIsFatal) {
   CombatState s = fight_holding(CardId::HandOfGreed);
+  s.gold = 50;
   s.enemies[0].hp = 5;
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::HandOfGreed, 0)));
 
   EXPECT_EQ(s.enemies[0].hp, 0);
-  EXPECT_EQ(s.gold_gained, 20);
+  EXPECT_EQ(s.gold, 70);
 }
 
-TEST(Colorless, HandOfGreedPlusRecordsTwentyFive) {
+TEST(Colorless, HandOfGreedPlusGainsTwentyFive) {
   CombatState s = fight_holding(CardId::HandOfGreedPlus);
+  s.gold = 50;
   s.enemies[0].hp = 5;
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::HandOfGreedPlus, 0)));
 
-  EXPECT_EQ(s.gold_gained, 25);
+  EXPECT_EQ(s.gold, 75);
 }
 
 // "If Fatal" — damage alone pays nothing.
-TEST(Colorless, HandOfGreedRecordsNothingWhenTheEnemySurvives) {
+TEST(Colorless, HandOfGreedGainsNothingWhenTheEnemySurvives) {
   CombatState s = fight_holding(CardId::HandOfGreed);
+  s.gold = 50;
   s.enemies[0].hp = 60;
 
   ASSERT_TRUE(apply_action(s, card_action(CardId::HandOfGreed, 0)));
 
   EXPECT_GT(s.enemies[0].hp, 0);
-  EXPECT_EQ(s.gold_gained, 0);
+  EXPECT_EQ(s.gold, 50);
+}
+
+// Ectoplasm ("you can no longer gain Gold") refuses it inside the fight now:
+// the run copies the fight's gold back as it is, so this is the only place
+// left to refuse it.
+TEST(Colorless, HandOfGreedGainsNothingUnderEctoplasm) {
+  CombatState s = fight_holding(CardId::HandOfGreed);
+  s.relics.push_back(HeldRelic{RelicId::Ectoplasm, 0});
+  s.gold = 50;
+  s.enemies[0].hp = 5;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::HandOfGreed, 0)));
+
+  ASSERT_EQ(s.enemies[0].hp, 0);
+  EXPECT_EQ(s.gold, 50);
 }
 
 // ------------------------------------------------------------- Deep Breath

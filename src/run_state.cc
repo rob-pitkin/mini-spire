@@ -833,26 +833,32 @@ std::optional<RelicId> RunState::random_relic(
       0, candidates.size() - 1)(rng)];
 }
 
-void RunState::roll_potion_drop(int rewards_already_on_screen, bool grant) {
+void RunState::roll_potion_drop(int rewards_already_on_screen, bool grant,
+                                bool no_chance) {
   // The floor's generator, continued — after a fight it is the one combat
   // handed back, so an Entropic Brew drunk there and this roll never share
   // numbers (§5.6).
   std::mt19937& rng = potion_rng_for_floor();
 
   // Elite and normal fights drop potions at the same rate — the fight's kind
-  // does not enter into it, which is why this takes no RewardSource.
-  int chance = 40 + potion_chance_bonus;
+  // does not enter into it, which is why this takes no RewardSource. The one
+  // exception is a normal fight whose enemies all escaped: addPotionToRewards
+  // leaves its base chance at 0 (thievery.md §1).
+  //
+  // The order is StS's and it matters: that 0 is the BASE, so White Beast
+  // Statue's 100 still overrides it and the escaped fight drops a potion.
+  int chance = no_chance ? 0 : 40 + potion_chance_bonus;
   if (has_relic(RelicId::WhiteBeastStatue)) chance = 100;
 
   // A reward screen already holding four things drops no potion (§4.2). This
-  // couples potions to gold, relic and card rewards rather than leaving them
-  // independent.
+  // couples potions to the gold and relic rewards rather than leaving them
+  // independent. The card reward is not on the list yet (#47).
   //
   // Note this sets the chance to zero rather than returning: the roll still
   // happens and still MISSES, so the +10 drift applies. A suppressed screen
   // makes the next fight likelier to drop, exactly as the spec has it. Bailing
   // out early would quietly lower the cumulative drop rate of any run that hit
-  // several full screens.
+  // several full screens. A zero base chance misses the same way.
   if (rewards_already_on_screen >= 4) chance = 0;
 
   const int roll = std::uniform_int_distribution<int>(0, 99)(rng);
@@ -1715,6 +1721,8 @@ void RunState::begin_combat(EncounterPool pool) {
   setup.potion_slots = potion_slots;
   // Lent to the fight and taken back by end_combat (potion-effects.md §5.6).
   setup.potion_rng = potion_rng_for_floor();
+  // So is the gold: a Looter steals from it mid-fight (thievery.md §3).
+  setup.gold = gold;
   combat = start_combat(std::move(setup));
 
   in_combat = true;
@@ -1742,12 +1750,11 @@ void RunState::end_combat() {
     fire_relic_hooks_sequentially(combat, Hook::CombatEnd);
   }
 
-  // Hand of Greed's kill gold, earned inside the fight and recorded there
-  // because combat owns no gold (colorless-effects.md D5). Through gain_gold,
-  // so Ectoplasm refuses it, and NOT through award_combat_gold, whose Golden
-  // Idol bonus belongs to the reward pile rather than to a card's effect.
-  gain_gold(combat.gold_gained);
-  combat.gold_gained = 0;
+  // The gold the fight was lent comes back as the fight left it: less what a
+  // thief took, plus Hand of Greed's kill gold, which the fight already
+  // refused under Ectoplasm (thievery.md §3, Rob L1). Copied, not gained: the
+  // gold was the run's all along.
+  gold = combat.gold;
 
   // Carried: HP and Max HP. Max HP because Feed and Neow can raise it mid-fight.
   hp = combat.character.hp;
@@ -1807,7 +1814,22 @@ void RunState::end_combat() {
     // leave state behind still happen — the elite's relic draw, the potion's
     // drift — and gold and the card reward, which leave none, are not rolled.
     const bool smoked = combat.outcome == Outcome::Escaped;
-    if (!smoked) award_combat_gold(combat_source);
+    // A normal fight whose enemies ALL escaped pays no gold and drops no
+    // potion, though the roll is still taken (MonsterGroup.haveMonstersEscaped:
+    // every monster, so one that died is enough to pay). The card reward stands.
+    // An elite room takes its own branch first, so this is normal fights only
+    // (thievery.md §1, Rob L3). In Act 1 only a lone Looter can do it.
+    const bool all_escaped =
+        combat_source == RewardSource::Monster && !combat.enemies.empty() &&
+        std::all_of(combat.enemies.begin(), combat.enemies.end(),
+                    [](const Enemy& e) { return e.escaped; });
+    // Gold a dead thief carried, one STOLEN_GOLD reward. Through gain_gold, so
+    // Ectoplasm refuses it; no Golden Idol bonus, which applyGoldBonus(theft)
+    // skips. A Smoke Bomb's screen sets up no rewards, so it is lost then too.
+    const int stolen = combat.stolen_gold_reward;
+    combat.stolen_gold_reward = 0;
+    if (stolen > 0 && !smoked) gain_gold(stolen);
+    if (!smoked && !all_escaped) award_combat_gold(combat_source);
     const bool elite = combat_source == RewardSource::Elite;
 
     // Black Star: an elite drops a SECOND relic. Both are drawn here, before
@@ -1847,11 +1869,13 @@ void RunState::end_combat() {
              : 0);
 
     // Counted the same when smoked: StS rolls the potion before it opens the
-    // screen that turns out to show nothing. (A thief's stolen gold would
-    // count too, once Thievery exists — task #49.)
-    const int on_screen =
-        1 /* gold */ + static_cast<int>(elite_relics.size());
-    roll_potion_drop(on_screen, /*grant=*/!smoked);
+    // screen that turns out to show nothing. A dead thief's gold is on the
+    // room's list from the moment it died, so it counts; combat gold is not on
+    // it when every enemy escaped.
+    const int on_screen = (all_escaped ? 0 : 1) /* gold */ +
+                          (stolen > 0 ? 1 : 0) +
+                          static_cast<int>(elite_relics.size());
+    roll_potion_drop(on_screen, /*grant=*/!smoked, /*no_chance=*/all_escaped);
 
     if (smoked) {
       // Nothing to collect and nothing to decide: StS's smoked screen offers

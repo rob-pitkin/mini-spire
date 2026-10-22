@@ -81,8 +81,9 @@ enum class ActionKind {
   DrawPileToHand,   // Violence: move `amount` random cards of `card_type` from
                     // the draw pile to the hand; overflow past the hand limit
                     // goes to the discard pile
-  GainGold,         // Hand of Greed: record `amount` gold earned in this fight.
-                    // Combat has no gold — RunState writes it back (§3.2)
+  GainGold,         // Hand of Greed: add `amount` to the fight's gold, which the
+                    // run lent and takes back (thievery.md §3); not under
+                    // Ectoplasm
   DiscountRandomCardInHand,  // Madness: one random eligible card in hand costs
                              // 0 for the rest of the combat
   CapHandCost,    // Enlightenment: every card in hand costing more than 1 drops
@@ -143,6 +144,8 @@ enum class ActionKind {
                    // (Stage 4c; docs/design/decision-points.md)
   ApplyChoice,     // apply the answered choice — pushed by resolve_choice(),
                    // carries the chosen CardId in `card`
+  StealGold,       // the thief in `actor` takes up to `amount` of the player's
+                   // gold, ahead of its hit (thievery.md §3)
 };
 
 // A small, clone-safe tagged value. No closures, no pointers into state —

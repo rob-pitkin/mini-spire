@@ -822,13 +822,13 @@ TEST(BlueCandle, WithoutItACurseIsUnplayable) {
 // The observation (§3.7)
 // ============================================================================
 
-// The last player-base slot carries the cards played this turn.
+// Its own player-block slot carries the cards played this turn.
 TEST(CardsPlayedObservation, IsWrittenToThePlayerBlock) {
   CombatState s = fight();
   s.character.energy = 99;
   for (int i = 0; i < 3; ++i) s.current_hand.push_back(Card{CardId::Defend});
   CombatEnv env(s);
-  constexpr int kSlot = CombatEnv::kPlayerBaseSize - 1;
+  constexpr int kSlot = CombatEnv::kCardsPlayedSlot;
   ASSERT_EQ(env.obs()[kSlot], 0.0f);
 
   env.step(card_action(CardId::Defend));
