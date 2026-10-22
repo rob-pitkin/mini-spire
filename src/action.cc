@@ -1912,6 +1912,23 @@ bool valid_enemy_slot(const CombatState& state, int slot) {
   return slot >= 0 && slot < static_cast<int>(state.enemies.size());
 }
 
+// Shuffle a card into the draw pile: StS's CardGroup.addToRandomSpot, reached
+// from ShowCardAndAddToDrawPileEffect's constructor, so the card is in the pile
+// as the action runs. An empty pile takes it with no roll. Otherwise it goes in
+// at cardRandomRng.random(size - 1), an index in [0, size - 1]: the top is the
+// last element, so a card shuffled into a non-empty pile is never the next
+// draw. The roll is the card-random stream's, not the combat stream's (task
+// #31; docs/research/pile-card-storage.md (d) item 3).
+void add_to_random_spot(CombatState& state, const Card& card) {
+  std::vector<Card>& pile = state.draw_pile;
+  if (pile.empty()) {
+    pile.push_back(card);
+    return;
+  }
+  std::uniform_int_distribution<std::size_t> pos(0, pile.size() - 1);
+  pile.insert(pile.begin() + pos(state.card_rng), card);
+}
+
 // Remove one copy MATCHING `card` (id and instance state) from a pile.
 // Returns false if absent. Matching the instance matters once two copies of a
 // card can differ — taking an arbitrary one would be the wrong card.
@@ -2479,6 +2496,14 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       const std::vector<CardId>& pool = generation_pool(a.gen_pool);
       if (pool.empty()) break;
       std::uniform_int_distribution<std::size_t> pick(0, pool.size() - 1);
+      // Every card is picked before any is placed. Chrysalis and Metamorphosis
+      // pick all of theirs in use() and queue one MakeTempCardInDrawPileAction
+      // each, whose positions are rolled as those actions run, on the same
+      // stream — so the draws are pick, pick, pick, then place, place, place.
+      // The hand and the discard roll nothing on placing, so for them the two
+      // orders agree.
+      std::vector<Card> made_cards;
+      made_cards.reserve(static_cast<std::size_t>(std::max(a.amount, 0)));
       for (int i = 0; i < a.amount; ++i) {
         // Each card is an INDEPENDENT roll — Jack of All Trades+ can hand you
         // the same card twice, and in StS it does.
@@ -2501,6 +2526,9 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
           // effective cost, not the field.
           if (combat_layer_cost(made) > 0) set_combat_cost(made, 0);
         }
+        made_cards.push_back(made);
+      }
+      for (const Card& made : made_cards) {
         switch (a.gen_pile) {
           case GeneratedPile::Hand:
             add_card_to_hand(state, made);
@@ -2508,13 +2536,9 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
           case GeneratedPile::Discard:
             move_to_discard(state, made);
             break;
-          case GeneratedPile::ShuffleDraw: {
-            std::uniform_int_distribution<std::size_t> pos(
-                0, state.draw_pile.size());
-            state.draw_pile.insert(state.draw_pile.begin() + pos(state.rng),
-                                   made);
+          case GeneratedPile::ShuffleDraw:
+            add_to_random_spot(state, made);
             break;
-          }
         }
       }
       break;
@@ -2596,16 +2620,11 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         case GeneratedPile::Hand:
           add_card_to_hand(state, made);
           break;
-        case GeneratedPile::ShuffleDraw: {
-          // SHUFFLE into the draw pile: insert at a uniformly random position
-          // so it isn't deterministically the next draw. Consumes RNG only
-          // when such a card is actually generated.
-          std::uniform_int_distribution<std::size_t> pos(
-              0, state.draw_pile.size());
-          state.draw_pile.insert(state.draw_pile.begin() + pos(state.rng),
-                                 made);
+        case GeneratedPile::ShuffleDraw:
+          // Wild Strike's Wound, Reckless Charge's Dazed, Mark of Pain's
+          // Wounds: MakeTempCardInDrawPileAction(randomSpot = true).
+          add_to_random_spot(state, made);
           break;
-        }
       }
       break;
     }

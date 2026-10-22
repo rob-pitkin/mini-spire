@@ -1442,6 +1442,120 @@ TEST(GeneratedCards, BurnOnlyTicksWhileItIsInHand) {
   EXPECT_EQ(s.character.hp, hp);
 }
 
+// ---------------------------------------------- shuffling into the draw pile
+// StS's CardGroup.addToRandomSpot (task #31): never on top of a non-empty pile,
+// no roll for an empty one, and the roll is the card-random stream's.
+
+// The top of the pile (its last element) is a Bash; wherever the Wound goes,
+// the Bash is still the next draw. True of every roll, at every pile size, so
+// the loop over card-stream states only adds chances for a broken range to
+// show itself.
+TEST(GeneratedCards, AShuffledInCardIsNeverOnTop) {
+  for (int advance = 0; advance < 20; ++advance) {
+    for (int below = 0; below <= 5; ++below) {
+      CombatState s = make_minimal_state(0);
+      s.card_rng.discard(static_cast<unsigned long long>(advance));
+      s.enemies[0].hp = 200;
+      s.character.energy = 3;
+      for (int i = 0; i < below; ++i) s.draw_pile.push_back(Card{CardId::Defend});
+      s.draw_pile.push_back(Card{CardId::Bash});
+      s.current_hand.push_back(Card{CardId::WildStrike});
+
+      ASSERT_TRUE(apply_action(s, card_action(CardId::WildStrike, 0)));
+
+      ASSERT_EQ(s.draw_pile.size(), static_cast<std::size_t>(below + 2));
+      EXPECT_EQ(s.draw_pile.back().card_id, CardId::Bash)
+          << "pile of " << below + 1 << ", stream advanced " << advance;
+    }
+  }
+}
+
+TEST(GeneratedCards, AnEmptyDrawPileTakesTheCardWithoutARoll) {
+  CombatState s = make_minimal_state(0);
+  s.enemies[0].hp = 200;
+  s.character.energy = 3;
+  s.current_hand.push_back(Card{CardId::WildStrike});
+  const std::mt19937 card_rng = s.card_rng;
+  const std::mt19937 rng = s.rng;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::WildStrike, 0)));
+
+  ASSERT_EQ(s.draw_pile.size(), 1u);
+  EXPECT_EQ(s.draw_pile[0].card_id, CardId::Wound);
+  EXPECT_TRUE(s.card_rng == card_rng);
+  EXPECT_TRUE(s.rng == rng);
+}
+
+// The position draws on card_rng and leaves the combat stream alone, which
+// shuffles and enemy moves depend on.
+TEST(GeneratedCards, ThePositionIsRolledOnTheCardStream) {
+  CombatState s = make_minimal_state(0);
+  s.enemies[0].hp = 200;
+  s.character.energy = 3;
+  for (int i = 0; i < 4; ++i) s.draw_pile.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::WildStrike});
+  const std::mt19937 card_rng = s.card_rng;
+  const std::mt19937 rng = s.rng;
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::WildStrike, 0)));
+
+  EXPECT_TRUE(s.rng == rng) << "the combat stream moved";
+  EXPECT_FALSE(s.card_rng == card_rng) << "the card stream did not move";
+}
+
+// Chrysalis picks all three Skills, then places them, as its use() picks each
+// card before the MakeTempCardInDrawPileActions run. Predicted with the same
+// draws in that order, on a copy of the stream — so it holds on any platform;
+// interleaving pick and place would draw the same numbers for different jobs.
+TEST(GeneratedCards, ChrysalisPicksEveryCardBeforePlacingAny) {
+  CombatState s = make_minimal_state(0);
+  s.enemies[0].hp = 200;
+  s.character.energy = 3;
+  for (int i = 0; i < 4; ++i) s.draw_pile.push_back(Card{CardId::Defend});
+  s.current_hand.push_back(Card{CardId::Chrysalis});
+
+  std::mt19937 predict = s.card_rng;
+  const std::vector<CardId>& pool = generation_pool(GenerationPool::ClassSkill);
+  std::uniform_int_distribution<std::size_t> pick(0, pool.size() - 1);
+  std::vector<CardId> picked;
+  for (int i = 0; i < 3; ++i) picked.push_back(pool[pick(predict)]);
+  std::vector<CardId> expected;
+  for (const Card& c : s.draw_pile) expected.push_back(c.card_id);
+  for (CardId id : picked) {
+    std::uniform_int_distribution<std::size_t> pos(0, expected.size() - 1);
+    expected.insert(expected.begin() + pos(predict), id);
+  }
+
+  ASSERT_TRUE(apply_action(s, card_action(CardId::Chrysalis)));
+
+  std::vector<CardId> actual;
+  for (const Card& c : s.draw_pile) actual.push_back(c.card_id);
+  EXPECT_EQ(actual, expected);
+}
+
+// Mark of Pain's two Wounds are shuffled in after the opening hand, on the card
+// stream: the fight's combat stream is the same with or without the relic.
+TEST(GeneratedCards, MarkOfPainsWoundsLeaveTheCombatStreamAlone) {
+  auto start = [](bool with_mark) {
+    CombatSetup setup;
+    setup.seed = 7;
+    setup.deck = starter_deck();
+    if (with_mark) setup.relics.push_back(HeldRelic{RelicId::MarkOfPain, 0});
+    return start_combat(std::move(setup));
+  };
+  const CombatState with = start(true);
+  const CombatState without = start(false);
+
+  int wounds = 0;
+  for (const Card& c : with.draw_pile) {
+    if (c.card_id == CardId::Wound) ++wounds;
+  }
+  EXPECT_EQ(wounds, 2);
+  EXPECT_NE(with.draw_pile.back().card_id, CardId::Wound)
+      << "a Wound went on top of a non-empty pile";
+  EXPECT_TRUE(with.rng == without.rng);
+}
+
 // ============================================================================
 // Simple new mechanisms: random per-hit targeting, Strength multiplication,
 // and an intent-conditional buff.

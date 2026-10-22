@@ -321,6 +321,13 @@ Ordered by how directly they affected play at `c1b578f`.
    Chrysalis and Metamorphosis (`card.h:1430-1440`, `1978-2005`). Ours also draws this
    position from the combat stream `state.rng`, where StS uses `cardRandomRng`; that
    breaks the stream separation `v2-spec.md` §3.5 asks for. *Parity bug; task #31.*
+   *Resolved 2026-10-18:* both sites go through `add_to_random_spot` in `action.cc`:
+   [0, size-1] on `card_rng`, and no roll for an empty pile. Reckless Charge and Mark
+   of Pain were checked too; both are `MakeTempCardInDrawPileAction(…, true, true)`.
+   The insert happens in the effect's constructor, so the card is in the pile as soon
+   as the action runs. One more difference turned up and is fixed: Chrysalis and
+   Metamorphosis pick every card in `use()` before any position is rolled, and the
+   engine had alternated the two. Tests: `GeneratedCards.*` in `test_choice.cc`.
 4. **Anger's copy does not inherit the played copy's cost.** Ours carries only
    `bonus_damage` and `upgrades` (`turn_loop.cc:416-420`). StS's copy comes from
    `makeStatEquivalentCopy`, which copies `cost`, `costForTurn` and `freeToPlayOnce`
