@@ -278,9 +278,9 @@ against it).
 | `lastRoomWasShop` shop suppression | GameContext.cpp | ✅ | **confirmed** — "the game does not allow generating two shops in a row… setting the shop chance to 0". ➕ **and it applies whether the previous shop was a Shop *room* or a `?` that became one** |
 | Tiny Chest every-4th-`?` | GameContext.cpp | ✅ | **confirmed** — "Every 4th ? room is a Treasure room" |
 | Juzu Bracelet monster→event | GameContext.cpp | ✅ | **confirmed** — "Regular enemy combats are no longer encountered in ? rooms" |
-| Juzu Bracelet **reset ordering** | GameContext.cpp | ⚠️ **unverifiable** | the wiki states the *effect*, not whether `monsterChance` resets on a converted roll. Simulator-only, and no wiki source can settle it — see note below |
+| Juzu Bracelet **reset ordering** | GameContext.cpp | ⚠️ **unverifiable** | the wiki states the *effect*, not whether `monsterChance` resets on a converted roll. ✅ **Settled by the decompiled game** (2026-10-22): `EventHelper.roll` resets `MONSTER_CHANCE` inside the branch that swaps the room |
 | Gold amounts (10–20 / 25–35 / 100±5) | GameContext.cpp | ✅ | **confirmed exactly** — wiki gives 10–20, 25–35, 95–105. Asc 13+ → 71–79 matches the ×0.75 factor |
-| `SHRINE_CHANCE = 0.25` | GameContext.cpp | ⚠️ **not found** | no wiki source states the shrine-vs-event split. Remains simulator-only |
+| `SHRINE_CHANCE = 0.25` | GameContext.cpp | ⚠️ **not found** | no wiki source states the shrine-vs-event split. ✅ **Confirmed by the decompiled game** (`shrineChance = 0.25f`, 2026-10-22, `events.md` §2.2) |
 | Neow tier composition | Neow.cpp | ✅ | **confirmed** — 6 / 5 / 7 contents match the index ranges exactly |
 | Neow Max HP amounts | Neow.cpp | ✅ | ❌ **CORRECTED** — flat per-character (+8/+16/−8 Ironclad), not the 10%/20% its enum names claim. Coincides only for the Ironclad |
 | Vocabulary pool sizes | CardPools/RelicPools/Potions | ⚠️ **not fetch-verifiable** | see §7.8 — and an earlier wiki-derived count was **wrong** |

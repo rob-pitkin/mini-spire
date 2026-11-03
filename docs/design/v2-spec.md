@@ -85,9 +85,9 @@ no Gymnasium surface, so it is exercised only by `ctest`.
 | `RELICS` | 140 |
 | `POTIONS` | 33 |
 | `EVENTS` | 25 |
-| `EVENT_OPTIONS` | 58 |
+| `EVENT_OPTIONS` | 56 (58 in code until events step 1; §6.3) |
 | **observation** | **4,115 floats** (2.32× v1.0.0) |
-| **action space** | **8,615** (78% of it the combat card × cost × target block, §6.5; 2,135 before the cost dimension) |
+| **action space** | **8,613** (8,615 in code until events step 1; 78% of it the combat card × cost × target block, §6.5; 2,135 before the cost dimension) |
 
 Every one of these is **Act 1-reachable content only** — no reserved indices for
 acts 2–3 (§5.1 rule 5).
@@ -407,7 +407,7 @@ in one stream never perturbs another.**
 | `combat[floor]` | shuffles and enemy AI **within one fight** — seeded per floor |
 | `card_reward` | reward rarity rolls and card choices |
 | `shop` | stock, prices, discount slot |
-| `event` | which event a `?` becomes, and its internal rolls |
+| `event` | the `?` roll and which event it becomes. **One persistent stream for the run**, not per floor, with the pick drawn from a copy (Rob E2, 2026-10-22): that is what reproduces the shrine re-entry bug (§4.1, `events.md` §2.3). An event's own rolls go on a separate per-floor stream (E3), as StS's `miscRng` is re-seeded per floor |
 | `potion` | drop rolls (40% base, with drift) |
 | `relic` | which relic a chest or elite grants |
 | `auto_resolve` | §9's engine-side policies — **must be its own stream**, so an auto-resolved shrine cannot shift the fights after it |
@@ -706,12 +706,14 @@ TREASURE ? treasureChance= 0.02 : treasureChance+= 0.02
 that resolves to EVENT is 25% a shrine, 75% a regular event, falling back to the
 other list when either is exhausted.
 
-⚠️ **`SHRINE_CHANCE = 0.25` is simulator-only — no wiki source states the
-shrine-vs-event split.** Implement it, flagged as derived-not-verified.
+✅ **`SHRINE_CHANCE = 0.25` is confirmed by the decompiled game**
+(`AbstractDungeon.shrineChance = 0.25f`, read in `generateEvent`). No wiki source
+states it; the game is the stronger source (`events.md` §2.2).
 
 Note also that several "one-time" events (All-Knowing Skull, The Joust, Secret
 Portal) are **internally treated as shrines**, which matches `Events.h` drawing
-them through the shrine path rather than the per-act event lists.
+them through the shrine path rather than the per-act event lists. Confirmed:
+`getShrine` draws from `shrineList` plus the gated one-time list.
 
 #### The shrine re-entry bug — reproduce it
 
@@ -740,13 +742,15 @@ Consistent with what we already do: §3.5 preserves Neow's *no-op* `r.random(0,0
 which is the same category of unintended-but-real behaviour, and both
 `sts_map_oracle` and `sts_lightspeed` chase bit-exact RNG including quirks.
 
-⚠️ **Implementation note:** this needs the *exact* conditions, which
-["under some circumstances"](https://forgottenarbiter.github.io/Correlated-Randomness/)
-does not give. Read the linked analysis properly before implementing, and treat
-the 80% figure as approximate until the mechanism is understood.
-
-**Those exact numbers are not yet verified** and the parity test §5.10 mandates
-cannot be written without them. This is a remaining blocker.
+✅ **Mechanism found (2026-10-22, `events.md` §2.3; Rob E2).** The `?` roll draws
+from a copy of `eventRng` and keeps the copy, so the stream advances one draw.
+The event pick then draws from a second copy and discards it, so the stream does
+not advance. The next `?` roll therefore reads the same float as this event's
+shrine check. After a passed check (below 0.25) the next `?` is a fight with
+probability `monsterChance / 0.25`, 80% at 0.2; after a failed one it cannot be a
+fight while `monsterChance` is at most 0.25. Built by keeping one persistent
+event stream for the run and copying it for the pick; the parity test asserts
+that equality, not an outcome rate.
 
 ### 4.2 Run-content generation
 
@@ -1203,7 +1207,8 @@ Yourself drops out) — a second place the §3.0 ascension pin changes a count. 
 those 14, `canAddOneTimeEvent` gates **6 out of Act 1** entirely; see §6.3 for
 the per-event table.
 
-**`EVENT_OPTIONS = 58`** — counted per event in §6.3, not estimated.
+**`EVENT_OPTIONS = 56`** — counted per event in §6.3, not estimated (58 before
+Rob's E4 ruling, 2026-10-22).
 
 #### Required engine change: `CardData` needs `rarity` and `color`
 
@@ -1286,6 +1291,15 @@ numeric, and for Act 1 it is four values:
 | 1 | HP amount 1 | Golden Idol |
 | 2 | phase / attempts remaining | Dead Adventurer |
 | 3 | gold at stake | World of Goop |
+
+> ⚠️ **Incomplete (2026-10-22, `events.md` §6; Rob E10).** Checked against the
+> decompiled events, three values a human reads are missing: **We Meet Again's
+> gold offer** (rolled on entry, stated in the option), **Scrap Ooze's damage and
+> chance** (stated in the option, rising with each failed attempt), and **Dead
+> Adventurer's elite** (the intro text describes the body, which tells a player
+> which elite it is). One correction: The Woman in Blue writes no HP amount at
+> A0; its HP cost is Ascension 15 only. 6b is re-sized when it is built, with
+> task #9, not before.
 
 Zero outside an event. Normalise each by a **fixed constant** (§5.4), never by a
 varying denominator.
@@ -1604,18 +1618,25 @@ It also inherits the property §6 requires: **action *k* means the same option
 forever.** "Take the gold from Big Fish" is one fixed index, never "the second
 option on this screen".
 
-#### `EVENT_OPTIONS = 58` — counted, not estimated
+#### `EVENT_OPTIONS = 56` — counted, not estimated
 
 From `sts_lightspeed` `GameAction::getValidEventSelectBits`, which returns a
 **bitmask of valid options per event** — the compact source for this, rather than
-the ~1,400-line `chooseEventOption` switch.
+the ~1,400-line `chooseEventOption` switch. Recounted from the decompiled event
+classes in `events.md` §5, which agree with every per-event figure below.
+
+> **58 → 56 (Rob E4, 2026-10-22).** A screen with one option advances on its own
+> (`events.md` §3.2), as a one-option choice already does in combat. Lab's
+> "Search" and Wheel of Change's "Spin" are the only option on their screens, so
+> their ids could never be chosen; §5.1 rule 5 removes them. The engine's
+> constant changes with events step 1.
 
 | group | events | option ids |
 |---|---|---:|
 | Act 1 events | 11 | **29** |
-| Act 1 shrines | 6 | **10** |
-| One-time, **Act 1 reachable** | 8 | **19** |
-| **total** | **25** | **58** |
+| Act 1 shrines | 6 | **9** |
+| One-time, **Act 1 reachable** | 8 | **18** |
+| **total** | **25** | **56** |
 
 **One-time events are act-gated, and most are not Act 1.**
 `GameContext::canAddOneTimeEvent` gates each one:
@@ -1625,7 +1646,7 @@ the ~1,400-line `chooseEventOption` switch.
 | Ominous Forge · Bonfire Spirits · Lab · Note For Yourself · We Meet Again | none (default `true`) | ✅ |
 | Face Trader | `act == 1 \|\| act == 2` | ✅ |
 | The Woman in Blue | `gold >= 50` | ✅ |
-| The Divine Fountain | `deck.hasCurse()` | ✅ *(rare at A0 — needs a Neow curse drawback or an event curse, but reachable)* |
+| The Divine Fountain | `player.isCursed()`: a curse other than Necronomicurse, Curse of the Bell and Ascender's Bane (decompiled; `sts_lightspeed` has `deck.hasCurse()`) | ✅ *(rare at A0 — needs a Neow curse drawback or an event curse, but reachable)* |
 | Designer In-Spire | `(act == 2 \|\| act == 3) && gold >= 75` | ❌ |
 | Duplicator | `act == 2 \|\| act == 3` | ❌ |
 | Knowing Skull | `act == 2 && curHp > 12` | ❌ |
@@ -1636,7 +1657,7 @@ the ~1,400-line `chooseEventOption` switch.
 So 6 of the 14 are unreachable in Act 1, removing 19 ids (Designer In-Spire 6,
 Knowing Skull 4, N'loth 3, The Joust 2, Secret Portal 2, Duplicator 2).
 
-**Sizing decision: `EVENT_OPTIONS = 58`, exact — do not reserve the other 19.**
+**Sizing decision: `EVENT_OPTIONS` exact (58 then, 56 after E4) — do not reserve the other 19.**
 The full-game enumeration is 77, but acts 2–3 would change far more than event
 ids (new enemies, new encounters, new relic pools), so that is a new layout
 version regardless. Reserving buys nothing and inflates every published number.
@@ -1651,7 +1672,7 @@ Per-event (max bit position used, since conditional options are masked in place)
 
 | ids | events |
 |---:|---|
-| 1 | Lab · Wheel of Change |
+| 1 → **0** | Lab · Wheel of Change — one option each, which advances on its own (E4) |
 | 2 | Dead Adventurer · World of Goop · The Ssssserpent · Hypnotizing Mushrooms · Scrap Ooze · Shining Light · Transmorgrifier · Purifier · Upgrade Shrine · Duplicator · The Divine Fountain · Note For Yourself · Secret Portal · The Joust |
 | 3 | Big Fish · The Cleric · Wing Statue · Living Wall · Golden Shrine · Ominous Forge · Face Trader · N'loth |
 | 4 | Knowing Skull · The Woman in Blue · We Meet Again |
@@ -1849,7 +1870,7 @@ would change the run's distribution.
 
 | case | policy |
 |---|---|
-| **Match and Keep!** (shrine: 12 face-down cards, 6 pairs, duplicate entities) | engine picks uniformly at random |
+| **Match and Keep!** (shrine: 12 face-down cards, 6 pairs, duplicate entities) | engine picks uniformly at random: each of the 5 attempts flips two face-down cards chosen uniformly from those left, with no memory of earlier flips, on the `AutoResolve` stream (Rob E9, 2026-10-22, `events.md`). It finds fewer pairs than a person, who remembers what was turned over |
 | **Frozen Eye** (shows draw-pile *order*; informational, so auto-resolve does not apply) | **excluded from the shop pool** — the only true exclusion |
 | **Cursed Key: leaving a chest closed** (a human can skip a non-boss chest to avoid its curse) | the engine always opens the chest. **Temporary** (Rob, 2026-10-18, `curse-effects.md` §6.4 D3): the open-or-skip decision lands with Neow, which is what makes Cursed Key reachable |
 
@@ -1868,9 +1889,10 @@ footnote in a design doc. The full list to publish:
 
 | divergence | why |
 |---|---|
-| Match and Keep! resolved at random | subset choice over duplicate entities |
+| Match and Keep! resolved at random, without memory | subset choice over duplicate entities |
 | Frozen Eye excluded from the shop pool | reveals draw-pile *order*; no way to show it |
 | Neow always offers 4 blessings | no cross-run state exists (§8) |
+| Note For Yourself always offers an unupgraded Iron Wave | the noted card is the one the previous run stored; with no previous run it is a fresh profile's default (Rob E8, 2026-10-22, `events.md`) |
 | Relic order is insertion order | §5.4 — a real parity defect |
 | **Copies that differ only invisibly share one action** | Actions name (`CardId`, cost), §6.5. Two copies at the same cost whose discounts differ in duration (turn, combat, until played) look identical on the card face, so the engine picks one: the least durable discount first. A human who remembers what caused each discount could choose otherwise. Replaced "the cheapest copy is the one played" (D2 option A, 2026-09-19), retired by §6.5 (Rob, 2026-10-04) |
 | Ascension pinned at 0 | §3.0 |
@@ -1973,10 +1995,10 @@ the next class of defect is the kind only a running engine surfaces.
 |---|---|
 | **Common/uncommon/rare/shop relic pools** (§5.1) | Assumed fully Act 1-reachable. Individual relics can carry spawn conditions; a per-relic sweep of those 108 has not been done. The special, boss and starter tiers *have* been traced. |
 | **v1.0.0's inherited 189 cards** (§5.1) | Rule 5 applied to everything v2 adds, but the existing vocabulary has not been re-audited — `Dazed` may lack an Act 1 source. Cutting it would change shipped behaviour, so it is a separate decision. |
-| **`SHRINE_CHANCE = 0.25`** (§4.1) | No wiki source states the shrine-vs-event split. Derived-not-verified. |
-| **Juzu Bracelet reset ordering** (§4.1) | Simulator-only, and *unverifiable* — an internal counter invisible to a player except through long-run distribution. |
+| ~~**`SHRINE_CHANCE = 0.25`** (§4.1)~~ | **Resolved 2026-10-22:** the decompiled game sets `shrineChance = 0.25f` (`events.md` §2.2). |
+| ~~**Juzu Bracelet reset ordering** (§4.1)~~ | **Resolved 2026-10-22:** decompiled `EventHelper.roll` swaps MONSTER to EVENT and sets `MONSTER_CHANCE = 0.1f` in the same branch, as the engine does. |
 | **Relic pool sizes** (§5.1) | From declared arrays, cross-checked against a second declared structure, but not independently enumerated from the wiki. |
-| **`EVENT_OPTIONS = 58` counts bit positions** (§6.3) | Taken from each event's valid-option bitmask. Where an event's highest bit is conditional, the count is its maximum, which is the correct reservation but may exceed what any single run can select. |
+| **`EVENT_OPTIONS = 56` counts bit positions** (§6.3) | Taken from each event's valid-option bitmask. Where an event's highest bit is conditional, the count is its maximum, which is the correct reservation but may exceed what any single run can select. |
 | **Shrine re-entry bug** (§4.1) | Decided: reproduce it. But *"under some circumstances"* is not a spec — the mechanism must be understood before implementing, and the 80% figure is approximate. |
 
 ### 10.3 Deliberately deferred
@@ -2048,7 +2070,8 @@ a Linear board disagrees with it, the spec wins.
    on the colorless card effects (`colorless-effects.md`). Relic and potion
    effects are the remainder of this step: relics 129/140
    (`relic-effects.md` §7), potions 33/33 (`potion-effects.md` §8).
-   Events ❌.
+   Events: designed and ruled (`events.md`, 2026-10-22), built in that
+   document's five steps (§8 there).
 8. Bosses → **M5: an agent that completes a run**.
 
 ## 12. Non-termination hazard
