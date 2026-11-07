@@ -752,9 +752,15 @@ bool RunState::obtain_potion(PotionId id) {
 }
 
 void RunState::discard_potion(int index) {
-  if (has_pending_deck_choice()) return;
+  if (has_pending_deck_choice() || potions_locked()) return;
   if (index < 0 || index >= static_cast<int>(potions.size())) return;
   potions.erase(potions.begin() + index);
+}
+
+bool RunState::potions_locked() const {
+  // `event` is the room's event until enter_room resets it, so this holds on
+  // the map after We Meet Again and lifts in the next room.
+  return event.id == EventId::WeMeetAgain;
 }
 
 std::mt19937& RunState::potion_rng_for_floor() {
@@ -806,7 +812,9 @@ void RunState::heal(int amount) {
 }
 
 void RunState::drink_potion(int index) {
-  if (phase == Phase::Combat || has_pending_deck_choice()) return;
+  if (phase == Phase::Combat || has_pending_deck_choice() || potions_locked()) {
+    return;
+  }
   if (index < 0 || index >= static_cast<int>(potions.size())) return;
   const PotionId id = potions[index];
   // AbstractPotion.canUse is combat-only; these three override it.
@@ -1103,7 +1111,8 @@ void RunState::spend_gold(int amount) {
   // have already checked they can afford the price; this debits and notifies
   // rather than authorising, so it does not re-check affordability either.
   if (amount <= 0) return;
-  gold -= amount;
+  // loseGold floors gold at 0 (Rob B3).
+  gold = std::max(0, gold - amount);
 
   // Maw Bank stops the first time gold is spent AT A SHOP. MawBank.onSpendGold
   // itself has no room check; the check is one call up, in loseGold, which
@@ -1118,7 +1127,9 @@ void RunState::spend_gold(int amount) {
 
 void RunState::lose_gold(int amount) {
   if (amount <= 0) return;
-  gold -= amount;
+  // loseGold floors gold at 0 (Rob B3). No caller can reach it today: every
+  // event's cost is capped at the gold held or gated on it.
+  gold = std::max(0, gold - amount);
 }
 
 std::vector<int> RunState::smithable_cards() const {
@@ -1715,6 +1726,9 @@ void RunState::fire_room_entry_relics(RoomType room, bool unknown_node) {
 void RunState::enter_room(RoomType room, bool unknown_node) {
   current_room = room;
   last_room_was_shop = room == RoomType::Shop;
+  // A new room has no event until begin_event gives it one; the last room's
+  // stops being the room's event here, as StS's does (Rob B1).
+  event = EventState{};
 
   // BEFORE the room resolves. A Treasure room opens its chest and calls
   // leave_room below, so firing afterwards would miss those rooms entirely —
@@ -2338,11 +2352,44 @@ void RunState::begin_event(EventId id) {
       apply_wheel_result(std::uniform_int_distribution<int>(
           0, kWheelResults - 1)(event_rng_for_floor()));
       break;
+    case EventId::Lab:
+      // Search is the only option: three potions, on the reward screen.
+      offer_event_potions(kLabPotions);
+      break;
+    case EventId::WeMeetAgain: {
+      // Three offers, rolled in this order, each only when there is something
+      // to offer (getRandomPotion and getRandomNonBasicCard return null on an
+      // empty list before drawing; getGoldAmount returns 0 under 50).
+      std::mt19937& rng = event_rng_for_floor();
+      if (!potions.empty()) {
+        event.potion_index = std::uniform_int_distribution<int>(
+            0, static_cast<int>(potions.size()) - 1)(rng);
+      }
+      if (gold >= kWeMeetAgainMinGold) {
+        event.gold_amount = std::uniform_int_distribution<int>(
+            kWeMeetAgainMinGold, std::min(gold, kWeMeetAgainMaxGold))(rng);
+      }
+      // From the whole master deck, bottled cards included.
+      std::vector<int> uids;
+      for (const Card& card : master_deck) {
+        const DeckCardRarity rarity = deck_card_rarity(card.card_id);
+        if (rarity == DeckCardRarity::Basic ||
+            rarity == DeckCardRarity::Curse) {
+          continue;
+        }
+        uids.push_back(card.uid);
+      }
+      if (!uids.empty()) {
+        event.card_uid = uids[std::uniform_int_distribution<size_t>(
+            0, uids.size() - 1)(rng)];
+      }
+      break;
+    }
     default:
       break;
   }
 
-  // Nothing to decide: the event ends. Until events steps 2-5 land, that
+  // Nothing to decide: the event ends. Until events steps 4-5 land, that
   // includes the events they build, which a `?` can already draw (events.md
   // §8).
   if (event_options().empty()) finish_event();
@@ -2423,14 +2470,45 @@ std::vector<EventOption> RunState::event_options() const {
     }
     case EventId::NoteForYourself:
       return {O::NoteForYourselfTakeAndGive, O::NoteForYourselfIgnore};
+    case EventId::WeMeetAgain: {
+      std::vector<EventOption> out;
+      if (event.potion_index >= 0) out.push_back(O::WeMeetAgainGivePotion);
+      if (event.gold_amount > 0) out.push_back(O::WeMeetAgainGiveGold);
+      if (event.card_uid >= 0) out.push_back(O::WeMeetAgainGiveCard);
+      out.push_back(O::WeMeetAgainAttack);
+      return out;
+    }
+    case EventId::WomanInBlue:
+      // Never masked: the gate is 50 gold, and the dearest costs 40.
+      return {O::WomanInBlueBuyOne, O::WomanInBlueBuyTwo,
+              O::WomanInBlueBuyThree, O::WomanInBlueLeave};
     default:
-      return {};  // built in events steps 3-5
+      // No decision (Bonfire Spirits, Wheel of Change, Lab), or built in
+      // events steps 4-5.
+      return {};
   }
 }
 
 void RunState::finish_event() {
   event.active = false;
+  // combatRewardScreen.open: potions that did not all fit wait on the reward
+  // screen, which has no card reward (noCardsInRewards). Proceed there is
+  // skip_card_reward, which leaves the room.
+  if (!pending_potion_rewards.empty()) {
+    card_reward.clear();
+    phase = Phase::Reward;
+    return;
+  }
   leave_room();
+}
+
+void RunState::offer_event_potions(int count) {
+  // Drawn even with Sozu: the rewards are made, and claiming them gets nothing.
+  std::vector<PotionId> offered;
+  for (int i = 0; i < count; ++i) {
+    offered.push_back(any_potion(potion_rng_for_floor()));
+  }
+  offer_potion_rewards(offered);
 }
 
 DeckCardRarity deck_card_rarity(CardId id) {
@@ -2787,8 +2865,57 @@ bool RunState::choose_event_option(EventOption option) {
     case EventOption::NoteForYourselfIgnore:
       break;
 
+    // Each gift is paid, then a relic obtained at once (spawnRelicAndObtain).
+    case EventOption::WeMeetAgainGivePotion:
+      // The slot cannot have moved: the lock keeps every potion in place.
+      if (event.potion_index < static_cast<int>(potions.size())) {
+        potions.erase(potions.begin() + event.potion_index);
+      }
+      if (const std::optional<RelicId> relic = random_event_relic()) {
+        obtain_relic(*relic);
+      }
+      break;
+    case EventOption::WeMeetAgainGiveGold:
+      lose_gold(event.gold_amount);
+      if (const std::optional<RelicId> relic = random_event_relic()) {
+        obtain_relic(*relic);
+      }
+      break;
+    case EventOption::WeMeetAgainGiveCard: {
+      // masterDeck.removeCard, which does not check bottles: a bottled card
+      // leaves with its bottle mark.
+      const auto it = std::find_if(
+          master_deck.begin(), master_deck.end(),
+          [this](const Card& card) { return card.uid == event.card_uid; });
+      remove_card_from_deck(static_cast<int>(it - master_deck.begin()),
+                            /*allow_bottled=*/true);
+      if (const std::optional<RelicId> relic = random_event_relic()) {
+        obtain_relic(*relic);
+      }
+      break;
+    }
+    case EventOption::WeMeetAgainAttack:
+      break;
+
+    // Paid, then the potions on the reward screen (finish_event opens it if
+    // they do not all fit).
+    case EventOption::WomanInBlueBuyOne:
+      lose_gold(kWomanInBlueCostOne);
+      offer_event_potions(1);
+      break;
+    case EventOption::WomanInBlueBuyTwo:
+      lose_gold(kWomanInBlueCostTwo);
+      offer_event_potions(2);
+      break;
+    case EventOption::WomanInBlueBuyThree:
+      lose_gold(kWomanInBlueCostThree);
+      offer_event_potions(3);
+      break;
+    case EventOption::WomanInBlueLeave:
+      break;
+
     default:
-      return false;  // built in events steps 3-5
+      return false;  // built in events steps 4-5
   }
   finish_event();
   return true;

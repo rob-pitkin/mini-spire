@@ -121,6 +121,12 @@ inline constexpr int kBonfireRareMaxHp = 10;
 inline constexpr int kWheelResults = 6;
 inline constexpr int kWheelGold = 100;  // Exordium's (setGold)
 inline constexpr float kWheelHpLossFraction = 0.10f;
+inline constexpr int kLabPotions = 3;  // a third below Ascension 15
+inline constexpr int kWomanInBlueCostOne = 20;
+inline constexpr int kWomanInBlueCostTwo = 30;
+inline constexpr int kWomanInBlueCostThree = 40;
+inline constexpr int kWeMeetAgainMinGold = 50;  // and no gold offer below it
+inline constexpr int kWeMeetAgainMaxGold = 150;
 
 // Gates (events.md §2.2).
 inline constexpr int kEventsLateFloor = 6;  // Dead Adventurer, Mushrooms: floor > 6

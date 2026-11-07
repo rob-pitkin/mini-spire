@@ -1,7 +1,8 @@
 # Events — design (task #7)
 
 **Status:** AGREED (Rob, 2026-10-22): E1–E11 as recommended (§9); W1 from the
-wiki cross-check ruled 2026-11-03. Built in §8's order; steps 1–2 done (§10).
+wiki cross-check ruled 2026-11-03; B1–B3, raised while building step 3, ruled
+2026-11-07. Built in §8's order; steps 1–3 done (§10).
 
 The other half of `v2-spec.md` §11 step 7. A `?` node that resolves to an event
 today sets `Phase::Event` and stops there (`run_state.cc`, `enter_room`): nothing
@@ -314,6 +315,13 @@ directly, with `noCardsInRewards` set, so no card reward is offered. Lab's and T
 Woman in Blue's potions go through `offer_potion_rewards`; Wheel of Change's relic
 is obtained.
 
+The screen they open is `combatRewardScreen`, the one a fight opens, so the
+engine uses the same phase (Rob B2, 2026-11-07). If every potion fits, or Sozu is
+held, nothing waits and the room exits. Otherwise the run enters `Phase::Reward`
+with an empty card reward and the potions in `pending_potion_rewards`, where
+`take_potion_reward`, `discard_potion` and Proceed (`skip_card_reward`) already
+work. The event fights of step 4 end on the same phase.
+
 ## 5. The events
 
 ### 5.0 Wiki cross-check (2026-10-22)
@@ -439,10 +447,21 @@ that has none. See E8.
 
 **We Meet Again.** On entry, three offers (misc, in this order): a random held
 potion; gold, 0 if gold < 50, else misc 50 to `min(gold, 150)`; a random deck
-card that is neither basic nor a curse. Give Potion, Give Gold and Give Card each
-cost their offer and give a relic *(each masked when its offer is absent)*.
-Attack: leave with nothing. While the event is open, potions can be neither drunk
-nor discarded (task #7's requirement, `potion-effects.md` §6.1).
+card that is neither basic nor a curse. Each roll is taken only when its list is
+non-empty: no potion held, gold under 50, or no eligible card draws nothing.
+Give Potion, Give Gold and Give Card each pay their offer, then give a relic
+*(each masked when its offer is absent)*. Attack: leave with nothing.
+
+The card is drawn from the whole master deck, bottled cards included
+(`getRandomNonBasicCard` walks `masterDeck.group`, and `removeCard` does not
+check bottles). Giving a bottled card removes it with its bottle mark, and the
+bottle relic then does nothing, as Empty Cage's removal already can.
+
+Potions can be neither drunk nor discarded (task #7's requirement,
+`potion-effects.md` §6.1). `AbstractPotion.canUse` and `canDiscard` test
+`getCurrRoom().event instanceof WeMeetAgain`, and the room's event changes only
+when the next room is entered. So the lock holds from entry, through the result
+screen and the map after it, until the next room (Rob B1, 2026-11-07).
 
 **The Woman in Blue** (gate: gold ≥ 50). Buy 1, 2 or 3 random potions (§4.5) for
 20, 30 or 40 gold, on a reward screen. Leave. No card reward.
@@ -661,6 +680,70 @@ the post-draw hook, every turn. 4 tests in `test_relic_triggers.cc`; mutations
 W1 (never queued), W2 (picked on the card stream), W3 (a draw with nothing
 eligible) and W4 (every eligible card upgraded), each caught.
 
+### Step 3 (2026-11-07)
+
+- Lab, The Woman in Blue and We Meet Again, under rulings B1–B3 (§9).
+- `offer_event_potions`: `count` uniform draws (`any_potion`) on the floor's
+  potion stream, then `offer_potion_rewards`. With Sozu the draws still happen.
+- `finish_event` opens the reward screen when potions wait: `Phase::Reward`
+  with an empty card reward (B2). Lab searches on entry, so a full belt puts
+  the room on that screen at once; the run walk in `test_path_choice.cc` now
+  takes Proceed there.
+- `EventState` gains We Meet Again's potion slot and card uid, and is reset by
+  `enter_room`, so it is the room's event until the next room (B1).
+  `potions_locked` reads it; `drink_potion` and `discard_potion` refuse while
+  it holds.
+- `lose_gold` and `spend_gold` floor gold at 0 (B3). `spend_gold` is the
+  shop's `loseGold`, so the same ruling covers it.
+
+`tests/test_event_rewards.cc`, 26 tests. Mutations, all caught, in four groups
+on separate code, each caught by its own test:
+
+| # | mutation | caught by |
+|---|---|---|
+| R1 | `lose_gold` unclamped | `LoseGold.StopsAtZero` |
+| R2 | `spend_gold` unclamped | `SpendGold.StopsAtZero` |
+| R3 | event potions rarity-weighted | `SearchTakesThreeUniformPotionsWhenTheyFit`, `EachPurchaseCostsItsPriceForThatManyPotions` |
+| R4 | waiting potions dropped at the event's end | `AFullBeltLeavesThemOnARewardScreenWithNoCard`, `AFullBeltWaitsOnTheRewardScreen` |
+| R6 | no draws with Sozu | `WithSozuNothingIsTakenAndTheRoomExits` |
+| R7 | Buy Two costs 40 | `EachPurchaseCostsItsPriceForThatManyPotions` |
+| R8 | Buy Three gives two | `EachPurchaseCostsItsPriceForThatManyPotions` |
+| R9 | the potion roll taken with no potion held | `ARollWithNothingToOfferIsNotTaken` |
+| R10 | the gold rolled before the potion | `EntryRollsThePotionThenTheGoldThenTheCard` |
+| R11 | the gold offer not capped at the gold held | `TheGoldOfferRunsFromFiftyToTheGoldHeldUpTo150` |
+| R12 | the gold offer needs more than 50 | `TheGoldOfferRunsFromFiftyToTheGoldHeldUpTo150` |
+| R13 | basic cards offered | `TheCardOfferIsNeitherBasicNorACurse` |
+| R14 | curses offered | `TheCardOfferIsNeitherBasicNorACurse`, `EachGiftIsMaskedWithoutItsOffer` |
+| R15 | a bottled card refused | `ABottledCardCanBeOfferedAndGiven` |
+| R16 | Give Potion takes slot 0 | `GivePotionGivesUpTheOfferedOneForARelic` |
+| R17 | Give Gold through `spend_gold` | `GiveGoldPaysTheOfferForARelicAndKeepsMawBank` |
+| R18 | Give Card without the relic | `GiveCardRemovesThatCopyForARelic` |
+| R19 | drinking not locked | `PotionsCannotBeDrunkOrDiscardedDuringIt`, `HoldsOnTheMapAfterTheEvent` |
+| R20 | discarding not locked | `PotionsCannotBeDrunkOrDiscardedDuringIt`, `HoldsOnTheMapAfterTheEvent` |
+| R21 | the lock only while the event is live | `HoldsOnTheMapAfterTheEvent` |
+| R22 | no reset on entering a room | `LiftsInTheNextRoom` |
+| R23 | every live event locks | `NoOtherEventLocksPotions` |
+| R24 | Give Potion never masked | `EachGiftIsMaskedWithoutItsOffer` |
+| R25 | Lab gives two | each Lab test |
+
+Not mutated: `finish_event`'s `card_reward.clear()` (R5). Every exit from a
+reward screen clears the card reward, so it is empty whenever an event ends,
+and the line states `noCardsInRewards` rather than changing anything.
+
+R9 survived the first run. `ARollWithNothingToOfferIsNotTaken` checked one
+seed, and on that seed the extra draw was invisible: libc++'s
+`uniform_int_distribution(50, 120)` takes a number's low 7 bits and rejects
+values of 71 or more, so when the real first draw is rejected, the real and
+the mutated streams continue from the same number. That hides one extra draw
+about 45% of the time (57/128). The two stream tests and the two give tests now
+check ten seeds each; their assertions hold for every seed, so the loop adds
+sensitivity, not a dependence on the draw.
+
+Not tested: that each gift is paid before its relic. The order is observable
+only through which relic is drawn (War Paint after a Skill is given), which no
+test can fix without stubbing the relic draw. Tests that measure gold hold Old
+Coin first, so the relic drawn cannot pay gold of its own.
+
 ## 9. Questions for Rob
 
 **Ruled 2026-10-22: E1–E11 agreed as recommended.** E9 took option (a).
@@ -737,3 +820,20 @@ would settle it if you remember the screen.
 **Ruled (Rob, 2026-11-03): no Leave.** Three options, then the exit screen; the
 event cannot be skipped. Also confirmed: The Cleric is drawn from the event list
 with its 35-gold gate (§2.2).
+
+**Raised while building step 3, ruled 2026-11-07 as recommended:**
+
+**B1. How long We Meet Again's potion lock lasts.** The design said "while the
+event is open". The code keys it on the room's event, which lasts until the next
+room is entered. **Ruled: follow the code** (§5): drinking and discarding are
+refused from entry until the next `enter_room`, so on the map screen after the
+event too.
+
+**B2. Where Lab's and The Woman in Blue's potions wait.** `finish_event` leaves
+the room, and `leave_room` drops unclaimed potions, so a full belt lost them.
+**Ruled: `Phase::Reward` with an empty card reward** (§4.7), StS's own screen,
+rather than a covered `Phase::Event` like Cauldron's covered shop.
+
+**B3. `lose_gold` clamps at 0,** as `loseGold` does. No caller could go below 0
+(each cost is capped or gated), so this changes no reachable behaviour.
+`onLoseGold` has no override in the code search, so no relic hook is added.

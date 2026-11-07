@@ -692,8 +692,9 @@ Brew and Cauldron, checked 2026-10-17.
 
 - **Which potions.** `AbstractPotion.canUse` is true only in combat. Three
   potions override it: Blood Potion, Fruit Juice and Entropic Brew are usable
-  anywhere except during the We Meet Again event (not built; a requirement on
-  #7, which must also block discard there).
+  anywhere except while the room's event is We Meet Again, which also blocks
+  discard. Built with events step 3 (`potions_locked`); it lasts until the next
+  room is entered, the map after the event included (`events.md` §5, Rob B1).
 - **When.** In StS, whenever the top panel can be clicked: map, shop, rest
   site, events, reward screens, chests. The engine allows it in every run phase
   but Combat, and not while a deck choice is open, which is where

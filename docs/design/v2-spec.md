@@ -2071,7 +2071,7 @@ a Linear board disagrees with it, the spec wins.
    effects are the remainder of this step: relics 134/140
    (`relic-effects.md` §7), potions 33/33 (`potion-effects.md` §8).
    Events: designed and ruled (`events.md`, 2026-10-22), built in that
-   document's five steps (§8 there). Steps 1–2 of 5 built (2026-11-07).
+   document's five steps (§8 there). Steps 1–3 of 5 built (2026-11-07).
 8. Bosses → **M5: an agent that completes a run**.
 
 ## 12. Non-termination hazard

@@ -249,7 +249,10 @@ struct ShopPotion {
   bool sold = false;
 };
 
-// The live event (events.md §3.1). `active` is false outside Phase::Event.
+// The room's event (events.md §3.1), StS's getCurrRoom().event. `active` is
+// false once its last screen has advanced. The record itself lasts until the
+// next room is entered, which resets it, because the room's event does in StS:
+// We Meet Again's potion lock reads it on the map after the event (Rob B1).
 //
 // The amounts are the numbers an option states, fixed when the event is
 // entered, as StS computes them in the event's constructor. Named for the
@@ -265,6 +268,10 @@ struct EventState {
   int gold_amount = 0;
   // Failed attempts so far (Scrap Ooze).
   int attempts = 0;
+  // We Meet Again's other two offers: a slot in `potions`, and a master-deck
+  // card by uid. -1 when there is none to offer.
+  int potion_index = -1;
+  int card_uid = -1;
 };
 
 // The run above the fight. See docs/design/v2-spec.md §3.
@@ -511,7 +518,7 @@ struct RunState {
   // Gold taken outside a shop: World of Goop, The Cleric, We Meet Again, The
   // Woman in Blue. loseGold notifies onSpendGold only in a ShopRoom, so Maw
   // Bank keeps paying (wiki.gg Maw Bank: "will not break when spending Gold at
-  // an Event"; events.md §4.3).
+  // an Event"; events.md §4.3). Both stop at 0, as loseGold does (Rob B3).
   void lose_gold(int amount);
 
   // --- relics and potions ---
@@ -634,8 +641,14 @@ struct RunState {
   // which is a real decision point in the game rather than an error.
   bool obtain_potion(PotionId id);
 
-  // Discards the potion at `index`.
+  // Discards the potion at `index`. Refused while potions_locked().
   void discard_potion(int index);
+
+  // We Meet Again's lock: AbstractPotion.canUse and canDiscard refuse while
+  // the room's event is We Meet Again, which lasts from entry until the next
+  // room, the map after the event included (events.md §5, Rob B1). It keeps
+  // the potion the event asked for in its slot.
+  bool potions_locked() const;
 
   // Rolls a post-combat potion drop and its drift (§4.2). Takes how many
   // rewards are already on the screen, because four suppresses the drop —
@@ -670,8 +683,8 @@ struct RunState {
 
   // Drinks potions[index] out of combat (potion-effects.md §6.1). Only Blood
   // Potion, Fruit Juice and Entropic Brew can be; refused for any other, in
-  // Phase::Combat (combat has its own action), and while a deck choice is
-  // open. Toy Ornithopter heals 5.
+  // Phase::Combat (combat has its own action), while a deck choice is open,
+  // and while potions_locked(). Toy Ornithopter heals 5.
   void drink_potion(int index);
 
   // Heals the player outside combat, capped at max HP. Magic Flower does not
@@ -832,8 +845,14 @@ struct RunState {
   // choice is pending, or the run is over.
   bool choose_event_option(EventOption option);
 
-  // The event's last screen has advanced: back to the map (leave_room).
+  // The event's last screen has advanced: back to the map (leave_room), or to
+  // the reward screen if potions wait on it (Lab, The Woman in Blue), which
+  // is Phase::Reward with no card reward (events.md §4.7, Rob B2).
   void finish_event();
+
+  // Lab's and The Woman in Blue's potions: getRandomPotion, a uniform draw on
+  // the floor's potion stream, `count` times, then offer_potion_rewards.
+  void offer_event_potions(int count);
 
   // Opens a one-card deck choice for the live event (§3.3), only if a card is
   // eligible: StS's events guard their grid on the list being non-empty. True

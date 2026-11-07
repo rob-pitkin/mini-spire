@@ -48,6 +48,12 @@ bool exit_current_room(RunState& run) {
       run.phase = Phase::Map;
       return true;
 
+    case Phase::Reward:
+      // Lab searches on entry, so a full belt opens its reward screen before
+      // any option is taken: Proceed.
+      run.skip_card_reward();
+      return true;
+
     case Phase::Map:
       // Already back on the map: the room exited on its own. A treasure chest
       // takes this path, which is precisely the behaviour the Treasure case
@@ -73,6 +79,9 @@ bool exit_current_room(RunState& run) {
         }
         run.choose_event_option(options.back());
       }
+      // Lab's and The Woman in Blue's potions can wait on a reward screen:
+      // Proceed.
+      if (run.phase == Phase::Reward) run.skip_card_reward();
       return !run.is_terminal();
 
     default:
