@@ -2218,23 +2218,25 @@ TEST(CombatEndRelics, MeatOnTheBoneDoesNothingWhenHealthy) {
   EXPECT_EQ(run.hp, 70 + 6) << "Meat on the Bone fired above half HP";
 }
 
-// The ordering case, and the reason acquisition order matters. Burning Blood is
-// always acquired first (it is the starter), so its 6 HP is applied BEFORE Meat
-// on the Bone reads the threshold — and can lift the player over it.
-//
-// At 35 of 80: below half (40) on its own, but 41 after Burning Blood. So Meat
-// on the Bone must NOT fire. Nothing special-cases this; iterating the relic
-// vector in acquisition order is what makes it right.
-TEST(CombatEndRelics, BurningBloodCanLiftYouOverMeatOnTheBonesThreshold) {
+// The ordering case (task #63). AbstractRoom.endBattle calls Meat on the Bone's
+// onTrigger BEFORE player.onVictory(), so it reads HP before Burning Blood
+// heals. At 35 of 80: at or below half, so 12, then Burning Blood's 6.
+// Burning Blood firing first would make it 41 and Meat on the Bone silent.
+TEST(CombatEndRelics, MeatOnTheBoneReadsHpBeforeBurningBloodHeals) {
   const RunState run = won_a_fight_at(35, {RelicId::MeatOnTheBone});
-  EXPECT_EQ(run.hp, 41)
-      << "Meat on the Bone read the threshold before Burning Blood healed";
+  EXPECT_EQ(run.hp, 35 + 12 + 6)
+      << "Meat on the Bone read the threshold after Burning Blood healed";
 }
 
-// And just below that boundary it does fire: 34 -> 40, which is exactly half.
+// Exactly half fires; one above does not, Burning Blood's 6 or not.
 TEST(CombatEndRelics, MeatOnTheBoneFiresAtExactlyHalf) {
-  const RunState run = won_a_fight_at(34, {RelicId::MeatOnTheBone});
-  EXPECT_EQ(run.hp, 34 + 6 + 12) << "'at or below 50%' excluded exactly 50%";
+  const RunState run = won_a_fight_at(40, {RelicId::MeatOnTheBone});
+  EXPECT_EQ(run.hp, 40 + 12 + 6) << "'at or below 50%' excluded exactly 50%";
+}
+
+TEST(CombatEndRelics, MeatOnTheBoneDoesNotFireOneAboveHalf) {
+  const RunState run = won_a_fight_at(41, {RelicId::MeatOnTheBone});
+  EXPECT_EQ(run.hp, 41 + 6);
 }
 
 // ------------------------------------------------------------- Orichalcum

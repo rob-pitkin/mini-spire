@@ -438,6 +438,16 @@ heals 6; Meat on the Bone then asks whether HP is at or below half. At 35 of 80:
 `fire_relic_hooks_sequentially` drains after each relic and is what `end_combat`
 uses. The batched `fire_relic_hooks` remains for hooks whose relics commute.
 
+> ⚠️ **Corrected 2026-11-07 (task #63, Rob): the example above has StS's order
+> backwards.** Decompiled `AbstractRoom.endBattle` calls Meat on the Bone's
+> `onTrigger` first and `player.onVictory()` after it, so Meat on the Bone reads
+> HP **before** Burning Blood heals. At 35 of 80 the real game heals 12 and then
+> 6, **18**: the "batched" row's total, though for a different reason.
+> `potion-effects.md` §5.5 had the order right; this section did not, and the
+> engine followed this section. Meat on the Bone now has its own hook,
+> `Hook::CombatEndPreVictory`, fired before `CombatEnd`. The rule below still
+> stands for the victory relics among themselves.
+
 **The general rule**: use the sequential form wherever one relic on a hook can
 read state another changed. Combat start is currently safe — its relics grant
 Strength, Block, energy and debuffs without reading each other — but that is a

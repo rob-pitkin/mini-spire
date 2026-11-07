@@ -1826,11 +1826,16 @@ void RunState::end_combat() {
   // Only on a win. A dead Ironclad does not heal 6 and get back up; Lizard Tail
   // is the relic for that and is a different hook.
   //
-  // SEQUENTIALLY, not batched. Burning Blood heals 6 and Meat on the Bone then
-  // asks whether HP is at or below half — at 35 of 80 the answer is yes before
-  // that heal and no after it. Batched, both read the pre-heal HP and both
-  // fire, healing 18 where the real game heals 6.
+  // In AbstractRoom.endBattle's order: Meat on the Bone's onTrigger first, then
+  // player.onVictory() — Burning Blood, Face of Cleric and the rest — in
+  // acquisition order. Meat on the Bone therefore reads HP BEFORE any victory
+  // heal: at 35 of 80 it heals 12 and Burning Blood then 6, 18 in all (task
+  // #63; this comment and the code had the two reversed until 2026-11-07).
+  //
+  // Each hook still fires SEQUENTIALLY, draining after every relic, so a
+  // victory relic that reads what an earlier one changed sees the change.
   if (combat.character.hp > 0) {
+    fire_relic_hooks_sequentially(combat, Hook::CombatEndPreVictory);
     fire_relic_hooks_sequentially(combat, Hook::CombatEnd);
   }
 

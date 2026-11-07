@@ -677,6 +677,7 @@ void fire_enemy_hooks(CombatState& state, int slot, Hook hook, ActionQueue& q) {
     case Hook::ShuffleDrawPile:
     case Hook::PotionDrunk:
     case Hook::CombatEnd:
+    case Hook::CombatEndPreVictory:
       return;
   }
 
@@ -1340,19 +1341,6 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
             push_player_heal(q, 6);
             break;
 
-          case RelicId::MeatOnTheBone:
-            // "At or below 50%" is read at the moment this relic fires, and
-            // that moment is AFTER earlier relics have already resolved —
-            // which is why CombatEnd fires sequentially rather than batched
-            // (fire_relic_hooks_sequentially). Burning Blood is always
-            // acquired first, being the starter, so its 6 HP can lift you over
-            // the threshold and suppress this. Batched, both would read the
-            // same pre-heal HP and both fire.
-            if (state.character.hp * 2 <= state.character.max_hp) {
-              push_player_heal(q, 12);
-            }
-            break;
-
           case RelicId::FaceOfCleric: {
             // onVictory: increaseMaxHp(1, true), whose heal passes Magic Flower
             // since the room is still in combat here (gain_max_hp).
@@ -1361,6 +1349,23 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
             q.push_back(a);
             break;
           }
+
+          default:
+            break;
+        }
+        break;
+
+      case Hook::CombatEndPreVictory:
+        switch (relic.id) {
+          case RelicId::MeatOnTheBone:
+            // MeatOnTheBone.onTrigger, which endBattle calls before
+            // player.onVictory(): "at or below 50%" is read before Burning Blood
+            // heals, so at 35 of 80 both fire, 12 then 6 (task #63). The
+            // engine had it the other way round until 2026-11-07.
+            if (state.character.hp * 2 <= state.character.max_hp) {
+              push_player_heal(q, 12);
+            }
+            break;
 
           default:
             break;
@@ -1907,6 +1912,7 @@ void fire_player_power_hooks(CombatState& state, Hook hook, ActionQueue& q,
     case Hook::ShuffleDrawPile:
     case Hook::PotionDrunk:
     case Hook::CombatEnd:
+    case Hook::CombatEndPreVictory:
       break;
   }
 }

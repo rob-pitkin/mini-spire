@@ -91,14 +91,19 @@ enum class Hook {
                         // damage (ordering-notes §9), and Burn's tick reaches
                         // neither. Two hooks with one meaning each beats one
                         // hook with a hidden filter.
-  CombatEnd,            // Burning Blood, Meat on the Bone — fired on the WON
-                        // fight's state, before RunState writes HP back, so the
-                        // heal lands in one place rather than two
+  CombatEnd,            // Burning Blood, Face of Cleric — StS's onVictory,
+                        // fired on the WON fight's state, before RunState writes
+                        // HP back, so the heal lands in one place rather than
+                        // two. CombatEndPreVictory fires first.
   TurnEndPlayerPreCards,  // Metallicize, Plated Armor — StS's
                           // atEndOfTurnPreEndTurnCards: after the end-of-turn
                           // relics, BEFORE Burn and the end-of-turn curses play
                           // (curse-effects.md §1.1). TurnEndPlayer is the later
                           // atEndOfTurn group: Combust, Regen, Rage
+  CombatEndPreVictory,    // Meat on the Bone. AbstractRoom.endBattle calls its
+                          // onTrigger BEFORE player.onVictory(), so it reads HP
+                          // before Burning Blood or any other victory relic
+                          // heals (task #63, relic-effects.md §6.7)
 };
 
 // Fire the enemy-at-`slot`'s TriggeredEffects matching `hook`, PUSHING the

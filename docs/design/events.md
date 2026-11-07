@@ -605,11 +605,11 @@ tested at 16 Max HP (a hit of 4); Goop's ownership is not observable at A0 (its
 11 is fixed), so that test was dropped and Shining Light (at 20 Max HP) and Face
 Trader carry the ownership checks.
 
-**Found while wiring Face of Cleric (task #63, not fixed here):** StS's
+**Found while wiring Face of Cleric (task #63, fixed separately):** StS's
 `endBattle` runs Meat on the Bone's `onTrigger` before `player.onVictory()`, so
-Meat on the Bone checks HP before Burning Blood heals. The engine fires them in
-acquisition order with Burning Blood first, and `end_combat`'s comment states
-the opposite of the source. Awaiting Rob's ruling.
+Meat on the Bone checks HP before Burning Blood heals. The engine had them the
+other way round. Rob ruled to match the source (2026-11-07); see
+`relic-effects.md` §6.7.
 
 ## 9. Questions for Rob
 
