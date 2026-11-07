@@ -1381,7 +1381,11 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
         if (relic.id == RelicId::GamblingChip && state.turn_number == 1) {
           q.push_back(discard_for_draw_request());
         }
-        // Warped Tongs needs an upgrade path and lands in a later batch.
+        // Warped Tongs: atTurnStartPostDraw, every turn, so the opening hand
+        // and whatever the post-draw relics added are all in hand first.
+        if (relic.id == RelicId::WarpedTongs) {
+          q.push_back(make_action(ActionKind::UpgradeRandomCardInHand));
+        }
         if (relic.id == RelicId::Pocketwatch) {
           // Turn 1 only resets: StS's firstTurn flag skips the draw, and there
           // was no previous turn to have played few cards in. The counter is
@@ -2312,6 +2316,23 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
       // its counter rather than swapping id).
       for (Card& c : state.current_hand) upgrade_card_in_place(c);
       break;
+    case ActionKind::UpgradeRandomCardInHand: {
+      // Warped Tongs (decompiled UpgradeRandomCardAction): every card in hand
+      // that canUpgrade and is not a Status — upgrade_card_in_place refuses
+      // Status, Curse and upgraded cards, and keeps Searing Blow going — then
+      // one of them. StS shuffles the group with shuffleRng and takes the
+      // first; a uniform pick on the combat stream is the same distribution.
+      // Nothing is drawn when nothing qualifies, as StS skips the shuffle.
+      std::vector<int> eligible;
+      for (int i = 0; i < static_cast<int>(state.current_hand.size()); ++i) {
+        Card probe = state.current_hand[i];
+        if (upgrade_card_in_place(probe)) eligible.push_back(i);
+      }
+      if (eligible.empty()) break;
+      std::uniform_int_distribution<std::size_t> pick(0, eligible.size() - 1);
+      upgrade_card_in_place(state.current_hand[eligible[pick(state.rng)]]);
+      break;
+    }
     case ActionKind::UpgradeAllPiles:
       // Apotheosis. upgrade_card_in_place already refuses what cannot be
       // upgraded — already-upgraded cards, Status and Curse — which is exactly

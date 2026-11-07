@@ -1,7 +1,7 @@
 # Events — design (task #7)
 
 **Status:** AGREED (Rob, 2026-10-22): E1–E11 as recommended (§9); W1 from the
-wiki cross-check ruled 2026-11-03. Built in §8's order; step 1 done (§10).
+wiki cross-check ruled 2026-11-03. Built in §8's order; steps 1–2 done (§10).
 
 The other half of `v2-spec.md` §11 step 7. A `?` node that resolves to an event
 today sets `Phase::Event` and stops there (`run_state.cc`, `enter_room`): nothing
@@ -610,6 +610,56 @@ Trader carry the ownership checks.
 Meat on the Bone checks HP before Burning Blood heals. The engine had them the
 other way round. Rob ruled to match the source (2026-11-07); see
 `relic-effects.md` §6.7.
+
+### Step 2 (2026-11-07)
+
+- `DeckChoicePurpose` gains Upgrade, Offer and Store (appended), and
+  `PendingDeckChoice` an `event` source (E5). An event's Remove, Transform,
+  Offer and Store skip bottled cards (`getGroupWithoutBottledCards`); Upgrade
+  keeps them (`getUpgradableCards`). `queue_event_deck_choice` opens one only
+  when a card is eligible, as each event guards its grid, and the room exits
+  once it is answered. `apply_event_deck_change` resolves it: an event's
+  transform draws on the floor's event stream and does not upgrade.
+- `deck_card_rarity`: StS's CardRarity for a deck card, walking both the
+  upgrade and the Rampage growth ladders back to the card (the first version
+  walked only upgrades, and Rampage's rungs read as Special; the exhaustive test
+  caught it).
+- The Cleric, Wing Statue, Living Wall, Transmogrifier, Purifier, Upgrade
+  Shrine, Ominous Forge, Bonfire Spirits, A Note For Yourself, Wheel of Change.
+  Bonfire Spirits' offer and Wheel of Change's spin open on entry (one-option
+  screens); `apply_wheel_result` is public so each of the six results is tested
+  directly.
+
+`tests/test_event_choices.cc`, 45 tests. Mutations, all caught, in groups on
+separate code, each caught by its own test (P13 was rerun alone, since P12's
+shift also broke its test):
+
+| # | mutation | caught by |
+|---|---|---|
+| P1 | an event's removal offers bottled cards | `AnEventsRemovalSkipsBottledCards` |
+| P2 | an upgrade skips bottled cards | `AnUpgradeCanTakeABottledCard` |
+| P3 | an event's transform upgrades | `ChangeTransformsWithoutUpgrading` |
+| P4 | a choice opened with nothing eligible | `NothingEligibleOpensNoChoice`, `PurifyTakesNoGoldWithNothingToRemove`, `NothingToOfferEndsTheEvent` |
+| P5 | Purify charges before checking | `PurifyTakesNoGoldWithNothingToRemove` |
+| P6 | the Cleric pays through `spend_gold` | `ItsCostsDoNotBreakMawBank` |
+| P7 | Destroy needs more than 10 | `AnUpgradeCanMeetTheRequirement` |
+| P9 | a Common offered heals to full | `ACommonHealsFive` |
+| P10 | a Rare offered gives no Max HP | `ARareRaisesMaxHpAndHealsToFull` |
+| P11 | Note For Yourself opens no store choice | `TakeAndGiveObtainsIronWaveThenStoresACard`, `TheNotedCardCanBeTheOneStored` |
+| P12 | the wheel's results shifted by one | each result's test |
+| P13 | the wheel's HP loss owned by the player | `FiveIsHpLossThatOnlyTungstenRodChanges` |
+| P14 | rarity ignores the growth ladder | `NoDeckCardIsSpecial` |
+| P15 | Grow never masked | `GrowIsMaskedWithNothingToUpgrade` |
+
+Not mutated: Bonfire Spirits' reward-then-remove order (P8). No offering makes
+the order observable: only Parasite changes Max HP on leaving, and a curse's
+reward, Spirit Poop, does not read HP.
+
+Warped Tongs, which Ominous Forge's Rummage gives, is wired with this step (Rob,
+2026-11-07; `relic-effects.md` §7): `ActionKind::UpgradeRandomCardInHand` on
+the post-draw hook, every turn. 4 tests in `test_relic_triggers.cc`; mutations
+W1 (never queued), W2 (picked on the card stream), W3 (a draw with nothing
+eligible) and W4 (every eligible card upgraded), each caught.
 
 ## 9. Questions for Rob
 

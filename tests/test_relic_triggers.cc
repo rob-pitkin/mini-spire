@@ -1083,6 +1083,62 @@ TEST(RelicTriggers, ChemicalXAppliesOnceToEachDoubleTapPlay) {
   EXPECT_EQ(hp0 - s.enemies[0].hp, 5 * 2 * (1 + kChemicalXBonus));
 }
 
+// ---------------------------------------------------------- Warped Tongs
+
+namespace {
+
+int upgraded_in(const std::vector<Card>& pile) {
+  return static_cast<int>(std::count_if(
+      pile.begin(), pile.end(),
+      [](const Card& c) { return is_upgraded(c.card_id); }));
+}
+
+// A fight on ten copies of `id`, with `ids` held.
+CombatState fight_on(CardId id, std::vector<RelicId> ids) {
+  CombatSetup setup;
+  setup.seed = 1;
+  setup.deck = std::vector<Card>(10, Card{id});
+  for (RelicId r : ids) setup.relics.push_back(HeldRelic{r, 0});
+  return start_combat(setup);
+}
+
+}  // namespace
+
+// After the opening draw, one card in hand is upgraded. Every starter card can
+// be, so exactly one is, whichever it is.
+TEST(RelicTriggers, WarpedTongsUpgradesOneCardInTheOpeningHand) {
+  const CombatState s = fight_with({RelicId::WarpedTongs});
+  EXPECT_EQ(upgraded_in(s.current_hand), 1);
+}
+
+// Every turn: turn 2 draws the other five starter cards, and one of them is
+// upgraded too. Turn 1's stays upgraded in the discard, for the combat.
+TEST(RelicTriggers, WarpedTongsUpgradesOneCardEveryTurn) {
+  CombatState s = fight_with({RelicId::WarpedTongs});
+  one_durable_enemy(s);
+  ASSERT_TRUE(end_turn(s));
+  EXPECT_EQ(upgraded_in(s.current_hand), 1);
+  EXPECT_EQ(upgraded_in(s.discard_pile), 1);
+}
+
+// Nothing in hand can be upgraded: nothing changes, and nothing is drawn from
+// the combat stream, as StS skips the shuffle.
+TEST(RelicTriggers, WarpedTongsDoesNothingWhenNoCardCanUpgrade) {
+  const CombatState bare = fight_on(CardId::StrikePlus, {});
+  const CombatState s = fight_on(CardId::StrikePlus, {RelicId::WarpedTongs});
+  EXPECT_EQ(upgraded_in(s.current_hand), STARTING_HAND_SIZE);
+  EXPECT_TRUE(s.rng == bare.rng);
+}
+
+// The pick is StS's shuffleRng: the combat stream moves, the card stream does
+// not.
+TEST(RelicTriggers, WarpedTongsDrawsFromTheCombatStream) {
+  const CombatState bare = fight_on(CardId::Strike, {});
+  const CombatState s = fight_on(CardId::Strike, {RelicId::WarpedTongs});
+  EXPECT_FALSE(s.rng == bare.rng);
+  EXPECT_TRUE(s.card_rng == bare.card_rng);
+}
+
 // Turn 1 only resets the counter: there was no previous turn.
 TEST(RelicTriggers, PocketwatchDrawsNothingOnTurnOne) {
   const CombatState bare = bare_fight();

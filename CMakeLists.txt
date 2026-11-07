@@ -72,6 +72,7 @@ if(MINISPIRE_BUILD_TESTS AND NOT SKBUILD)
     tests/test_thievery.cc
     tests/test_encounter.cc
     tests/test_events.cc
+    tests/test_event_choices.cc
     tests/test_mask_oracle.cc
     tests/test_map.cc
     tests/test_path_choice.cc

@@ -177,17 +177,21 @@ inline constexpr int kShopCardSlots = 5;
 // a markup — 75 and 150 become 90 and 180 before the random jitter.
 inline constexpr float kColorlessShopMarkup = 1.2f;
 
-// One item on offer.
 // Why a deck choice is open — the pending_purpose of v2-spec §6.1, which the
 // observation will need so "pick a card to bottle" does not alias another
-// purpose. Bottle is the only one today.
+// purpose. APPEND ONLY: the order will be block 18's.
 // Bottle: the Bottled relics. Remove and Transform: Empty Cage and Astrolabe
-// (relic-effects.md §6.30), and later Neow's and the events' own.
-enum class DeckChoicePurpose : uint8_t { Bottle, Remove, Transform };
+// (relic-effects.md §6.30) and the events. Upgrade, Offer (Bonfire Spirits:
+// removed, for a reward set by its rarity) and Store (Note For Yourself:
+// removed): the events (events.md §3.3).
+enum class DeckChoicePurpose : uint8_t {
+  Bottle, Remove, Transform, Upgrade, Offer, Store,
+};
 
-// One forced choice over the master deck, and the relic that opened it.
+// One forced choice over the master deck, and what opened it.
 struct PendingDeckChoice {
   DeckChoicePurpose purpose;
+  // The relic that opened it, when `event` is empty.
   RelicId relic;
   // How many cards the choice takes. StS's grid select makes every pick before
   // anything happens, so picks are staged (by uid) and applied together, in
@@ -195,7 +199,19 @@ struct PendingDeckChoice {
   // can never be offered to the second.
   int picks = 1;
   std::vector<int> staged_uids;
+  // The event that opened it, if an event did. Its Remove, Transform, Offer
+  // and Store list getGroupWithoutBottledCards, so no bottled card is offered,
+  // and its transforms do not upgrade (transformCard(c, false, miscRng)).
+  std::optional<EventId> event;
 };
+
+// A deck card's rarity as StS's CardRarity has it, which Bonfire Spirits pays
+// by and We Meet Again filters on. Wider than CardRarity, which models only
+// what a reward can roll. Pure, so every card is checked.
+enum class DeckCardRarity : uint8_t {
+  Basic, Common, Uncommon, Rare, Special, Curse,
+};
+DeckCardRarity deck_card_rarity(CardId id);
 
 // What a transform of `id` can become (AbstractDungeon.transformCard): a class
 // card any common, uncommon or rare Ironclad card but itself; a colorless card
@@ -208,6 +224,7 @@ std::vector<CardId> transform_pool(CardId id);
 // with no exclusion (Pandora's Box).
 std::vector<CardId> class_card_pool();
 
+// One item on offer.
 struct ShopItem {
   Card card;
   // Visible to a player as the card's border colour, and what sets the price.
@@ -817,6 +834,21 @@ struct RunState {
 
   // The event's last screen has advanced: back to the map (leave_room).
   void finish_event();
+
+  // Opens a one-card deck choice for the live event (§3.3), only if a card is
+  // eligible: StS's events guard their grid on the list being non-empty. True
+  // when it opened.
+  bool queue_event_deck_choice(DeckChoicePurpose purpose);
+
+  // The end of an event's deck choice: the picked cards removed, transformed
+  // (on the floor's event stream, not upgraded), upgraded, offered to Bonfire
+  // Spirits, or stored by Note For Yourself.
+  void apply_event_deck_change(DeckChoicePurpose purpose,
+                               const std::vector<int>& uids);
+
+  // Wheel of Change's six results (`miscRng.random(0, 5)`), applied. Public so
+  // each result is tested without depending on which one a draw lands.
+  void apply_wheel_result(int result);
 
   // The floor's generator for an event's own rolls, made from (seed,
   // EventMisc, floor) on the floor's first draw and continued after that.

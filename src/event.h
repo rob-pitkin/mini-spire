@@ -110,6 +110,17 @@ inline constexpr int kShiningLightUpgrades = 2;
 inline constexpr int kGoldenShrineGold = 100;
 inline constexpr int kGoldenShrineDesecrateGold = 275;
 inline constexpr int kFaceTraderGold = 75;
+inline constexpr int kClericHealCost = 35;
+inline constexpr int kClericPurifyCost = 50;
+inline constexpr int kWingStatueDamage = 7;
+inline constexpr int kWingStatueGoldMin = 50;
+inline constexpr int kWingStatueGoldMax = 80;
+inline constexpr int kWingStatueAttackDamage = 10;  // Destroy needs one this big
+inline constexpr int kBonfireCommonHeal = 5;
+inline constexpr int kBonfireRareMaxHp = 10;
+inline constexpr int kWheelResults = 6;
+inline constexpr int kWheelGold = 100;  // Exordium's (setGold)
+inline constexpr float kWheelHpLossFraction = 0.10f;
 
 // Gates (events.md §2.2).
 inline constexpr int kEventsLateFloor = 6;  // Dead Adventurer, Mushrooms: floor > 6

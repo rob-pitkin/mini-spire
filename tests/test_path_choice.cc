@@ -59,6 +59,11 @@ bool exit_current_room(RunState& run) {
       // is one, and every event's last screen advances (events.md §3.2). An
       // event left with nothing to choose has stranded the run.
       while (run.phase == Phase::Event && !run.is_terminal()) {
+        // An event's deck choice is answered with its first candidate.
+        if (run.has_pending_deck_choice()) {
+          run.resolve_deck_choice(run.deck_choice_candidates().front());
+          continue;
+        }
         const std::vector<EventOption> options = run.event_options();
         if (options.empty()) {
           ADD_FAILURE() << "an event offered nothing and did not end (floor "

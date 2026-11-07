@@ -252,14 +252,16 @@ per §1.
 
 ---
 
-## 7. Status: 132 of 140 wired
+## 7. Status: 134 of 140 wired
 
-The 8 not wired, enumerated against the `RelicId` enum on 2026-11-07 (not
+The 6 not wired, enumerated against the `RelicId` enum on 2026-11-07 (not
 estimated): Pantograph; Orrery, Dolly's Mirror; Frozen Eye; Neow's Lament, Odd
-Mushroom, Warped Tongs, Spirit Poop. The table below groups them by blocker.
-Ssserpent Head, Face of Cleric and N'loth's Hungry Face shipped with events
-step 1 (`events.md` §10; task #17), the last two because Face Trader can give
-them.
+Mushroom. The table below groups them by blocker. Ssserpent Head, Face of Cleric
+and N'loth's Hungry Face shipped with events step 1 (`events.md` §10; task
+#17), the last two because Face Trader can give them. Spirit Poop and Warped
+Tongs shipped with step 2, for Bonfire Spirits and Ominous Forge. Spirit Poop
+has no effect in play (StS subtracts one point from the score), so being
+obtainable is all of it.
 
 ⚠️ **Velvet Choker was counted for 125 while only half wired** (found
 2026-10-18, task #51): its +1 energy sat in the energy-relic list, so the
@@ -295,7 +297,8 @@ have nothing to do with relics**, and those blockers are shared:
 | ~~**No colorless cards**~~ | ~~Toolbox, half of Prismatic Shard~~ | ✅ **cleared.** All 35 colorless cards are implemented (`colorless-effects.md`) and the shop's 2 colorless slots now stock. **Toolbox** is wired: a 1-of-3 colorless choice that pauses combat setup BEFORE the opening hand (§6.9 — Rob ruled, 2026-09-20). **Prismatic Shard** is now unblocked: §6.8 was ruled (Rob, 2026-09-21) to the Colorless half only, a deliberate divergence recorded in the README. ⚠️ CORRECTED earlier: Orrery, Dolly's Mirror and Cauldron never needed colorless — Cauldron is potions only, and the other two need a shop CHOICE SCREEN over normal card rewards. |
 | **Needs a shop choice screen** | Orrery, Dolly's Mirror | moved here from the colorless row |
 | ~~**Needs potion effects**~~ | ~~Cauldron~~ | ✅ **done** with potion step 6 (2026-10-18, `potion-effects.md` §6.2): five uniform potions onto a potion reward screen, and the hidden card reward StS rolls and removes. Cauldron moved here from the colorless row. ✅ **Toy Ornithopter and Sacred Bark wired** with potion step 1 (2026-10-05): `Hook::PotionDrunk` fires after a potion's effects, and Sacred Bark doubles `potion_potency`. |
-| **No events** | Neow's Lament, Odd Mushroom, Warped Tongs, Spirit Poop, ~~Ssserpent Head~~ | Odd Mushroom, Warped Tongs and Spirit Poop arrive with events steps 2–4, Neow's Lament with Neow. ✅ **Ssserpent Head wired** with events step 1 (2026-11-05): every `?` node pays 50, whatever it becomes (§6.18's note). Golden Idol, Gremlin Visage and Cultist Headpiece were referenced from code already |
+| ~~**Reachable, not wired**~~ | ~~Warped Tongs~~ | ✅ **wired** with events step 2 (Rob, 2026-11-07), since Ominous Forge's Rummage gives it. `atTurnStartPostDraw`, every turn: `UpgradeRandomCardAction`, one random card in hand that can be upgraded (not a Status) upgraded for the rest of combat. StS shuffles on `shuffleRng`, so the pick is on the combat stream, and nothing is drawn when no card qualifies. wiki.gg agrees |
+| **No events** | Neow's Lament, Odd Mushroom, ~~Warped Tongs~~, ~~Spirit Poop~~, ~~Ssserpent Head~~ | Odd Mushroom arrives with events step 4, Neow's Lament with Neow. ✅ Spirit Poop with step 2 (Bonfire Spirits). ✅ **Ssserpent Head wired** with events step 1 (2026-11-05): every `?` node pays 50, whatever it becomes (§6.18's note). Golden Idol, Gremlin Visage and Cultist Headpiece were referenced from code already |
 | ~~**Reachable, not wired**~~ | ~~Face of Cleric, N'loth's Hungry Face~~ | ✅ **wired** with events step 1 (Rob, 2026-11-07), since Face Trader gives them. Face of Cleric: `onVictory`, +1 Max HP through `GainMaxHp` on the combat-end hook, so its heal passes Magic Flower and a Smoke Bomb escape counts (`escape()` reaches `endBattle`). N'loth's Hungry Face: counter 1; `onChestOpenAfter` takes the FIRST relic on the chest's list (`removeOneRelicFromRewards`), which with Matryoshka is Matryoshka's, then it is spent. Nothing is drawn differently, so the chest's stream is unchanged |
 | **Excluded by design** | Frozen Eye | not in any pool: it reveals draw-pile order, which nothing can show (`v2-spec.md` §9). Missing from this table until the 2026-10-18 recount |
 | ~~**Hooks not yet wired**~~ | ~~Gremlin Horn (EnemyDeath), Hand Drill (BlockBroken), Sundial + The Abacus (Shuffle)~~ | ✅ **done** (§6.10). All three hooks now fire and all four relics are wired. **Toy Ornithopter + Sacred Bark** still wait on PotionDrunk, which needs potions to be drinkable — moved to the potions row. |

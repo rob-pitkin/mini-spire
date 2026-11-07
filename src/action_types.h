@@ -146,6 +146,9 @@ enum class ActionKind {
                    // carries the chosen CardId in `card`
   StealGold,       // the thief in `actor` takes up to `amount` of the player's
                    // gold, ahead of its hit (thievery.md §3)
+  UpgradeRandomCardInHand,  // Warped Tongs: one random upgradable card in hand
+                            // upgraded for the rest of combat
+                            // (UpgradeRandomCardAction)
 };
 
 // A small, clone-safe tagged value. No closures, no pointers into state —

@@ -299,10 +299,21 @@ bool choice_can_take(const PendingDeckChoice& choice, const Card& card) {
   if (choice.purpose == DeckChoicePurpose::Bottle) {
     return bottle_can_take(card, bottle_of(choice.relic));
   }
-  // Remove / Transform: any purgeable card not already picked.
-  return is_purgeable(card) &&
-         std::find(choice.staged_uids.begin(), choice.staged_uids.end(),
-                   card.uid) == choice.staged_uids.end();
+  if (std::find(choice.staged_uids.begin(), choice.staged_uids.end(),
+                card.uid) != choice.staged_uids.end()) {
+    return false;  // already picked
+  }
+  // Upgrade: getUpgradableCards, which keeps bottled cards (the Bottle follows
+  // the upgrade, bottledCardUpgradeCheck).
+  if (choice.purpose == DeckChoicePurpose::Upgrade) {
+    Card probe = card;
+    return upgrade_card_in_place(probe);
+  }
+  // Remove, Transform, Offer, Store: getPurgeableCards. A relic's keeps
+  // bottled cards (Empty Cage, Astrolabe); an event's wraps it in
+  // getGroupWithoutBottledCards.
+  if (!is_purgeable(card)) return false;
+  return !choice.event.has_value() || card.bottle == Bottle::None;
 }
 
 }  // namespace
@@ -350,7 +361,11 @@ bool RunState::resolve_deck_choice(CardId id) {
     // gone before the last answer can let the room exit.
     const PendingDeckChoice done = choice;
     pending_deck_choices.erase(pending_deck_choices.begin());
-    apply_deck_change(done.purpose, done.relic, done.staged_uids);
+    if (done.event) {
+      apply_event_deck_change(done.purpose, done.staged_uids);
+    } else {
+      apply_deck_change(done.purpose, done.relic, done.staged_uids);
+    }
     if (pending_deck_choices.empty() && leave_room_after_deck_choice) {
       leave_room_after_deck_choice = false;
       leave_room();
@@ -583,7 +598,8 @@ bool RunState::obtain_relic(RelicId id) {
         for (int i : purgeable) uids.push_back(master_deck[i].uid);
         apply_deck_change(purpose, id, uids);
       } else {
-        pending_deck_choices.push_back(PendingDeckChoice{purpose, id, picks, {}});
+        pending_deck_choices.push_back(
+            PendingDeckChoice{purpose, id, picks, {}, std::nullopt});
       }
       break;
     }
@@ -2309,6 +2325,19 @@ void RunState::begin_event(EventId id) {
     case EventId::FaceTrader:
       event.hp_amount = std::max(1, max_hp / 10);  // Touch
       break;
+    case EventId::TheCleric:
+      event.hp_amount = truncated_share(max_hp, 0.25f);  // Heal
+      break;
+    case EventId::BonfireSpirits:
+      // Both screens have one option, so the offer opens at once; nothing
+      // happens when no card can be offered.
+      queue_event_deck_choice(DeckChoicePurpose::Offer);
+      break;
+    case EventId::WheelOfChange:
+      // Spin is the only option: the result is rolled and applied at once.
+      apply_wheel_result(std::uniform_int_distribution<int>(
+          0, kWheelResults - 1)(event_rng_for_floor()));
+      break;
     default:
       break;
   }
@@ -2349,14 +2378,193 @@ std::vector<EventOption> RunState::event_options() const {
       return {O::DivineFountainDrink, O::DivineFountainLeave};
     case EventId::FaceTrader:
       return {O::FaceTraderTouch, O::FaceTraderTrade, O::FaceTraderLeave};
+    case EventId::TheCleric: {
+      std::vector<EventOption> out;
+      if (gold >= kClericHealCost) out.push_back(O::ClericHeal);
+      if (gold >= kClericPurifyCost) out.push_back(O::ClericPurify);
+      out.push_back(O::ClericLeave);
+      return out;
+    }
+    case EventId::WingStatue: {
+      // Destroy needs an Attack whose BASE damage is at least 10
+      // (CardHelper.hasCardWithXDamage reads baseDamage).
+      const bool can_attack = std::any_of(
+          master_deck.begin(), master_deck.end(), [](const Card& card) {
+            const CardData& data = CARD_DATABASE.at(card.card_id);
+            return data.type == CardType::Attack &&
+                   data.damage >= kWingStatueAttackDamage;
+          });
+      std::vector<EventOption> out = {O::WingStatuePray};
+      if (can_attack) out.push_back(O::WingStatueDestroy);
+      out.push_back(O::WingStatueLeave);
+      return out;
+    }
+    case EventId::LivingWall: {
+      std::vector<EventOption> out = {O::LivingWallForget, O::LivingWallChange};
+      if (any_upgradable(master_deck)) out.push_back(O::LivingWallGrow);
+      return out;
+    }
+    case EventId::Transmogrifier:
+      return {O::TransmogrifierPray, O::TransmogrifierLeave};
+    case EventId::Purifier:
+      return {O::PurifierPray, O::PurifierLeave};
+    case EventId::UpgradeShrine: {
+      std::vector<EventOption> out;
+      if (any_upgradable(master_deck)) out.push_back(O::UpgradeShrinePray);
+      out.push_back(O::UpgradeShrineLeave);
+      return out;
+    }
+    case EventId::OminousForge: {
+      std::vector<EventOption> out;
+      if (any_upgradable(master_deck)) out.push_back(O::OminousForgeForge);
+      out.push_back(O::OminousForgeRummage);
+      out.push_back(O::OminousForgeLeave);
+      return out;
+    }
+    case EventId::NoteForYourself:
+      return {O::NoteForYourselfTakeAndGive, O::NoteForYourselfIgnore};
     default:
-      return {};  // built in events steps 2-5
+      return {};  // built in events steps 3-5
   }
 }
 
 void RunState::finish_event() {
   event.active = false;
   leave_room();
+}
+
+DeckCardRarity deck_card_rarity(CardId id) {
+  // By the card the id grew or was upgraded from: an upgrade or a Rampage rung
+  // keeps its card's rarity. Both ladders are walked back, since a rung can sit
+  // on either (CARD_UPGRADES, CARD_GROWTH).
+  CardId base = id;
+  for (bool stepped = true; stepped;) {
+    stepped = false;
+    for (const auto* edges : {&CARD_UPGRADES, &CARD_GROWTH}) {
+      for (const auto& [from, to] : *edges) {
+        if (to == base) {
+          base = from;
+          stepped = true;
+          break;
+        }
+      }
+      if (stepped) break;
+    }
+  }
+  if (CARD_DATABASE.at(base).type == CardType::Curse) {
+    return DeckCardRarity::Curse;
+  }
+  if (is_basic_card(base)) return DeckCardRarity::Basic;
+  if (contains(IRONCLAD_COMMON_POOL, base)) return DeckCardRarity::Common;
+  if (contains(IRONCLAD_UNCOMMON_POOL, base) ||
+      contains(COLORLESS_UNCOMMON_POOL, base)) {
+    return DeckCardRarity::Uncommon;
+  }
+  if (contains(IRONCLAD_RARE_POOL, base) ||
+      contains(COLORLESS_RARE_POOL, base)) {
+    return DeckCardRarity::Rare;
+  }
+  return DeckCardRarity::Special;
+}
+
+bool RunState::queue_event_deck_choice(DeckChoicePurpose purpose) {
+  PendingDeckChoice choice{purpose, RelicId::BurningBlood, 1, {}, event.id};
+  const bool any = std::any_of(
+      master_deck.begin(), master_deck.end(),
+      [&choice](const Card& card) { return choice_can_take(choice, card); });
+  if (any) pending_deck_choices.push_back(choice);
+  return any;
+}
+
+void RunState::apply_event_deck_change(DeckChoicePurpose purpose,
+                                       const std::vector<int>& uids) {
+  for (int uid : uids) {
+    const auto it =
+        std::find_if(master_deck.begin(), master_deck.end(),
+                     [uid](const Card& card) { return card.uid == uid; });
+    if (it == master_deck.end()) continue;
+    const int index = static_cast<int>(it - master_deck.begin());
+    const Card picked = *it;
+    switch (purpose) {
+      case DeckChoicePurpose::Upgrade:
+        upgrade_card_in_place(master_deck[index]);
+        break;
+      case DeckChoicePurpose::Remove:
+      case DeckChoicePurpose::Store:
+        // Note For Yourself stores the card for a next run that never comes
+        // (Rob E8), so storing is a removal.
+        remove_card_from_deck(index);
+        break;
+      case DeckChoicePurpose::Transform:
+        // removeCard, then transformCard(c, false, miscRng): no upgrade, and
+        // obtained through add_card (Omamori, the Eggs, Ceramic Fish).
+        if (remove_card_from_deck(index)) {
+          add_card(Card{draw_from(transform_pool(picked.card_id),
+                                  event_rng_for_floor())});
+        }
+        break;
+      case DeckChoicePurpose::Offer:
+        // Bonfire Spirits: setReward by the offered card's rarity, THEN
+        // removeCard, so a Parasite pays Spirit Poop and then its 3 Max HP.
+        switch (deck_card_rarity(picked.card_id)) {
+          case DeckCardRarity::Curse:
+            // Circlet if Spirit Poop is held, which needs this event twice.
+            obtain_relic(RelicId::SpiritPoop);
+            break;
+          case DeckCardRarity::Basic:
+            break;
+          case DeckCardRarity::Common:
+          case DeckCardRarity::Special:
+            heal(kBonfireCommonHeal);
+            break;
+          case DeckCardRarity::Uncommon:
+            heal(max_hp);
+            break;
+          case DeckCardRarity::Rare:
+            // increaseMaxHp(10, false), which heals 10, then heal to full.
+            gain_max_hp(kBonfireRareMaxHp);
+            heal(max_hp);
+            break;
+        }
+        remove_card_from_deck(index);
+        break;
+      case DeckChoicePurpose::Bottle:
+        break;  // a relic's purpose; no event opens one
+    }
+  }
+}
+
+void RunState::apply_wheel_result(int result) {
+  switch (result) {
+    case 0:
+      gain_gold(kWheelGold);
+      break;
+    case 1: {
+      // A relic on a reward screen, claimed: obtained.
+      std::mt19937 rng =
+          make_stream(run_seed, RngStream::Relic, static_cast<uint32_t>(floor));
+      if (const std::optional<RelicId> relic =
+              random_screenless_relic(relic_tier_standard(rng), rng)) {
+        obtain_relic(*relic);
+      }
+      break;
+    }
+    case 2:
+      heal(max_hp);
+      break;
+    case 3:
+      add_card(Card{CardId::Decay});
+      break;
+    case 4:
+      // Skipped when nothing can be removed.
+      queue_event_deck_choice(DeckChoicePurpose::Remove);
+      break;
+    default:
+      // HP_LOSS with no owner: only Tungsten Rod changes it.
+      take_event_damage(truncated_share(max_hp, kWheelHpLossFraction),
+                        EventDamage::HpLoss);
+      break;
+  }
 }
 
 bool RunState::choose_event_option(EventOption option) {
@@ -2507,8 +2715,80 @@ bool RunState::choose_event_option(EventOption option) {
     case EventOption::FaceTraderLeave:
       break;
 
+    // Each deck choice below is opened only when a card is eligible, as StS's
+    // events guard their grids, and the event then ends; the room exits once
+    // the choice is answered (leave_room waits for it).
+    case EventOption::ClericHeal:
+      lose_gold(kClericHealCost);
+      heal(event.hp_amount);
+      break;
+    case EventOption::ClericPurify:
+      // No card to remove: no grid, and no gold taken.
+      if (queue_event_deck_choice(DeckChoicePurpose::Remove)) {
+        lose_gold(kClericPurifyCost);
+      }
+      break;
+    case EventOption::ClericLeave:
+      break;
+
+    case EventOption::WingStatuePray:
+      // The damage (owned by the player), then the removal.
+      take_event_damage(kWingStatueDamage, EventDamage::Player);
+      if (!is_terminal()) queue_event_deck_choice(DeckChoicePurpose::Remove);
+      break;
+    case EventOption::WingStatueDestroy:
+      gain_gold(std::uniform_int_distribution<int>(
+          kWingStatueGoldMin, kWingStatueGoldMax)(event_rng_for_floor()));
+      break;
+    case EventOption::WingStatueLeave:
+      break;
+
+    case EventOption::LivingWallForget:
+      queue_event_deck_choice(DeckChoicePurpose::Remove);
+      break;
+    case EventOption::LivingWallChange:
+      queue_event_deck_choice(DeckChoicePurpose::Transform);
+      break;
+    case EventOption::LivingWallGrow:
+      queue_event_deck_choice(DeckChoicePurpose::Upgrade);
+      break;
+
+    case EventOption::TransmogrifierPray:
+      queue_event_deck_choice(DeckChoicePurpose::Transform);
+      break;
+    case EventOption::PurifierPray:
+      queue_event_deck_choice(DeckChoicePurpose::Remove);
+      break;
+    case EventOption::UpgradeShrinePray:
+      queue_event_deck_choice(DeckChoicePurpose::Upgrade);
+      break;
+    case EventOption::TransmogrifierLeave:
+    case EventOption::PurifierLeave:
+    case EventOption::UpgradeShrineLeave:
+      break;
+
+    case EventOption::OminousForgeForge:
+      queue_event_deck_choice(DeckChoicePurpose::Upgrade);
+      break;
+    case EventOption::OminousForgeRummage:
+      obtain_curse_then_relic(CardId::Pain, RelicId::WarpedTongs);
+      break;
+    case EventOption::OminousForgeLeave:
+      break;
+
+    case EventOption::NoteForYourselfTakeAndGive:
+      // The noted card: a fresh profile's Iron Wave (Rob E8). StS adds it
+      // directly with every relic's onObtainCard (the Eggs, Ceramic Fish) and
+      // no Omamori check, which add_card is for a card that is not a curse.
+      // Then a card is stored: removed, and the Iron Wave may be the one.
+      add_card(Card{CardId::IronWave});
+      queue_event_deck_choice(DeckChoicePurpose::Store);
+      break;
+    case EventOption::NoteForYourselfIgnore:
+      break;
+
     default:
-      return false;  // built in events steps 2-5
+      return false;  // built in events steps 3-5
   }
   finish_event();
   return true;
