@@ -25,14 +25,20 @@ void RunState::add_card(Card card) {
   // hears of it — no Eggs, no Ceramic Fish, no Darkstone Periapt
   // (curse-effects.md §6.1). A curse transformed into a curse is negated the
   // same way, which is how Astrolabe ends up removing it (wiki.gg Omamori).
+  if (omamori_negates(card)) return;
+  add_card_past_omamori(card);
+}
+
+bool RunState::omamori_negates(const Card& card) {
+  if (CARD_DATABASE.at(card.card_id).type != CardType::Curse) return false;
+  HeldRelic* omamori = held_relic(RelicId::Omamori);
+  if (!omamori || omamori->counter <= 0) return false;
+  --omamori->counter;
+  return true;
+}
+
+void RunState::add_card_past_omamori(Card card) {
   const bool curse = CARD_DATABASE.at(card.card_id).type == CardType::Curse;
-  if (curse) {
-    HeldRelic* omamori = held_relic(RelicId::Omamori);
-    if (omamori && omamori->counter > 0) {
-      --omamori->counter;
-      return;
-    }
-  }
 
   // Eggs BEFORE the card joins the deck: StS fires onObtainCard ahead of
   // souls.obtain, which is what adds it. A card offered by a reward or the shop
@@ -78,6 +84,24 @@ RunState RunState::start(uint64_t run_seed) {
 
   for (const Card& card : starter_deck()) run.add_card(card);
   run.map = generate_map(derive_stream_seed(run_seed, RngStream::Map));
+
+  // The act's event lists, in StS's order (events.md §2.1). The one-time list
+  // holds only the 8 that can pass their gate in Act 1; the other 6 never
+  // enter a candidate list here, so leaving them out changes no pick.
+  run.event_list = {EventId::BigFish,        EventId::TheCleric,
+                    EventId::DeadAdventurer, EventId::GoldenIdol,
+                    EventId::WingStatue,     EventId::WorldOfGoop,
+                    EventId::TheSsssserpent, EventId::LivingWall,
+                    EventId::Mushrooms,      EventId::ScrapOoze,
+                    EventId::ShiningLight};
+  run.shrine_list = {EventId::MatchAndKeep,   EventId::GoldenShrine,
+                     EventId::Transmogrifier, EventId::Purifier,
+                     EventId::UpgradeShrine,  EventId::WheelOfChange};
+  run.one_time_list = {EventId::OminousForge,   EventId::BonfireSpirits,
+                       EventId::FaceTrader,     EventId::DivineFountain,
+                       EventId::Lab,            EventId::NoteForYourself,
+                       EventId::WeMeetAgain,    EventId::WomanInBlue};
+  run.event_rng = make_stream(run_seed, RngStream::Event);
   return run;
 }
 
@@ -443,7 +467,11 @@ int RunState::upgrade_random_cards(std::optional<CardType> type, int count,
   std::mt19937 rng =
       make_stream(run_seed, RngStream::RelicEffect,
                   static_cast<uint32_t>(source));
+  return upgrade_random_cards(type, count, rng);
+}
 
+int RunState::upgrade_random_cards(std::optional<CardType> type, int count,
+                                   std::mt19937& rng) {
   // Eligible = right type AND actually upgradable. A deck of already-upgraded
   // Strikes leaves War Paint nothing to do, which is a real outcome rather than
   // an error.
@@ -528,6 +556,11 @@ bool RunState::obtain_relic(RelicId id) {
       held_relic(id)->counter = kWingBootsCharges;
       break;
 
+    // And at 1 (NlothsMask's constructor). open_chest spends it.
+    case RelicId::NlothsHungryFace:
+      held_relic(id)->counter = kNlothsHungryFaceCharges;
+      break;
+
     // And at 2 (Omamori's constructor). add_card spends them (curse-effects.md
     // §6.3).
     case RelicId::Omamori:
@@ -592,13 +625,10 @@ bool RunState::obtain_relic(RelicId id) {
       add_card(Card{CardId::CurseOfTheBell});
       std::mt19937 rng = make_stream(run_seed, RngStream::RelicEffect,
                                      static_cast<uint32_t>(id));
-      static const std::vector<RelicId> kNotScreenless = {
-          RelicId::BottledFlame, RelicId::BottledLightning,
-          RelicId::BottledTornado, RelicId::Whetstone};
       for (RelicTier tier :
            {RelicTier::Common, RelicTier::Uncommon, RelicTier::Rare}) {
         if (const std::optional<RelicId> granted =
-                random_relic(tier, rng, kNotScreenless)) {
+                random_screenless_relic(tier, rng)) {
           obtain_relic(*granted);
         }
       }
@@ -833,6 +863,17 @@ std::optional<RelicId> RunState::random_relic(
       0, candidates.size() - 1)(rng)];
 }
 
+std::optional<RelicId> RunState::random_screenless_relic(
+    RelicTier tier, std::mt19937& rng) const {
+  // returnRandomScreenlessRelic redraws these four, which open a screen on
+  // pickup. Excluding them from the draw gives the same distribution with one
+  // draw rather than a retry loop.
+  static const std::vector<RelicId> kNotScreenless = {
+      RelicId::BottledFlame, RelicId::BottledLightning,
+      RelicId::BottledTornado, RelicId::Whetstone};
+  return random_relic(tier, rng, kNotScreenless);
+}
+
 void RunState::roll_potion_drop(int rewards_already_on_screen, bool grant,
                                 bool no_chance) {
   // The floor's generator, continued — after a fight it is the one combat
@@ -959,6 +1000,10 @@ void RunState::open_chest() {
   // Its relic is still OBTAINED before the chest's: StS fires onChestOpen before
   // the chest adds its own relic, and acquisition order is hook order later.
   //
+  // The chest's relics in reward-list order: Matryoshka's, added in
+  // onChestOpen, then the chest's own.
+  std::vector<RelicId> relics_on_offer;
+
   // `counter > 0`, as StS checks it, which also rules out the spent -2.
   HeldRelic* matryoshka = held_relic(RelicId::Matryoshka);
   if (matryoshka && matryoshka->counter > 0) {
@@ -975,11 +1020,25 @@ void RunState::open_chest() {
     if (chest_relic) exclude.push_back(*chest_relic);
     if (const std::optional<RelicId> extra =
             random_relic(extra_tier, rng, exclude)) {
-      obtain_relic(*extra);
+      relics_on_offer.push_back(*extra);
     }
   }
+  if (chest_relic) relics_on_offer.push_back(*chest_relic);
 
-  if (chest_relic) obtain_relic(*chest_relic);
+  // N'loth's Hungry Face (onChestOpenAfter, after the chest has added its
+  // relic): removeOneRelicFromRewards takes the FIRST relic on the list, so
+  // with Matryoshka it is Matryoshka's that goes and the chest's own stays.
+  // The charge is spent whether or not a relic was there to take. Every chest
+  // here is a non-boss chest. Nothing is drawn differently, so the stream is
+  // the same with or without the relic.
+  HeldRelic* face = held_relic(RelicId::NlothsHungryFace);
+  if (face && face->counter > 0) {
+    --face->counter;
+    if (!relics_on_offer.empty()) relics_on_offer.erase(relics_on_offer.begin());
+    if (face->counter == 0) face->counter = kNlothsHungryFaceUsedUp;
+  }
+
+  for (RelicId id : relics_on_offer) obtain_relic(id);
 }
 
 void RunState::award_combat_gold(RewardSource source) {
@@ -1030,14 +1089,20 @@ void RunState::spend_gold(int amount) {
   if (amount <= 0) return;
   gold -= amount;
 
-  // Maw Bank stops the first time gold is spent, on ANYTHING — decompiled
-  // MawBank.onSpendGold has no room check. Reading it as "disabled by shop
-  // purchases" would be right today and wrong the moment something else costs
-  // gold, which is why this lives in the spend path rather than in the four
-  // buy_* callers.
+  // Maw Bank stops the first time gold is spent AT A SHOP. MawBank.onSpendGold
+  // itself has no room check; the check is one call up, in loseGold, which
+  // calls onSpendGold only `instanceof ShopRoom` (events.md §4.3). An earlier
+  // version of this comment read the relic alone and concluded "on anything".
+  // Every caller of this function is a shop purchase; gold lost anywhere else
+  // goes through lose_gold.
   if (HeldRelic* maw = held_relic(RelicId::MawBank)) {
     maw->counter = kMawBankUsedUp;
   }
+}
+
+void RunState::lose_gold(int amount) {
+  if (amount <= 0) return;
+  gold -= amount;
 }
 
 std::vector<int> RunState::smithable_cards() const {
@@ -1500,11 +1565,14 @@ void RunState::leave_shop() {
 }
 
 RoomType RunState::resolve_unknown_room() {
-  std::mt19937 rng =
-      make_stream(run_seed, RngStream::Event, static_cast<uint32_t>(floor));
-  const int roll =
-      static_cast<int>(std::uniform_real_distribution<float>(0.0f, 1.0f)(rng) *
-                       100.0f);
+  // The run's one event stream, advanced by this draw. StS draws the roll from
+  // a copy of eventRng and then keeps the copy, which is the same thing; the
+  // event pick that may follow draws from a copy it throws away, so the NEXT
+  // `?` reads the number that pick's shrine check read (events.md §2.3). A
+  // fresh stream per floor would break that, and with it the shrine re-entry
+  // bug v2-spec §4.1 rules must be reproduced.
+  const int roll = static_cast<int>(
+      std::uniform_real_distribution<float>(0.0f, 1.0f)(event_rng) * 100.0f);
 
   // Bands are cumulative, and the shop band collapses to nothing when the last
   // room was a shop — its probability falls through to treasure and event
@@ -1568,7 +1636,7 @@ RoomType RunState::resolve_unknown_room() {
   return choice;
 }
 
-void RunState::fire_room_entry_relics(RoomType room) {
+void RunState::fire_room_entry_relics(RoomType room, bool unknown_node) {
   // Acquisition order, iterating `relics` as it stands — the same rule and the
   // same reason as fire_relic_hooks. None of these three reads what another
   // wrote today, but sorting or grouping the loop would be a silent ordering
@@ -1613,20 +1681,29 @@ void RunState::fire_room_entry_relics(RoomType room) {
         if (room == RoomType::Rest) r.counter = kAncientTeaSetArmed;
         break;
 
+      case RelicId::SsserpentHead:
+        // Every `?` NODE, whatever it became (task #17). StS's onEnterRoom
+        // runs before the `?` roll, while the room is still the EventRoom, so a
+        // `?` that turns into a fight, shop or chest pays too. The roll does
+        // not read gold, so paying after it here changes nothing; the event
+        // gates do read gold, and they run after this (enter_room).
+        if (unknown_node) gain_gold(kSsserpentHeadGold);
+        break;
+
       default:
         break;
     }
   }
 }
 
-void RunState::enter_room(RoomType room) {
+void RunState::enter_room(RoomType room, bool unknown_node) {
   current_room = room;
   last_room_was_shop = room == RoomType::Shop;
 
   // BEFORE the room resolves. A Treasure room opens its chest and calls
   // leave_room below, so firing afterwards would miss those rooms entirely —
   // and Maw Bank's gold has to be in hand before a shop can take it.
-  fire_room_entry_relics(room);
+  fire_room_entry_relics(room, unknown_node);
 
   switch (room) {
     case RoomType::Monster:
@@ -1656,8 +1733,14 @@ void RunState::enter_room(RoomType room) {
       leave_room();
       break;
     case RoomType::Unknown:
-      // A `?` that stayed a `?` — an actual event. Events are §11 step 7.
-      phase = Phase::Event;
+      // A `?` that stayed a `?` — an actual event (events.md §2). Every list
+      // exhausted is not reachable in one act, but would leave the room empty
+      // rather than stranding the run.
+      if (const std::optional<EventId> picked = generate_event()) {
+        begin_event(*picked);
+      } else {
+        leave_room();
+      }
       break;
     case RoomType::None:
       phase = Phase::Map;
@@ -1690,9 +1773,10 @@ void RunState::choose_path(int chosen_column) {
   RoomType room = map[floor - 1][column].room;
   // The map records a `?`; what it becomes is decided now, on entry, and is
   // never written back into the map (§5.4).
-  if (room == RoomType::Unknown) room = resolve_unknown_room();
+  const bool unknown_node = room == RoomType::Unknown;
+  if (unknown_node) room = resolve_unknown_room();
 
-  enter_room(room);
+  enter_room(room, unknown_node);
 }
 
 void RunState::begin_combat(EncounterPool pool) {
@@ -2059,6 +2143,404 @@ void RunState::leave_room() {
     return;
   }
   phase = Phase::Map;
+}
+
+// ============================================================================
+// Events (docs/design/events.md)
+// ============================================================================
+
+namespace {
+
+// `(int)((float)maxHealth * f)`, as the events write it. Java multiplies in
+// single precision, and so does this, so the truncation matches: 0.08f is not
+// exactly 0.08, and the integer shortcut max_hp * 8 / 100 is not guaranteed to
+// agree with the float product.
+int truncated_share(int max_hp, float fraction) {
+  return static_cast<int>(static_cast<float>(max_hp) * fraction);
+}
+
+// libGDX MathUtils.round, which Shining Light uses: `(int)(x + 16384.5f) -
+// 16384`. Half up for the values it sees.
+int libgdx_round(float x) {
+  return static_cast<int>(x + 16384.5f) - 16384;
+}
+
+void erase_event(std::vector<EventId>& list, EventId id) {
+  list.erase(std::remove(list.begin(), list.end(), id), list.end());
+}
+
+bool any_upgradable(const std::vector<Card>& deck) {
+  for (const Card& card : deck) {
+    Card probe = card;
+    if (upgrade_card_in_place(probe)) return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+bool RunState::is_cursed() const {
+  // isCursed skips Necronomicurse, Curse of the Bell and Ascender's Bane —
+  // getPurgeableCards' three — of which only Curse of the Bell exists here.
+  for (const Card& card : master_deck) {
+    if (CARD_DATABASE.at(card.card_id).type != CardType::Curse) continue;
+    if (is_purgeable(card)) return true;
+  }
+  return false;
+}
+
+namespace {
+
+// Each event's gate, read when the candidate lists are built (events.md §2.2).
+// Face Trader's ("act 1 or 2") always passes in Act 1, and the shrines have
+// none.
+bool event_gate_passes(EventId id, const RunState& run) {
+  switch (id) {
+    case EventId::DeadAdventurer:
+    case EventId::Mushrooms:
+      return run.floor > kEventsLateFloor;
+    case EventId::TheCleric:
+      return run.gold >= kClericMinGold;
+    case EventId::WomanInBlue:
+      return run.gold >= kWomanInBlueMinGold;
+    case EventId::DivineFountain:
+      return run.is_cursed();
+    default:
+      return true;
+  }
+}
+
+}  // namespace
+
+std::vector<EventId> RunState::event_candidates() const {
+  std::vector<EventId> out;
+  for (EventId id : event_list) {
+    if (event_gate_passes(id, *this)) out.push_back(id);
+  }
+  return out;
+}
+
+std::vector<EventId> RunState::shrine_candidates() const {
+  // getShrine: every shrine, then each one-time event whose gate passes.
+  std::vector<EventId> out = shrine_list;
+  for (EventId id : one_time_list) {
+    if (event_gate_passes(id, *this)) out.push_back(id);
+  }
+  return out;
+}
+
+std::optional<EventId> RunState::generate_event() {
+  // A COPY: the pick never moves event_rng, so its first number is the one the
+  // next `?` roll will read (events.md §2.3).
+  std::mt19937 rng = event_rng;
+  const float shrine_check =
+      std::uniform_real_distribution<float>(0.0f, 1.0f)(rng);
+
+  const auto pick_from = [&rng](const std::vector<EventId>& candidates) {
+    return candidates[std::uniform_int_distribution<size_t>(
+        0, candidates.size() - 1)(rng)];
+  };
+  const auto pick_shrine = [&]() -> std::optional<EventId> {
+    const std::vector<EventId> candidates = shrine_candidates();
+    // StS would index an empty list here; an act has too few `?` rooms to
+    // reach it.
+    if (candidates.empty()) return std::nullopt;
+    const EventId picked = pick_from(candidates);
+    erase_event(shrine_list, picked);
+    erase_event(one_time_list, picked);
+    return picked;
+  };
+  const auto pick_event = [&]() -> std::optional<EventId> {
+    const std::vector<EventId> candidates = event_candidates();
+    // getEvent falls back to getShrine when no event passes its gate.
+    if (candidates.empty()) return pick_shrine();
+    const EventId picked = pick_from(candidates);
+    erase_event(event_list, picked);
+    return picked;
+  };
+
+  if (shrine_check < kShrineChance) {
+    if (!shrine_list.empty() || !one_time_list.empty()) return pick_shrine();
+    if (!event_list.empty()) return pick_event();
+    return std::nullopt;
+  }
+  return pick_event();
+}
+
+std::mt19937& RunState::event_rng_for_floor() {
+  if (floor_event_rng_floor != floor) {
+    floor_event_rng = make_stream(run_seed, RngStream::EventMisc,
+                                  static_cast<uint32_t>(floor));
+    floor_event_rng_floor = floor;
+  }
+  return floor_event_rng;
+}
+
+void RunState::begin_event(EventId id) {
+  phase = Phase::Event;
+  event = EventState{};
+  event.active = true;
+  event.id = id;
+
+  // The numbers each event's constructor computes or rolls (events.md §5).
+  switch (id) {
+    case EventId::BigFish:
+      event.hp_amount = max_hp / 3;  // Banana's heal
+      break;
+    case EventId::GoldenIdol:
+      event.hp_amount = truncated_share(max_hp, 0.25f);  // Smash
+      event.hp_amount2 = std::max(1, truncated_share(max_hp, 0.08f));  // Hide
+      break;
+    case EventId::WorldOfGoop: {
+      // Leave's loss, capped at the gold the player has.
+      const int loss = std::uniform_int_distribution<int>(
+          kGoopLossMin, kGoopLossMax)(event_rng_for_floor());
+      event.gold_amount = std::min(loss, gold);
+      break;
+    }
+    case EventId::ShiningLight:
+      event.hp_amount = libgdx_round(static_cast<float>(max_hp) * 0.2f);
+      break;
+    case EventId::FaceTrader:
+      event.hp_amount = std::max(1, max_hp / 10);  // Touch
+      break;
+    default:
+      break;
+  }
+
+  // Nothing to decide: the event ends. Until events steps 2-5 land, that
+  // includes the events they build, which a `?` can already draw (events.md
+  // §8).
+  if (event_options().empty()) finish_event();
+}
+
+std::vector<EventOption> RunState::event_options() const {
+  if (phase != Phase::Event || !event.active || is_terminal()) return {};
+  using O = EventOption;
+  switch (event.id) {
+    case EventId::BigFish:
+      // No Leave: the event cannot be declined (Rob W1).
+      return {O::BigFishBanana, O::BigFishDonut, O::BigFishBox};
+    case EventId::GoldenIdol:
+      if (event.screen == 0) return {O::GoldenIdolTake, O::GoldenIdolLeave};
+      return {O::GoldenIdolOutrun, O::GoldenIdolSmash, O::GoldenIdolHide};
+    case EventId::WorldOfGoop:
+      return {O::GoopGather, O::GoopLeave};
+    case EventId::TheSsssserpent:
+      return {O::SsssserpentAgree, O::SsssserpentDisagree};
+    case EventId::ScrapOoze:
+      return {O::ScrapOozeReachIn, O::ScrapOozeLeave};
+    case EventId::ShiningLight: {
+      // Enter is disabled with nothing to upgrade.
+      std::vector<EventOption> out;
+      if (any_upgradable(master_deck)) out.push_back(O::ShiningLightEnter);
+      out.push_back(O::ShiningLightLeave);
+      return out;
+    }
+    case EventId::GoldenShrine:
+      return {O::GoldenShrinePray, O::GoldenShrineDesecrate,
+              O::GoldenShrineLeave};
+    case EventId::DivineFountain:
+      return {O::DivineFountainDrink, O::DivineFountainLeave};
+    case EventId::FaceTrader:
+      return {O::FaceTraderTouch, O::FaceTraderTrade, O::FaceTraderLeave};
+    default:
+      return {};  // built in events steps 2-5
+  }
+}
+
+void RunState::finish_event() {
+  event.active = false;
+  leave_room();
+}
+
+bool RunState::choose_event_option(EventOption option) {
+  if (has_pending_deck_choice()) return false;
+  const std::vector<EventOption> offered = event_options();
+  if (std::find(offered.begin(), offered.end(), option) == offered.end()) {
+    return false;
+  }
+
+  // The relic an option grants: the standard tier roll, then a screenless
+  // relic of that tier, on the floor's relic stream as chests, elites and Dig
+  // draw (events.md §4.4).
+  const auto random_event_relic = [this]() -> std::optional<RelicId> {
+    std::mt19937 rng =
+        make_stream(run_seed, RngStream::Relic, static_cast<uint32_t>(floor));
+    return random_screenless_relic(relic_tier_standard(rng), rng);
+  };
+
+  switch (option) {
+    case EventOption::BigFishBanana:
+      heal(event.hp_amount);
+      break;
+    case EventOption::BigFishDonut:
+      gain_max_hp(kBigFishMaxHp);
+      break;
+    case EventOption::BigFishBox:
+      // Regret and a relic, curse first for Omamori and relic first for
+      // everything else (§4.2). An exhausted tier would be Circlet in StS,
+      // which no Act 1 run can reach.
+      if (const std::optional<RelicId> relic = random_event_relic()) {
+        obtain_curse_then_relic(CardId::Regret, *relic);
+      } else {
+        add_card(Card{CardId::Regret});
+      }
+      break;
+
+    case EventOption::GoldenIdolTake:
+      // Circlet if Golden Idol is already held, which needs this event twice.
+      obtain_relic(RelicId::GoldenIdol);
+      event.screen = 1;
+      return true;
+    case EventOption::GoldenIdolLeave:
+      break;
+    case EventOption::GoldenIdolOutrun:
+      add_card(Card{CardId::Injury});
+      break;
+    case EventOption::GoldenIdolSmash:
+      take_event_damage(event.hp_amount, EventDamage::Unowned);
+      break;
+    case EventOption::GoldenIdolHide:
+      lose_max_hp(event.hp_amount2);
+      break;
+
+    case EventOption::GoopGather:
+      // Damage, then the gold.
+      take_event_damage(kGoopDamage, EventDamage::Player);
+      if (!is_terminal()) gain_gold(kGoopGold);
+      break;
+    case EventOption::GoopLeave:
+      lose_gold(event.gold_amount);
+      break;
+
+    case EventOption::SsssserpentAgree: {
+      // StS's order: the curse's Omamori check, the gold, then the curse
+      // joins the deck when its effect finishes.
+      const Card doubt{CardId::Doubt};
+      const bool negated = omamori_negates(doubt);
+      gain_gold(kSsssserpentGold);
+      if (!negated) add_card_past_omamori(doubt);
+      break;
+    }
+    case EventOption::SsssserpentDisagree:
+      break;
+
+    case EventOption::ScrapOozeReachIn: {
+      take_event_damage(
+          kScrapOozeDamage + event.attempts * kScrapOozeDamageStep,
+          EventDamage::Unowned);
+      if (is_terminal()) return true;
+      const int roll =
+          std::uniform_int_distribution<int>(0, 99)(event_rng_for_floor());
+      const int chance =
+          kScrapOozeChance + event.attempts * kScrapOozeChanceStep;
+      if (!scrap_ooze_finds_relic(roll, chance)) {
+        ++event.attempts;  // the screen repeats, dearer and likelier
+        return true;
+      }
+      if (const std::optional<RelicId> relic = random_event_relic()) {
+        obtain_relic(*relic);
+      }
+      break;
+    }
+    case EventOption::ScrapOozeLeave:
+      break;
+
+    case EventOption::ShiningLightEnter:
+      // Damage, then two random upgrades (one if only one card can be).
+      take_event_damage(event.hp_amount, EventDamage::Player);
+      if (!is_terminal()) {
+        upgrade_random_cards(std::nullopt, kShiningLightUpgrades,
+                             event_rng_for_floor());
+      }
+      break;
+    case EventOption::ShiningLightLeave:
+      break;
+
+    case EventOption::GoldenShrinePray:
+      gain_gold(kGoldenShrineGold);
+      break;
+    case EventOption::GoldenShrineDesecrate:
+      gain_gold(kGoldenShrineDesecrateGold);
+      add_card(Card{CardId::Regret});
+      break;
+    case EventOption::GoldenShrineLeave:
+      break;
+
+    case EventOption::DivineFountainDrink:
+      // Every curse that can leave, last first as StS walks the deck. Curse of
+      // the Bell refuses in remove_card_from_deck; Parasite charges its 3 Max
+      // HP there.
+      for (int i = static_cast<int>(master_deck.size()) - 1; i >= 0; --i) {
+        if (CARD_DATABASE.at(master_deck[i].card_id).type == CardType::Curse) {
+          remove_card_from_deck(i);
+        }
+      }
+      break;
+    case EventOption::DivineFountainLeave:
+      break;
+
+    case EventOption::FaceTraderTouch:
+      // The gold, then the damage.
+      gain_gold(kFaceTraderGold);
+      take_event_damage(event.hp_amount, EventDamage::Unowned);
+      break;
+    case EventOption::FaceTraderTrade: {
+      // A face not already held, each equally likely; Circlet once all five
+      // are held, which one Face Trader per run cannot reach.
+      std::vector<RelicId> faces;
+      for (RelicId face : face_trader_faces()) {
+        if (!has_relic(face)) faces.push_back(face);
+      }
+      if (!faces.empty()) {
+        obtain_relic(faces[std::uniform_int_distribution<size_t>(
+            0, faces.size() - 1)(event_rng_for_floor())]);
+      }
+      break;
+    }
+    case EventOption::FaceTraderLeave:
+      break;
+
+    default:
+      return false;  // built in events steps 2-5
+  }
+  finish_event();
+  return true;
+}
+
+void RunState::take_event_damage(int amount, EventDamage kind) {
+  const int lost = event_damage_after_relics(
+      amount, kind, has_relic(RelicId::TheBoot), has_relic(RelicId::Torii),
+      has_relic(RelicId::TungstenRod));
+  if (lost <= 0) return;
+  hp = std::max(0, hp - lost);
+  if (hp >= 1) return;
+
+  // The death intercept, as at the end of AbstractPlayer.damage (§4.1; task #7,
+  // potion-effects.md §5.4): Fairy in a Bottle first, else an unused Lizard
+  // Tail. Out of combat, so Magic Flower's bonus does not apply.
+  const auto fairy =
+      std::find(potions.begin(), potions.end(), PotionId::FairyPotion);
+  if (fairy != potions.end()) {
+    potions.erase(fairy);
+    heal(std::max(1, max_hp * potion_potency(PotionId::FairyPotion) / 100));
+    return;
+  }
+  if (HeldRelic* tail = held_relic(RelicId::LizardTail);
+      tail && tail->counter != kLizardTailUsedUp) {
+    tail->counter = kLizardTailUsedUp;
+    heal(std::max(1, max_hp / 2));
+    return;
+  }
+  outcome = Outcome::Lost;
+}
+
+void RunState::obtain_curse_then_relic(CardId curse, RelicId relic) {
+  const Card card{curse};
+  const bool negated = omamori_negates(card);
+  obtain_relic(relic);
+  if (!negated) add_card_past_omamori(card);
 }
 
 }  // namespace minispire

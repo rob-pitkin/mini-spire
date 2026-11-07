@@ -125,13 +125,13 @@ CombatState start_v1_combat(uint32_t seed);
 // │ relic selection         │   140 │ pick relic r — shop only              │
 // │ potion: use × target    │   165 │ drink potion p at enemy slot t        │
 // │ potion: discard         │    33 │                                       │
-// │ event option            │    58 │ globally enumerated option id         │
+// │ event option            │    56 │ globally enumerated option id         │
 // │ rest option             │     5 │ rest, smith, lift, toke, dig          │
 // │ purpose selection       │     6 │ choose WHY a card list opens (§6.1)   │
 // │ take Max HP instead     │     1 │ Singing Bowl                          │
 // │ decline / skip          │     1 │                                       │
 // └─────────────────────────┴───────┴───────────────────────────────────────┘
-//                                     = 8,615
+//                                     = 8,613
 //
 // THE POSITIONAL OPTION-SLOT CHANNEL IS GONE (§6.2). v1.0.0 indexed a choice by
 // RANK — "the 3rd card offered" — which meant the same index meant different
@@ -150,7 +150,9 @@ CombatState start_v1_combat(uint32_t seed);
 // action space after a policy trains against it is the expensive kind of
 // change, and this is the last moment it is free.
 inline constexpr int kNumMapNodes = kMapWidth * kMapHeight;  // 105
-inline constexpr int kNumEventOptions = 58;                  // §6.3, counted
+// §6.3, counted: one per EventOption (event.h), which event.cc asserts. 58
+// until one-option screens advanced on their own (Rob E4, events.md §3.2).
+inline constexpr int kNumEventOptions = 56;
 inline constexpr int kNumPurposes = 6;                       // §6.1
 // The rest block's width. Declared here rather than reused from run_state.h's
 // kNumRestOptions, because run_state.h includes THIS header — taking it from
@@ -178,8 +180,8 @@ inline constexpr int kTakeMaxHpAction = kPurposeBlock + kNumPurposes;
 inline constexpr int kDeclineAction = kTakeMaxHpAction + 1;
 inline constexpr int kTotalActions = kDeclineAction + 1;
 
-static_assert(kTotalActions == 8615,
-              "the v2 action space is 8,615 actions (v2-spec.md §6). If this "
+static_assert(kTotalActions == 8613,
+              "the v2 action space is 8,613 actions (v2-spec.md §6). If this "
               "fires, a block size changed — update the spec table too, do not "
               "just move the number.");
 

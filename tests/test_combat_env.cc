@@ -214,7 +214,7 @@ TEST(CombatEnv, ActionMaskIsKNumActions) {
   // end-turn-as-size-minus-one bug happened.
   EXPECT_EQ(env.action_mask().size(),
             static_cast<std::size_t>(minispire::kTotalActions));
-  EXPECT_EQ(minispire::kTotalActions, 8615);
+  EXPECT_EQ(minispire::kTotalActions, 8613);
 }
 
 TEST(CombatEnv, EndTurnAlwaysLegalAfterReset) {

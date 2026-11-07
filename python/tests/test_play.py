@@ -295,7 +295,7 @@ def test_action_layout_constants_are_consistent():
 
     ce = _core.CombatEnv
     B = _core.ActionBlock
-    assert ce.NUM_ACTIONS == 8615
+    assert ce.NUM_ACTIONS == 8613
     assert ce.NUM_COST_COLUMNS == 5
     assert ce.END_TURN_ACTION == (
         ce.NUM_CARD_TYPES * ce.NUM_COST_COLUMNS * ce.MAX_ENEMIES)

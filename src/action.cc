@@ -1353,6 +1353,15 @@ void fire_one_relic(CombatState& state, HeldRelic& relic, Hook hook,
             }
             break;
 
+          case RelicId::FaceOfCleric: {
+            // onVictory: increaseMaxHp(1, true), whose heal passes Magic Flower
+            // since the room is still in combat here (gain_max_hp).
+            Action a = make_action(ActionKind::GainMaxHp);
+            a.amount = kFaceOfClericMaxHp;
+            q.push_back(a);
+            break;
+          }
+
           default:
             break;
         }

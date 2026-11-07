@@ -150,6 +150,21 @@ inline constexpr int kMawBankUsedUp = -2;
 // Meal Ticket heals this much on entering a SHOP, and only a shop.
 inline constexpr int kMealTicketHeal = 15;
 
+// Ssserpent Head pays this on every `?` node, whatever the `?` becomes: its
+// onEnterRoom checks `room instanceof EventRoom` before the roll replaces the
+// room (task #17, events.md §7).
+inline constexpr int kSsserpentHeadGold = 50;
+
+// Face of Cleric: increaseMaxHp(1, true) in onVictory, after every won fight
+// (a Smoke Bomb escape included: escape() reaches endBattle too).
+inline constexpr int kFaceOfClericMaxHp = 1;
+
+// N'loth's Hungry Face: the next non-boss chest drops one relic fewer
+// (onChestOpenAfter, removeOneRelicFromRewards). The constructor's counter is
+// 1; spent, it becomes -2, the value setCounter treats as used up.
+inline constexpr int kNlothsHungryFaceCharges = 1;
+inline constexpr int kNlothsHungryFaceUsedUp = -2;
+
 // Ceramic Fish pays out every time a card joins the master deck.
 inline constexpr int kCeramicFishGold = 9;
 

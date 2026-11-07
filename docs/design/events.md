@@ -1,7 +1,7 @@
 # Events — design (task #7)
 
 **Status:** AGREED (Rob, 2026-10-22): E1–E11 as recommended (§9); W1 from the
-wiki cross-check ruled 2026-11-03. Built in §8's order.
+wiki cross-check ruled 2026-11-03. Built in §8's order; step 1 done (§10).
 
 The other half of `v2-spec.md` §11 step 7. A `?` node that resolves to an event
 today sets `Phase::Event` and stops there (`run_state.cc`, `enter_room`): nothing
@@ -250,6 +250,14 @@ Gold an event pays directly goes through `player.gainGold`: Ectoplasm refuses
 it, and Golden Idol does not add to it (Golden Idol's bonus lives in
 `RewardItem.applyGoldBonus`). Gold an event puts on a fight's reward screen is a
 gold reward and gets Golden Idol's 25%. Dead Adventurer pays both kinds (§5).
+
+**Gold an event takes does not break Maw Bank** (found while building step 1).
+Every event's cost goes through `player.loseGold`, which calls the relics'
+`onSpendGold` only `instanceof ShopRoom`; wiki.gg Maw Bank agrees ("will not
+break when spending Gold at an Event"). The engine had one spend path,
+`spend_gold`, which always trips Maw Bank. Events use `lose_gold`, which does
+not. `spend_gold`'s comment had read `MawBank.onSpendGold` alone and concluded
+"on anything"; the room check is one call up.
 
 ### 4.4 Relics
 
@@ -517,6 +525,91 @@ Tests build the event they test (`begin_event(EventId)`) rather than sampling a
 seed until a `?` lands on it. Selection is tested on the candidate lists as pure
 functions, and the shrine correlation by its invariant (the next `?` roll equals
 the shrine check), never by counting outcomes over seeds.
+
+**Between steps,** a `?` can already draw an event a later step builds. It ends
+at once with no effect (`begin_event` finishes an event that offers nothing),
+so the selection and its RNG are final from step 1 and a run never stalls.
+
+## 10. As built
+
+### Step 1 (2026-11-05)
+
+- `src/event.h`, `src/event.cc`: `EventId` (25), `EventOption` (56, asserted
+  equal to the action block), the amounts, `scrap_ooze_finds_relic`,
+  `event_damage_after_relics`, `face_trader_faces`.
+- `RunState`: `event_rng` (one stream, seeded in `start`), the three lists,
+  `EventState`, `floor_event_rng` on the new `RngStream::EventMisc`;
+  `event_candidates`, `shrine_candidates`, `generate_event`, `begin_event`,
+  `event_options`, `choose_event_option`, `finish_event`, `take_event_damage`,
+  `is_cursed`, `obtain_curse_then_relic` (with `add_card` split into
+  `omamori_negates` and `add_card_past_omamori`), `lose_gold`,
+  `random_screenless_relic` (Calling Bell now uses it), and
+  `upgrade_random_cards` over a caller's stream.
+- `resolve_unknown_room` draws from `event_rng`; `enter_room` and
+  `fire_room_entry_relics` take `unknown_node`, which Ssserpent Head reads.
+- The nine step-1 events. `kNumEventOptions` 58 → 56, `kTotalActions` 8,615 →
+  8,613.
+- Face of Cleric and N'loth's Hungry Face, which Face Trader can give (Rob,
+  2026-11-07; `relic-effects.md` §7): a `GainMaxHp` on the combat-end hook, and
+  `open_chest` dropping the first relic on the chest's list.
+
+`tests/test_events.cc`, 80 tests: the lists and gates, the pick and the stream
+(including the shrine correlation, asserted from the shared number for every
+seed), Ssserpent Head, the damage path and the death intercept, the
+curse-then-relic order, and each event. `test_path_choice.cc`'s run walk now
+plays events through their options.
+
+Mutations, each applied and reverted, all caught (M16–M28 in groups of two or
+three on separate code, each caught by its own test):
+
+| # | mutation | caught by |
+|---|---|---|
+| M1 | the pick draws from `event_rng` itself | `ThePickLeavesTheEventStreamWhereItWas`, `TheNextQuestionRollReadsTheShrineChecksNumber` |
+| M2 | the `?` roll from a fresh per-floor stream | `EachQuestionRollTakesTheStreamsNextNumber`, `TheNextQuestionRollReadsTheShrineChecksNumber` |
+| M3 | the shrine check inverted | `TheShrineCheckDecidesWhichListIsDrawn` |
+| M4 | an event pick not removed from its list | `APickedEventLeavesItsList`, `PaysBeforeTheEventGatesAreRead` |
+| M4b | a shrine pick not removed | `APickedShrineLeavesItsList` (added when M4 showed the first test could not reach this path) |
+| M5 | floor gate `>=` | `DeadAdventurerAndMushroomsWaitForFloorSeven` |
+| M6 | `is_cursed` counts Curse of the Bell | `TheDivineFountainNeedsACurseItCanRemove` |
+| M7 | no fallback to a shrine | `NoEventPassingItsGateFallsBackToAShrine`, `APickedShrineLeavesItsList` |
+| M8 | Ssserpent Head on a `?` that stays an event only | `PaysOnAQuestionNodeThatBecomesAFight` |
+| M9 | Ssserpent Head's gold after the gates | `PaysBeforeTheEventGatesAreRead` |
+| M10 | The Boot on every hit | `TheBootRaisesOnlyThePlayersOwnHits` |
+| M11 | Torii on every hit | `ToriiLowersOnlyHitsWithAnOwner`, `SmashIsDamageWithNoOwner`, `TouchHasNoOwner` |
+| M12 | Lizard Tail before the Fairy | `TheFairyComesBeforeLizardTail` |
+| M13 | the curse before the relic | `ADarkstoneFromTheSameOptionGivesMaxHp`, `ACeramicFishFromTheSameOptionPaysForTheCurse` |
+| M14 | the relic before the Omamori check | `AnOmamoriFromTheSameOptionCannotBlockIt` |
+| M15 | World of Goop's loss through `spend_gold` | `LosingGoldHereDoesNotBreakMawBank` |
+| M16 | Goop's loss uncapped | `TheLossIsCappedAtTheGoldHeld` |
+| M17 | Hide without its minimum of 1 | `HideLosesAtLeastOneMaxHp` |
+| M18 | Scrap Ooze `>` for `>=` | `TheOddsAreOneMoreThanTheChanceShown` |
+| M19 | Scrap Ooze's damage fixed at 3 | `EachFailureMakesTheNextAttemptCostOneMore` |
+| M20 | Shining Light's hit unowned | `ItsHitIsOwnedByThePlayer` |
+| M21 | Shining Light's damage truncated | `TheDamageIsAFifthOfMaxHpRounded` |
+| M22 | Shining Light upgrades one | `EnterUpgradesTwoCardsAfterTheDamage` |
+| M23 | the Fountain stops after one curse | `DrinkRemovesEveryCurseThatCanLeave` |
+| M24 | Face Trader may give a face already held | `TradeGivesAFaceNotAlreadyHeld` |
+| M25 | Omamori's block also stops the Ssssserpent's gold | `OmamoriBlocksTheDoubtButNotTheGold` |
+| M26 | the Fairy not used up | `FairyInABottleRevivesOutsideCombat`, `TheFairyComesBeforeLizardTail` |
+| M27 | Banana heals a quarter | `BananaHealsAThirdOfMaxHp` |
+| M28 | Shining Light's Enter never masked | `EnterIsMaskedWithNothingToUpgrade` |
+| F1 | Face of Cleric does nothing | `EachWinRaisesMaxHpByOne`, `ASmokeBombEscapeCountsToo`, `MagicFlowerBoostsItsHeal` |
+| F2 | Face of Cleric raises Max HP without the heal | `EachWinRaisesMaxHpByOne`, `MagicFlowerBoostsItsHeal` |
+| N1 | N'loth's Hungry Face takes the last relic, not the first | `WithMatryoshkaItTakesMatryoshkasRelic` |
+| N2 | its charge never spent | `TheNextChestDropsItsRelic`, `OnlyTheNextChest` |
+
+Two tests were rewritten before the first run, having been vacuous: Golden
+Idol's Smash and World of Goop's Gather were asserted at damages outside
+Torii's range, so they could not show whether the hit had an owner. Smash is now
+tested at 16 Max HP (a hit of 4); Goop's ownership is not observable at A0 (its
+11 is fixed), so that test was dropped and Shining Light (at 20 Max HP) and Face
+Trader carry the ownership checks.
+
+**Found while wiring Face of Cleric (task #63, not fixed here):** StS's
+`endBattle` runs Meat on the Bone's `onTrigger` before `player.onVictory()`, so
+Meat on the Bone checks HP before Burning Blood heals. The engine fires them in
+acquisition order with Burning Blood first, and `end_combat`'s comment states
+the opposite of the source. Awaiting Rob's ruling.
 
 ## 9. Questions for Rob
 

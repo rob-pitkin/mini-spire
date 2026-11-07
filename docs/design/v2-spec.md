@@ -67,7 +67,7 @@ it exists. Sections not listed here have no code behind them yet.
 | 4.2 | potion drops, elite relics, treasure chests | ✅ `run_state.cc` |
 | 4.3 | shops: 5 class cards + 2 colorless + 3 relics + 3 potions, pricing, sale slot, removal | ✅ **complete** — the colorless slots landed with the colorless card effects |
 | 5.1 | `RelicId` (140) and `PotionId` (33) vocabularies | ✅ `relic.{h,cc}`, `potion.{h,cc}` |
-| 3.0.1 | relics/potions as first-class `CombatState` | ✅ held, observed and usable; relic effects 129/140 (`relic-effects.md` §7), potion effects 33/33 (`potion-effects.md` §8 steps 1–6; the TUI belt is step 7) |
+| 3.0.1 | relics/potions as first-class `CombatState` | ✅ held, observed and usable; relic effects 132/140 (`relic-effects.md` §7), potion effects 33/33 (`potion-effects.md` §8 steps 1–6; the TUI belt is step 7) |
 | 4.4 | Neow | ❌ |
 | 8 | rest sites (rest / smith) | ✅ `run_state.cc` |
 | 5 | the v2 observation | ❌ — the env still emits v1.0.0's 1,772 floats |
@@ -85,9 +85,9 @@ no Gymnasium surface, so it is exercised only by `ctest`.
 | `RELICS` | 140 |
 | `POTIONS` | 33 |
 | `EVENTS` | 25 |
-| `EVENT_OPTIONS` | 56 (58 in code until events step 1; §6.3) |
+| `EVENT_OPTIONS` | 56 (§6.3) |
 | **observation** | **4,115 floats** (2.32× v1.0.0) |
-| **action space** | **8,613** (8,615 in code until events step 1; 78% of it the combat card × cost × target block, §6.5; 2,135 before the cost dimension) |
+| **action space** | **8,613** (78% of it the combat card × cost × target block, §6.5; 2,135 before the cost dimension) |
 
 Every one of these is **Act 1-reachable content only** — no reserved indices for
 acts 2–3 (§5.1 rule 5).
@@ -1501,13 +1501,13 @@ every state, forever — never "the *k*th option offered".
 | relic selection | **140** | pick relic *r* — **shop only** (§6.4) |
 | potion: use × target | 33 × 5 = **165** | Fire/Fear/Weak/Poison potions target an enemy |
 | potion: discard | **33** | |
-| event option | **58** | globally-enumerated option id (§6.3) |
+| event option | **56** | globally-enumerated option id (§6.3); 58 until Rob E4, 2026-10-22 |
 | rest option | **5** | rest, smith, lift, toke, dig — **no recall**, it is Act 4 content and would be a dead index (§5.1 rule 5) |
 | purpose selection | **~6** | choose *why* a card list opens (§6.1) |
 | take Max HP instead | 1 | Singing Bowl |
 | decline / skip / leave | 1 | |
 
-**Total = 8,615** actions.
+**Total = 8,613** actions (8,615 until the event block lost two dead ids, §6.3).
 
 Of that, **6,750 (78%) is the combat card×cost×target block**. It was 1,350
 (card × target) until §6.5 added the cost dimension; the action count was 2,135
@@ -1629,7 +1629,7 @@ classes in `events.md` §5, which agree with every per-event figure below.
 > (`events.md` §3.2), as a one-option choice already does in combat. Lab's
 > "Search" and Wheel of Change's "Spin" are the only option on their screens, so
 > their ids could never be chosen; §5.1 rule 5 removes them. The engine's
-> constant changes with events step 1.
+> `kNumEventOptions` is 56, asserted equal to `EventOption`'s count (`event.cc`).
 
 | group | events | option ids |
 |---|---|---:|
@@ -2068,10 +2068,10 @@ a Linear board disagrees with it, the spec wins.
    design was built around). ⚠️ Lift/Toke/Dig need relics.
 7. Shops ✅ — all 14 slots stock, including the 2 colorless ones, which waited
    on the colorless card effects (`colorless-effects.md`). Relic and potion
-   effects are the remainder of this step: relics 129/140
+   effects are the remainder of this step: relics 132/140
    (`relic-effects.md` §7), potions 33/33 (`potion-effects.md` §8).
    Events: designed and ruled (`events.md`, 2026-10-22), built in that
-   document's five steps (§8 there).
+   document's five steps (§8 there). Step 1 of 5 built (2026-11-05).
 8. Bosses → **M5: an agent that completes a run**.
 
 ## 12. Non-termination hazard

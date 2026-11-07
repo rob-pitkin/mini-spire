@@ -8,6 +8,7 @@
 #include "card.h"
 #include "combat_state.h"
 #include "encounter.h"
+#include "event.h"
 #include "map.h"
 #include "run_rng.h"
 #include "turn_loop.h"  // IRONCLAD_MAX_HP, start_combat, starter_deck
@@ -231,6 +232,24 @@ struct ShopPotion {
   bool sold = false;
 };
 
+// The live event (events.md §3.1). `active` is false outside Phase::Event.
+//
+// The amounts are the numbers an option states, fixed when the event is
+// entered, as StS computes them in the event's constructor. Named for the
+// observation slots they will fill (v2-spec §5.2.1, task #9), with each
+// event's use noted where it is set.
+struct EventState {
+  bool active = false;
+  EventId id = EventId::BigFish;
+  // Which decision screen is showing. Golden Idol has two; the rest one.
+  int screen = 0;
+  int hp_amount = 0;
+  int hp_amount2 = 0;
+  int gold_amount = 0;
+  // Failed attempts so far (Scrap Ooze).
+  int attempts = 0;
+};
+
 // The run above the fight. See docs/design/v2-spec.md §3.
 //
 // RunState is the owner of record ACROSS fights. A fight is a projection of run
@@ -301,6 +320,28 @@ struct RunState {
   // whether that shop was a Shop room or a `?` that resolved into one.
   bool last_room_was_shop = false;
 
+  // --- events (docs/design/events.md) ---
+
+  // The `?` roll's stream, ONE for the run (RngStream::Event, index 0), and
+  // never re-derived per floor. resolve_unknown_room draws from it; the event
+  // pick draws from a copy and leaves it where it was, so the next `?` roll
+  // reads the number the shrine check just read (§2.3). Seeded by start().
+  std::mt19937 event_rng;
+
+  // The three lists an event is drawn from, built at the start of the act. An
+  // event leaves its list when it is picked (§2.1).
+  std::vector<EventId> event_list;
+  std::vector<EventId> shrine_list;
+  std::vector<EventId> one_time_list;
+
+  EventState event;
+
+  // The current floor's generator for an event's own rolls (StS's miscRng,
+  // re-seeded per floor; §2.4). Continued across a floor's draws, as Scrap
+  // Ooze rolls once per attempt. Read it through event_rng_for_floor().
+  std::mt19937 floor_event_rng;
+  int floor_event_rng_floor = -1;
+
   // What the `?` on the current floor turned into. Equals the map's room type
   // for every other room. The map itself never records this: a `?` stays `?`
   // (§5.4), and this is what the phase is derived from.
@@ -352,6 +393,13 @@ struct RunState {
   // Puts a card into the master deck, giving it a fresh identity. This is the
   // ONLY place a run-scoped uid is minted.
   void add_card(Card card);
+
+  // add_card's two halves, which StS runs at different moments: Omamori in the
+  // obtain effect's constructor, everything else when the effect finishes
+  // (events.md §4.2). add_card runs both at once; obtain_curse_then_relic puts
+  // a relic between them. omamori_negates takes a charge when it negates.
+  bool omamori_negates(const Card& card);
+  void add_card_past_omamori(Card card);
 
   // Frozen, Molten and Toxic Egg: upgrade `card` if a held Egg covers its type
   // and it is upgradable and not already upgraded. No RNG.
@@ -438,7 +486,16 @@ struct RunState {
   //
   // The caller still checks it can afford the price. This debits and notifies;
   // it does not authorise.
+  //
+  // The SHOP's spend path. StS's loseGold tells relics (onSpendGold) only in a
+  // ShopRoom, so gold an event takes goes through lose_gold instead.
   void spend_gold(int amount);
+
+  // Gold taken outside a shop: World of Goop, The Cleric, We Meet Again, The
+  // Woman in Blue. loseGold notifies onSpendGold only in a ShopRoom, so Maw
+  // Bank keeps paying (wiki.gg Maw Bank: "will not break when spending Gold at
+  // an Event"; events.md §4.3).
+  void lose_gold(int amount);
 
   // --- relics and potions ---
 
@@ -551,6 +608,10 @@ struct RunState {
   // than two, so the without-replacement discipline is stated once.
   int upgrade_random_cards(std::optional<CardType> type, int count,
                            RelicId source);
+  // The same, drawing from `rng`: an event's upgrades use the floor's event
+  // stream rather than a relic's (Shining Light).
+  int upgrade_random_cards(std::optional<CardType> type, int count,
+                           std::mt19937& rng);
 
   // Takes a potion if a slot is free. Returns false when the belt is full,
   // which is a real decision point in the game rather than an error.
@@ -611,6 +672,12 @@ struct RunState {
   std::optional<RelicId> random_relic(
       RelicTier tier, std::mt19937& rng,
       const std::vector<RelicId>& exclude = {}) const;
+
+  // returnRandomScreenlessRelic: random_relic without the four relics that
+  // open a screen on pickup (Bottled Flame, Lightning, Tornado, Whetstone).
+  // Calling Bell's three relics and most event relics (events.md §4.4).
+  std::optional<RelicId> random_screenless_relic(RelicTier tier,
+                                                 std::mt19937& rng) const;
 
   // Opens a treasure chest: rolls its size, then gold and the relic tier from
   // a SINGLE shared roll (§4).
@@ -708,17 +775,68 @@ struct RunState {
   RoomType resolve_unknown_room();
 
   // Enters `room` on the current floor, setting the phase and doing whatever
-  // the room does on arrival.
-  void enter_room(RoomType room);
+  // the room does on arrival. `unknown_node` is true when the map put a `?`
+  // here, whatever it resolved into.
+  void enter_room(RoomType room, bool unknown_node = false);
 
   // Fire the relics that respond to walking into a room, in ACQUISITION order —
   // the order `relics` is stored in, matching fire_relic_hooks. Called by
   // enter_room BEFORE the room resolves, because a Treasure room opens its
   // chest and leaves inside that same call.
   //
-  // Maw Bank (any room) and Meal Ticket (shops only) today; Eternal Feather and
-  // Ssserpent Head attach here too (§3.2).
-  void fire_room_entry_relics(RoomType room);
+  // Maw Bank (any room), Meal Ticket (shops), Eternal Feather and Ancient Tea
+  // Set (rest sites), and Ssserpent Head (every `?` node, `unknown_node`).
+  void fire_room_entry_relics(RoomType room, bool unknown_node = false);
+
+  // --- events (docs/design/events.md) ---
+
+  // The candidates getEvent and getShrine would choose among now: the lists
+  // filtered by each event's gate (§2.2). Exposed so the gates are tested as
+  // pure functions instead of through draws.
+  std::vector<EventId> event_candidates() const;
+  std::vector<EventId> shrine_candidates() const;
+
+  // generateEvent (§2.2): the shrine check, then a pick, both drawn from a COPY
+  // of event_rng, which therefore does not move. Removes the picked event from
+  // its list. Empty only if every list is exhausted.
+  std::optional<EventId> generate_event();
+
+  // Enters `id`: Phase::Event, and the numbers its options state, computed or
+  // rolled as StS's constructor does. An event with no decision to make ends at
+  // once. Called by enter_room after generate_event, and by tests that want one
+  // event without walking a map to it.
+  void begin_event(EventId id);
+
+  // The options the live event offers now, unavailable ones masked out. Empty
+  // outside an event.
+  std::vector<EventOption> event_options() const;
+
+  // Takes `option`. False, and nothing changes, when it is not on offer, a deck
+  // choice is pending, or the run is over.
+  bool choose_event_option(EventOption option);
+
+  // The event's last screen has advanced: back to the map (leave_room).
+  void finish_event();
+
+  // The floor's generator for an event's own rolls, made from (seed,
+  // EventMisc, floor) on the floor's first draw and continued after that.
+  std::mt19937& event_rng_for_floor();
+
+  // A hit outside combat, through AbstractPlayer.damage's out-of-combat path
+  // (events.md §4.1): The Boot, Torii and Tungsten Rod by the hit's kind, then
+  // the death intercept — Fairy in a Bottle, else Lizard Tail, else the run is
+  // lost. Combat-only reactions do not fire.
+  void take_event_damage(int amount, EventDamage kind);
+
+  // player.isCursed(): a curse in the deck other than the three nothing can
+  // remove (The Divine Fountain's gate).
+  bool is_cursed() const;
+
+  // A curse and a relic from one option, in StS's order (§4.2): Omamori is
+  // checked against the curse first, then the relic is obtained, then the
+  // curse joins the deck — so a Darkstone Periapt or Ceramic Fish just obtained
+  // hears of it, and an Omamori just obtained cannot block it.
+  void obtain_curse_then_relic(CardId curse, RelicId relic);
 
   // Finishes with the current room: back to the map, or the run is won if this
   // was the last floor. Every room's exit goes through here so the win check

@@ -23,7 +23,10 @@ enum class RngStream : uint32_t {
   Combat,         // shuffles and enemy AI within one fight — indexed by floor
   CardReward,     // reward rarity rolls and card choices
   Shop,           // stock, prices, the discount slot
-  Event,          // which event a ? becomes, and its internal rolls
+  Event,          // the ? roll and which event it becomes. ONE stream for the
+                  // run, index 0, never per floor: the event pick draws from a
+                  // copy, so the next ? roll reads the same number — the shrine
+                  // re-entry bug (events.md §2.3)
   Potion,         // drop rolls
   Relic,          // which relic a chest or elite grants
   AutoResolve,    // engine-side policies for shape-breakers (§9)
@@ -35,6 +38,8 @@ enum class RngStream : uint32_t {
                   // floor-indexed stream would hand both the same draws. A
                   // relic can only be obtained once per run, so its id is a
                   // collision-free index.
+  EventMisc,      // an event's own rolls — StS's miscRng, which it re-seeds on
+                  // every floor. Indexed by floor (events.md §2.4, Rob E3)
 
   // APPEND ONLY. A stream's position is baked into every seed derived from it,
   // so inserting a value in the middle silently changes every run.

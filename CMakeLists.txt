@@ -17,6 +17,7 @@ add_library(minispire
   src/combat_env.cc
   src/enemy.cc
   src/encounter.cc
+  src/event.cc
   src/map.cc
   src/potion.cc
   src/relic.cc
@@ -70,6 +71,7 @@ if(MINISPIRE_BUILD_TESTS AND NOT SKBUILD)
     tests/test_curse_effects.cc
     tests/test_thievery.cc
     tests/test_encounter.cc
+    tests/test_events.cc
     tests/test_mask_oracle.cc
     tests/test_map.cc
     tests/test_path_choice.cc

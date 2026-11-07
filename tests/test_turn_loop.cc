@@ -545,7 +545,7 @@ TEST(TurnLoop, MaskCoversCombatBlockPlusOptionSlotChannel) {
   EXPECT_EQ(mask.size(), static_cast<std::size_t>(kTotalActions));
   EXPECT_EQ(kEndTurnAction, static_cast<int>(CARD_DATABASE.size()) *
                                 kNumCostColumns * minispire::kMaxEnemies);
-  EXPECT_EQ(kTotalActions, 8615);
+  EXPECT_EQ(kTotalActions, 8613);
 }
 
 TEST(TurnLoop, EndTurnAlwaysLegalWhileInProgress) {

@@ -439,10 +439,10 @@ TEST(ChoiceEncoding, TheV2LayoutIsTheSpecdOne) {
   EXPECT_EQ(kDeclineAction, kTakeMaxHpAction + 1);
 
   // The published total. §6's table sums to this.
-  EXPECT_EQ(kTotalActions, 8615);
+  EXPECT_EQ(kTotalActions, 8613);
 }
 
-// The guard that makes the layout non-brittle. Every one of the 8,615 indices
+// The guard that makes the layout non-brittle. Every one of the 8,613 indices
 // decodes to a block, entity, target and cost column that encode back to
 // exactly that index, and blocks appear in layout order with no backtracking. A
 // table row whose size or stride drifts from its constant fails here at every

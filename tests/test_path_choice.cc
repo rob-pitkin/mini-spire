@@ -55,11 +55,20 @@ bool exit_current_room(RunState& run) {
       return true;
 
     case Phase::Event:
-      // The one room with no exit path yet (§11 step 7). Pinned to Event
-      // specifically so it disappears when events land, rather than quietly
-      // covering the next room that forgets to leave.
-      run.phase = Phase::Map;
-      return true;
+      // Take the last option on offer until the event ends: Leave where there
+      // is one, and every event's last screen advances (events.md §3.2). An
+      // event left with nothing to choose has stranded the run.
+      while (run.phase == Phase::Event && !run.is_terminal()) {
+        const std::vector<EventOption> options = run.event_options();
+        if (options.empty()) {
+          ADD_FAILURE() << "an event offered nothing and did not end (floor "
+                        << run.floor << ")";
+          run.phase = Phase::Map;
+          break;
+        }
+        run.choose_event_option(options.back());
+      }
+      return !run.is_terminal();
 
     default:
       if (run.floor >= run.final_floor) {
