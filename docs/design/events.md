@@ -2,7 +2,7 @@
 
 **Status:** AGREED (Rob, 2026-10-22): E1–E11 as recommended (§9); W1 from the
 wiki cross-check ruled 2026-11-03; B1–B3, raised while building step 3, ruled
-2026-11-07. Built in §8's order; steps 1–3 done (§10).
+2026-11-07. Built in §8's order; steps 1–4 done (§10).
 
 The other half of `v2-spec.md` §11 step 7. A `?` node that resolves to an event
 today sets `Phase::Event` and stops there (`run_state.cc`, `enter_room`): nothing
@@ -300,7 +300,7 @@ event room. After the fight:
   in the first draft; the wiki check found it, §5.0). Black Star tests
   `instanceof MonsterRoomElite`, so it adds nothing.
 
-Two engine gaps:
+Two engine gaps, both closed in step 4 (§10):
 
 - Dead Adventurer's Lagavulin is `new Lagavulin(false)`. It starts awake: no
   8 block, no Metallicize, and its first move is Siphon Soul. The engine's
@@ -743,6 +743,87 @@ Not tested: that each gift is paid before its relic. The order is observable
 only through which relic is drawn (War Paint after a Skill is given), which no
 test can fix without stubbing the relic draw. Tests that measure gold hold Old
 Coin first, so the relic drawn cannot pay gold of its own.
+
+### Step 4 (2026-11-08)
+
+- Dead Adventurer and Hypnotizing Colored Mushrooms (§5, E7), with no new
+  rulings: the sources settle every question this step raised.
+- `EventEncounter` and `make_event_encounter` (`encounter.cc`): 3 Sentries,
+  Gremlin Nob, "Lagavulin Event" and "The Mushroom Lair" (three Fungi Beasts).
+  `CombatSetup` gains `event_encounter`, built instead of a pool sample, and
+  `elite_trigger`, which sets `is_elite` as an elite pool does.
+- `make_lagavulin_awake` (`new Lagavulin(false)`): not asleep, no Metallicize,
+  Siphon Soul first, then the table's awake cycle (Attack, Attack, Siphon Soul).
+  `getMove` confirms the cycle: Attack while fewer than two attacks follow the
+  last Siphon Soul.
+- `RewardSource::Event`, `begin_event_combat`, and `combat_setup` (the run's
+  half of every fight's setup, now shared with `begin_combat`). The event puts
+  `event_fight_gold` and `event_fight_relics` on the room before the fight;
+  `end_combat` pays them: no room gold, the event's gold as one reward (Golden
+  Idol's bonus on the merged total, because `incrementGold` re-applies it),
+  the relics last, the potion roll counting both, the normal card odds, and no
+  Prayer Wheel screen. A Smoke Bomb escape loses them, since
+  `openCombat(smoked)` never calls `setupItemReward`.
+- `gain_gold_reward`: Golden Idol then `gain_gold`, now shared with
+  `award_combat_gold`.
+- `search_dead_adventurer(roll)` is public, as `apply_wheel_result` is, so
+  both outcomes and the boundary are tested with chosen rolls. A find draws a
+  screenless relic; the fight's relic is any relic of the tier
+  (`addRelicToRewards`).
+- Odd Mushroom (`relic-effects.md` §7): `player_vulnerable_multiplier`, 1.25
+  with the relic, on the enemy's hit and on the intent damage a human reads.
+
+The eliteTrigger readers were checked by code search: Sling of Courage,
+Preserved Insect and Slaver's Collar are the mechanical ones, which are the
+engine's three `is_elite` readers. `AbstractCreature`'s read is visual (a
+Preserved Insect fight draws enemies 30% larger).
+
+`tests/test_event_fights.cc`, 33 tests. Mutations, all caught, in five groups
+on separate code, each caught by its own test:
+
+| # | mutation | caught by |
+|---|---|---|
+| EF1 | `elite_trigger` ignored | `DeadAdventurersFightCountsAsElite`, `EliteTriggerRelicsWorkInDeadAdventurersFight`, `EachEliteIsItsOwnFight` |
+| EF2 | the event's encounter ignored | `EachEliteIsItsOwnFight`, `StompFightsTheLairForGoldAndOddMushroom` |
+| EF3 | the awake Lagavulin keeps Metallicize | `StartsAwakeWithSiphonSoul` |
+| EF4 | the awake Lagavulin opens with an attack | `StartsAwakeWithSiphonSoul`, `CyclesAttackAttackSiphonSoul`, `ItsLagavulinIsAwake` |
+| EF6 | room gold paid too | `PayOnlyTheEventsGold` |
+| EF7 | the event's gold without Golden Idol | `GoldenIdolRoundsTheWholeReward` |
+| EF8 | the event's relics not obtained | `TheEventsRelicsAreObtained` |
+| EF9 | the potion roll not counting the event's relics | `TheEventsRewardsCountTowardTheFourRewardCap` |
+| EF10 | a Smoke Bomb escape pays the event's gold | `ASmokeBombEscapeLosesThem` |
+| EF11 | the event's rewards left in run state | `LeaveTheRunStateWhateverTheResult` |
+| EF12 | an event fight at elite card odds | `ACardRewardAtTheNormalOdds` |
+| EF13 | the fight on `roll <= chance` | `ARollBelowTheChanceFights` |
+| EF14 | the chance never rises | `TheChanceRisesByTwentyFivePerReward`, `EachFindRaisesTheChance` |
+| EF15 | found gold with Golden Idol | `EachSearchFindsTheNextReward` |
+| EF16 | the fight drops the unfound 30 gold | `TheFightPaysWhatWasNotFound` |
+| EF17 | the fight pays rewards already found | `TheFightPaysWhatWasNotFound` |
+| EF18 | Sentries and Nob swapped | `EachEliteIsItsOwnFight` |
+| EF19 | Dead Adventurer's fight not elite | `EachEliteIsItsOwnFight` |
+| EF20 | its Lagavulin asleep | `ItsLagavulinIsAwake`, `AHitDoesNotStunIt` |
+| EF21 | the event does not end after the third find | `EachSearchFindsTheNextReward` |
+| EF22 | the elite rolled before the shuffle | `EntryRollsTheOrderThenTheElite` |
+| EF23 | Stomp without Odd Mushroom | `StompFightsTheLairForGoldAndOddMushroom` |
+| EF24 | Eat heals a third | `EatHealsAQuarterAndGivesParasite` |
+| EF25 | Eat's Parasite past Omamori | `OmamoriStopsTheParasite` |
+| EF26 | Odd Mushroom ignored on the hit | `AnEnemyAttackOnAVulnerablePlayerHitsForAQuarterMore` |
+| EF27 | Odd Mushroom ignored in the intent | `TheIntentShowsTheLowerDamage` |
+| EF28 | the Mushroom Lair elite | `StompFightsTheLairForGoldAndOddMushroom` |
+| EF29 | the Lair with two Fungi Beasts | `AreTheFightsTheEventsName` |
+
+EF14 first passed `EachFindRaisesTheChance`: the test computed its roll as
+`dead_adventurer_chance(1) - 1`, so the mutated function moved the roll with
+it, and only the pure test caught it. The search tests now use literal rolls
+(24, 25, 49), and EF14, rerun alone, fails both.
+
+Not mutated: `make_lagavulin_awake`'s `triggered_effects.clear()` (EF5). The
+wake effects carry `requires_asleep`, so an awake Lagavulin cannot fire them
+with or without the clear.
+
+Not tested: that a find's relic is screenless while the fight's need not be.
+Which relic a draw yields decides whether the difference shows, and no test
+can fix that without stubbing the relic draw.
 
 ## 9. Questions for Rob
 

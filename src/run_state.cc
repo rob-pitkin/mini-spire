@@ -1082,9 +1082,16 @@ void RunState::award_combat_gold(RewardSource source) {
       amount = std::uniform_int_distribution<int>(10, 20)(rng);
       break;
   }
+  gain_gold_reward(amount);
+}
+
+void RunState::gain_gold_reward(int amount) {
   // Golden Idol: +25%, rounding the BONUS to nearest and adding it — not
   // rounding the whole 1.25x product. The two agree on most values and are not
-  // the same operation, so the reference's form is reproduced exactly.
+  // the same operation, so the reference's form is reproduced exactly. On the
+  // reward's TOTAL: addGoldToRewards merges into one reward and
+  // incrementGold re-applies the bonus to the sum, so an event's two amounts
+  // are rounded once, together.
   if (has_relic(RelicId::GoldenIdol)) {
     amount += static_cast<int>(
         std::lround(static_cast<float>(amount) * kGoldenIdolBonus));
@@ -1809,7 +1816,7 @@ void RunState::choose_path(int chosen_column) {
   enter_room(room, unknown_node);
 }
 
-void RunState::begin_combat(EncounterPool pool) {
+CombatSetup RunState::combat_setup() {
   // Indexed by floor: the same fight on the same floor of the same run always
   // shuffles and rolls identically, whatever happened elsewhere in the run.
   const uint64_t combat_seed = derive_stream_seed(
@@ -1826,7 +1833,6 @@ void RunState::begin_combat(EncounterPool pool) {
   setup.card_seed = static_cast<uint32_t>(
       derive_stream_seed(run_seed, RngStream::CardRandom,
                          static_cast<uint32_t>(floor)));
-  setup.pool = pool;
   setup.deck = master_deck;
   setup.hp = hp;
   setup.max_hp = max_hp;
@@ -1837,6 +1843,12 @@ void RunState::begin_combat(EncounterPool pool) {
   setup.potion_rng = potion_rng_for_floor();
   // So is the gold: a Looter steals from it mid-fight (thievery.md §3).
   setup.gold = gold;
+  return setup;
+}
+
+void RunState::begin_combat(EncounterPool pool) {
+  CombatSetup setup = combat_setup();
+  setup.pool = pool;
   combat = start_combat(std::move(setup));
 
   in_combat = true;
@@ -1846,6 +1858,18 @@ void RunState::begin_combat(EncounterPool pool) {
   // yet — bosses are Phase 7 — so nothing produces RewardSource::Boss today.
   combat_source = pool == EncounterPool::Elite ? RewardSource::Elite
                                                : RewardSource::Monster;
+}
+
+void RunState::begin_event_combat(EventEncounter encounter,
+                                  bool elite_trigger) {
+  CombatSetup setup = combat_setup();
+  setup.event_encounter = encounter;
+  setup.elite_trigger = elite_trigger;
+  combat = start_combat(std::move(setup));
+
+  in_combat = true;
+  phase = Phase::Combat;
+  combat_source = RewardSource::Event;
 }
 
 void RunState::end_combat() {
@@ -1905,6 +1929,14 @@ void RunState::end_combat() {
 
   in_combat = false;
 
+  // What an event put on the room before its fight is this screen's now
+  // (events.md §4.6), and leaves the run state whatever the fight's result.
+  const bool event_fight = combat_source == RewardSource::Event;
+  const int event_gold = event_fight_gold;
+  const std::vector<RelicId> event_relics = std::move(event_fight_relics);
+  event_fight_gold = 0;
+  event_fight_relics.clear();
+
   if (hp <= 0) {
     // Losing is terminal for the run, and it is the only terminal condition
     // that exists today: winning needs an Act 1 boss to kill (Phase 7).
@@ -1948,7 +1980,12 @@ void RunState::end_combat() {
     const int stolen = combat.stolen_gold_reward;
     combat.stolen_gold_reward = 0;
     if (stolen > 0 && !smoked) gain_gold(stolen);
-    if (!smoked && !all_escaped) award_combat_gold(combat_source);
+    // An event's fight pays no room gold (an EventRoom is not a MonsterRoom),
+    // only the event's one gold reward, Golden Idol's bonus on its total.
+    if (!smoked && !all_escaped && !event_fight) {
+      award_combat_gold(combat_source);
+    }
+    if (!smoked && event_gold > 0) gain_gold_reward(event_gold);
     const bool elite = combat_source == RewardSource::Elite;
 
     // Black Star: an elite drops a SECOND relic. Both are drawn here, before
@@ -1991,15 +2028,19 @@ void RunState::end_combat() {
     // screen that turns out to show nothing. A dead thief's gold is on the
     // room's list from the moment it died, so it counts; combat gold is not on
     // it when every enemy escaped.
-    const int on_screen = (all_escaped ? 0 : 1) /* gold */ +
+    // An event's gold and relics were on the list before the fight began.
+    const int room_gold = all_escaped || event_fight ? 0 : 1;
+    const int on_screen = room_gold + (event_gold > 0 ? 1 : 0) +
                           (stolen > 0 ? 1 : 0) +
-                          static_cast<int>(elite_relics.size());
+                          static_cast<int>(elite_relics.size()) +
+                          static_cast<int>(event_relics.size());
     roll_potion_drop(on_screen, /*grant=*/!smoked, /*no_chance=*/all_escaped);
 
     if (smoked) {
       // Nothing to collect and nothing to decide: StS's smoked screen offers
       // only Proceed. No card reward was made, so none is owed, Prayer
-      // Wheel's included.
+      // Wheel's included. An event's gold and relics are lost with it:
+      // openCombat(smoked) never calls setupItemReward.
       leave_room();
       return;
     }
@@ -2009,6 +2050,7 @@ void RunState::end_combat() {
 
     // Collected last, so nothing above could read them.
     for (RelicId id : elite_relics) obtain_relic(id);
+    for (RelicId id : event_relics) obtain_relic(id);
   }
 }
 
@@ -2034,6 +2076,8 @@ CardRarity card_rarity_for_roll(int roll, RewardSource source) {
     case RewardSource::Boss:
       return CardRarity::Rare;
     case RewardSource::Monster:
+    case RewardSource::Event:
+      // An EventRoom keeps AbstractRoom's 3 and 37, as a MonsterRoom does.
       break;
   }
   if (roll < rare_chance) return CardRarity::Rare;
@@ -2212,6 +2256,19 @@ bool any_upgradable(const std::vector<Card>& deck) {
   return false;
 }
 
+// Dead Adventurer's getMonster: the elite under the body, its Lagavulin awake.
+EventEncounter dead_adventurer_encounter(DeadAdventurerElite elite) {
+  switch (elite) {
+    case DeadAdventurerElite::ThreeSentries:
+      return EventEncounter::ThreeSentries;
+    case DeadAdventurerElite::GremlinNob:
+      return EventEncounter::GremlinNob;
+    case DeadAdventurerElite::Lagavulin:
+      return EventEncounter::LagavulinAwake;
+  }
+  return EventEncounter::LagavulinAwake;
+}
+
 }  // namespace
 
 bool RunState::is_cursed() const {
@@ -2356,6 +2413,21 @@ void RunState::begin_event(EventId id) {
       // Search is the only option: three potions, on the reward screen.
       offer_event_potions(kLabPotions);
       break;
+    case EventId::DeadAdventurer: {
+      // The constructor's two misc rolls, in order: the rewards shuffled
+      // (GOLD, NOTHING, RELIC), then the elite.
+      std::mt19937& rng = event_rng_for_floor();
+      event.rewards = {DeadAdventurerReward::Gold,
+                       DeadAdventurerReward::Nothing,
+                       DeadAdventurerReward::Relic};
+      std::shuffle(event.rewards.begin(), event.rewards.end(), rng);
+      event.elite = static_cast<DeadAdventurerElite>(
+          std::uniform_int_distribution<int>(0, 2)(rng));
+      break;
+    }
+    case EventId::Mushrooms:
+      event.hp_amount = truncated_share(max_hp, 0.25f);  // Eat's heal
+      break;
     case EventId::WeMeetAgain: {
       // Three offers, rolled in this order, each only when there is something
       // to offer (getRandomPotion and getRandomNonBasicCard return null on an
@@ -2482,9 +2554,13 @@ std::vector<EventOption> RunState::event_options() const {
       // Never masked: the gate is 50 gold, and the dearest costs 40.
       return {O::WomanInBlueBuyOne, O::WomanInBlueBuyTwo,
               O::WomanInBlueBuyThree, O::WomanInBlueLeave};
+    case EventId::DeadAdventurer:
+      return {O::DeadAdventurerSearch, O::DeadAdventurerLeave};
+    case EventId::Mushrooms:
+      return {O::MushroomsStomp, O::MushroomsEat};
     default:
-      // No decision (Bonfire Spirits, Wheel of Change, Lab), or built in
-      // events steps 4-5.
+      // No decision (Bonfire Spirits, Wheel of Change, Lab), or Match and
+      // Keep, built in events step 5.
       return {};
   }
 }
@@ -2914,11 +2990,80 @@ bool RunState::choose_event_option(EventOption option) {
     case EventOption::WomanInBlueLeave:
       break;
 
+    case EventOption::DeadAdventurerSearch:
+      search_dead_adventurer(
+          std::uniform_int_distribution<int>(0, 99)(event_rng_for_floor()));
+      return true;
+    case EventOption::DeadAdventurerLeave:
+      break;
+
+    case EventOption::MushroomsStomp:
+      // The fight's rewards first: gold misc 20-30 and Odd Mushroom (Circlet
+      // if already held, which needs this event twice).
+      event_fight_gold = std::uniform_int_distribution<int>(
+          kMushroomsFightGoldMin,
+          kMushroomsFightGoldMax)(event_rng_for_floor());
+      event_fight_relics.push_back(RelicId::OddMushroom);
+      event.active = false;
+      begin_event_combat(EventEncounter::MushroomLair, /*elite_trigger=*/false);
+      return true;
+    case EventOption::MushroomsEat:
+      // The heal, then Parasite through ShowCardAndObtainEffect, so Omamori
+      // can stop it.
+      heal(event.hp_amount);
+      add_card(Card{CardId::Parasite});
+      break;
+
     default:
-      return false;  // built in events steps 4-5
+      return false;  // Match and Keep, built in events step 5
   }
   finish_event();
   return true;
+}
+
+void RunState::search_dead_adventurer(int roll) {
+  if (roll < dead_adventurer_chance(event.attempts)) {
+    // The elite returns. Its gold (misc 25-35) goes on the room's list, then,
+    // as "Fight!" advances, each reward not yet found: 30 more gold into the
+    // same reward, and a relic of the standard tier, which addRelicToRewards
+    // does not restrict to screenless ones.
+    event_fight_gold = std::uniform_int_distribution<int>(
+        kDeadAdventurerFightGoldMin,
+        kDeadAdventurerFightGoldMax)(event_rng_for_floor());
+    std::mt19937 relic_rng =
+        make_stream(run_seed, RngStream::Relic, static_cast<uint32_t>(floor));
+    for (int i = event.attempts; i < kDeadAdventurerRewards; ++i) {
+      if (event.rewards[i] == DeadAdventurerReward::Gold) {
+        event_fight_gold += kDeadAdventurerGold;
+      } else if (event.rewards[i] == DeadAdventurerReward::Relic) {
+        if (const std::optional<RelicId> relic =
+                random_relic(relic_tier_standard(relic_rng), relic_rng)) {
+          event_fight_relics.push_back(*relic);
+        }
+      }
+    }
+    event.active = false;
+    begin_event_combat(dead_adventurer_encounter(event.elite),
+                       /*elite_trigger=*/true);
+    return;
+  }
+
+  // The next reward in the shuffled order, and the chance rises by 25.
+  const DeadAdventurerReward found = event.rewards[event.attempts];
+  ++event.attempts;
+  if (found == DeadAdventurerReward::Gold) {
+    gain_gold(kDeadAdventurerGold);  // player.gainGold: no Golden Idol
+  } else if (found == DeadAdventurerReward::Relic) {
+    // returnRandomScreenlessRelic, obtained at once, as the other events'.
+    std::mt19937 rng =
+        make_stream(run_seed, RngStream::Relic, static_cast<uint32_t>(floor));
+    if (const std::optional<RelicId> relic =
+            random_screenless_relic(relic_tier_standard(rng), rng)) {
+      obtain_relic(*relic);
+    }
+  }
+  // After the third, only "Leave" is left, which advances on its own.
+  if (event.attempts >= kDeadAdventurerRewards) finish_event();
 }
 
 void RunState::take_event_damage(int amount, EventDamage kind) {

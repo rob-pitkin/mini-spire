@@ -1318,13 +1318,16 @@ CombatState start_combat(CombatSetup setup) {
   // everything else in CombatSetup is: a bonus computed before the relics exist
   // is always zero. Slaver's Collar needs to know the fight's kind, which only
   // the setup has — CombatState does not record it.
-  state.is_elite = setup.pool == EncounterPool::Elite;
+  state.is_elite = setup.pool == EncounterPool::Elite || setup.elite_trigger;
   state.character.energy_per_turn =
       IRONCLAD_ENERGY_PER_TURN + relic_bonus_energy(state, state.is_elite);
   state.character.energy = state.character.energy_per_turn;
 
-  // Sample the encounter (each enemy primed with its turn-1 intent).
-  state.enemies = sample_encounter(setup.pool, state.rng);
+  // Sample the encounter, or build the one an event chose (each enemy primed
+  // with its turn-1 intent).
+  state.enemies = setup.event_encounter
+                      ? make_event_encounter(*setup.event_encounter, state.rng)
+                      : sample_encounter(setup.pool, state.rng);
 
   // Shuffle the given deck into the draw pile.
   state.draw_pile = std::move(setup.deck);

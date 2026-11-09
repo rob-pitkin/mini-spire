@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <random>
 #include <vector>
 
@@ -25,5 +26,19 @@ enum class EncounterPool {
 // won't recur consecutively) is a sequential-RUN concern needing cross-fight
 // history. Single-fight now -> plain weighted sampling per reset.
 std::vector<Enemy> sample_encounter(EncounterPool pool, std::mt19937& rng);
+
+// The fights an event starts, by MonsterHelper's names (events.md §4.6): Dead
+// Adventurer's three elites, its Lagavulin awake ("Lagavulin Event"), and
+// Hypnotizing Colored Mushrooms' "The Mushroom Lair". Named rather than
+// sampled: the event has already chosen.
+enum class EventEncounter : uint8_t {
+  ThreeSentries,
+  GremlinNob,
+  LagavulinAwake,
+  MushroomLair,
+};
+
+std::vector<Enemy> make_event_encounter(EventEncounter encounter,
+                                        std::mt19937& rng);
 
 }  // namespace minispire

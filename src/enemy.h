@@ -305,6 +305,10 @@ Enemy make_sneaky_gremlin(std::mt19937& rng);
 Enemy make_gremlin_wizard(std::mt19937& rng);
 Enemy make_shield_gremlin(std::mt19937& rng);
 Enemy make_lagavulin(std::mt19937& rng);
+// Dead Adventurer's Lagavulin, `new Lagavulin(false)`: awake from the start, so
+// no 8 block, no Metallicize, and Siphon Soul first (usePreBattleAction), then
+// the awake cycle (events.md §4.6).
+Enemy make_lagavulin_awake(std::mt19937& rng);
 Enemy make_gremlin_nob(std::mt19937& rng);
 Enemy make_bolt_sentry(std::mt19937& rng);
 Enemy make_beam_sentry(std::mt19937& rng);

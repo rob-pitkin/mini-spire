@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -90,6 +91,12 @@ struct CombatSetup {
   // L1): a Looter steals from it and Hand of Greed adds to it mid-fight. A
   // standalone fight starts with none.
   int gold = 0;
+  // An event's fight (events.md §4.6): its encounter instead of a sample from
+  // `pool`, and AbstractRoom.eliteTrigger, which Dead Adventurer sets. That
+  // flag is what Sling of Courage, Preserved Insect and Slaver's Collar read;
+  // an elite pool sets it too.
+  std::optional<EventEncounter> event_encounter;
+  bool elite_trigger = false;
 };
 
 // Constructs an initial CombatState (ROB-66): seeded RNG, the character at the

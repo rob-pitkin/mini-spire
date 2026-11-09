@@ -2070,7 +2070,8 @@ void execute(CombatState& state, const Action& a, ActionQueue& q,
         if (!valid_enemy_slot(state, a.actor)) break;
         const int dmg = compute_attack_damage(
             a.amount, state.enemies[a.actor].powers,
-            state.enemies[a.actor].debuffs, state.character.debuffs);
+            state.enemies[a.actor].debuffs, state.character.debuffs,
+            /*strength_mult=*/1, player_vulnerable_multiplier(state));
         // Blood for Blood counts HP-loss events from ANY source, so unblocked
         // enemy damage counts too (Rupture, by contrast, does not fire here).
         if (damage_player(state, dmg, /*from_attack=*/true)) {

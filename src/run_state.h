@@ -1,6 +1,7 @@
 #ifndef MINISPIRE_RUN_STATE_H
 #define MINISPIRE_RUN_STATE_H
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -46,8 +47,10 @@ inline constexpr int kCardRewardSize = 3;
 
 // The room a reward came from. Elites roll better, and a boss reward is always
 // rare (§4.2). Shop is a card reward rolled in a shop — only Cauldron's, which
-// StS creates and then removes (potion-effects.md §6.2, Rob W2).
-enum class RewardSource { Monster, Elite, Boss, Shop };
+// StS creates and then removes (potion-effects.md §6.2, Rob W2). Event is a
+// fight an event started (events.md §4.6): no room gold, the potion roll, and
+// the normal card odds, since an EventRoom is not a MonsterRoom.
+enum class RewardSource { Monster, Elite, Boss, Shop, Event };
 
 // The rarity a card-reward roll lands on, the pity counter already added:
 // AbstractRoom.getCardRarity's thresholds for the room. Rare below the rare
@@ -272,6 +275,11 @@ struct EventState {
   // card by uid. -1 when there is none to offer.
   int potion_index = -1;
   int card_uid = -1;
+  // Dead Adventurer: the order its three rewards are found in, shuffled on
+  // entry, and the elite under the body. `attempts` counts the searches that
+  // found something, and sets the fight chance.
+  std::array<DeadAdventurerReward, kDeadAdventurerRewards> rewards{};
+  DeadAdventurerElite elite = DeadAdventurerElite::ThreeSentries;
 };
 
 // The run above the fight. See docs/design/v2-spec.md §3.
@@ -360,6 +368,12 @@ struct RunState {
 
   EventState event;
 
+  // What an event put on its room's reward list before starting a fight
+  // (events.md §4.6): one gold reward, merged as addGoldToRewards merges, and
+  // relics. end_combat pays them with the fight's own rewards, and clears them.
+  int event_fight_gold = 0;
+  std::vector<RelicId> event_fight_relics;
+
   // The current floor's generator for an event's own rolls (StS's miscRng,
   // re-seeded per floor; §2.4). Continued across a floor's draws, as Scrap
   // Ooze rolls once per attempt. Read it through event_rng_for_floor().
@@ -443,6 +457,16 @@ struct RunState {
   // identically regardless of what happened on any other floor.
   void begin_combat(EncounterPool pool);
 
+  // The fight an event starts (events.md §4.6), in the event's room: the
+  // encounter it chose, and eliteTrigger for Dead Adventurer. Its rewards are
+  // the ones the event put on the room first (event_fight_gold and
+  // event_fight_relics), paid by end_combat as RewardSource::Event.
+  void begin_event_combat(EventEncounter encounter, bool elite_trigger);
+
+  // The run's half of every fight's setup: seeds, deck, HP, relics, potions
+  // and gold. begin_combat and begin_event_combat add what the fight is.
+  CombatSetup combat_setup();
+
   // Writes the fight's results back (§3.2 "On fight end"). HP and Max HP carry;
   // the piles are discarded because the master deck is the truth.
   //
@@ -495,6 +519,10 @@ struct RunState {
 
   // Pays out a fight's gold (§4.2): 10–20 normal, 25–35 elite, 100±5 boss.
   void award_combat_gold(RewardSource source);
+
+  // Claims one gold reward of `amount`: Golden Idol's bonus on the whole
+  // reward (RewardItem.applyGoldBonus), then gain_gold.
+  void gain_gold_reward(int amount);
 
   // Add gold from any source, refusing it if Ectoplasm is held. Every gain goes
   // through here; award_combat_gold applies Golden Idol first and then calls it.
@@ -868,6 +896,12 @@ struct RunState {
   // Wheel of Change's six results (`miscRng.random(0, 5)`), applied. Public so
   // each result is tested without depending on which one a draw lands.
   void apply_wheel_result(int result);
+
+  // Dead Adventurer's Search with `roll` (`miscRng.random(0, 99)`): below the
+  // chance, the elite's fight with every reward not yet found on its screen;
+  // otherwise the next reward, and the event ends after the third. Public so
+  // both outcomes and the boundary are tested without depending on the draw.
+  void search_dead_adventurer(int roll);
 
   // The floor's generator for an event's own rolls, made from (seed,
   // EventMisc, floor) on the floor's first draw and continued after that.

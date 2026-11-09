@@ -127,6 +127,32 @@ inline constexpr int kWomanInBlueCostTwo = 30;
 inline constexpr int kWomanInBlueCostThree = 40;
 inline constexpr int kWeMeetAgainMinGold = 50;  // and no gold offer below it
 inline constexpr int kWeMeetAgainMaxGold = 150;
+inline constexpr int kDeadAdventurerRewards = 3;
+inline constexpr int kDeadAdventurerGold = 30;  // found, or a fight reward
+inline constexpr int kDeadAdventurerChance = 25;  // +25 per reward found
+inline constexpr int kDeadAdventurerChanceStep = 25;
+inline constexpr int kDeadAdventurerFightGoldMin = 25;
+inline constexpr int kDeadAdventurerFightGoldMax = 35;
+inline constexpr int kMushroomsFightGoldMin = 20;
+inline constexpr int kMushroomsFightGoldMax = 30;
+
+// Dead Adventurer's three rewards, found one per successful search in an order
+// shuffled on entry; those not found by the fight go on its reward screen.
+enum class DeadAdventurerReward : uint8_t { Gold, Nothing, Relic };
+
+// The elite under the body, `miscRng.random(0, 2)` in this order. A player
+// reads which one from the event's text (events.md §6).
+enum class DeadAdventurerElite : uint8_t {
+  ThreeSentries,
+  GremlinNob,
+  Lagavulin,
+};
+
+// Search's fight chance after `found` rewards: 25, 50, 75. The fight starts
+// when `miscRng.random(0, 99)` is below it. Pure, so the boundary is tested.
+inline int dead_adventurer_chance(int found) {
+  return kDeadAdventurerChance + found * kDeadAdventurerChanceStep;
+}
 
 // Gates (events.md §2.2).
 inline constexpr int kEventsLateFloor = 6;  // Dead Adventurer, Mushrooms: floor > 6

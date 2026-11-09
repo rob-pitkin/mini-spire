@@ -176,4 +176,23 @@ std::vector<Enemy> sample_encounter(EncounterPool pool, std::mt19937& rng) {
   return table.back().generate(rng);  // float-edge fallback
 }
 
+std::vector<Enemy> make_event_encounter(EventEncounter encounter,
+                                        std::mt19937& rng) {
+  switch (encounter) {
+    case EventEncounter::ThreeSentries:
+      // As the elite pool builds it: Bolt, Beam, Bolt.
+      return {make_bolt_sentry(rng), make_beam_sentry(rng),
+              make_bolt_sentry(rng)};
+    case EventEncounter::GremlinNob:
+      return {make_gremlin_nob(rng)};
+    case EventEncounter::LagavulinAwake:
+      return {make_lagavulin_awake(rng)};
+    case EventEncounter::MushroomLair:
+      return {make_fungi_beast(rng), make_fungi_beast(rng),
+              make_fungi_beast(rng)};
+  }
+  assert(false && "unknown EventEncounter");
+  return {};
+}
+
 }  // namespace minispire

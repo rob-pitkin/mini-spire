@@ -946,6 +946,22 @@ Enemy make_lagavulin(std::mt19937& rng) {
   return e;
 }
 
+Enemy make_lagavulin_awake(std::mt19937& rng) {
+  // The same Lagavulin with isOut and isOutTriggered set in the constructor:
+  // usePreBattleAction skips the block and Metallicize and sets Siphon Soul,
+  // and damage never stuns it. getMove then gives Attack, Attack after each
+  // Siphon Soul, which is this table's cycle entered at Siphon Soul.
+  Enemy e = make_lagavulin(rng);
+  e.is_asleep = false;
+  e.powers.erase(Power::Metallicize);
+  e.triggered_effects.clear();  // the wake effects, which cannot fire awake
+  e.first_turn_move = MoveName::SiphonSoul;
+  e.last_move = std::nullopt;
+  e.consecutive_count = 0;
+  select_next_move(e, rng);  // re-prime: Siphon Soul
+  return e;
+}
+
 Enemy make_gremlin_nob(std::mt19937& rng) {
   // Gremlin Nob (HP 82-86). Bellow turn 1 (gain Enrage 2), then 67% Rush (14) /
   // 33% Skull Bash (6 + 2 Vulnerable), no Rush 3x in a row. Enrage: gain

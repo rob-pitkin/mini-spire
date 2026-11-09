@@ -255,10 +255,12 @@ void CombatEnv::compute_obs() {
         o[base + kIntentOff + 0] = is_attacking ? 1.0f : 0.0f;
         // Displayed attack damage (enemy Strength/Weak + player Vulnerable
         // factored in) — matches what the TUI shows.
-        o[base + kIntentOff + 1] = is_attacking
-                          ? static_cast<float>(compute_attack_damage(
-                                m.damage, e.powers, e.debuffs, c.debuffs))
-                          : 0.0f;
+        o[base + kIntentOff + 1] =
+            is_attacking ? static_cast<float>(compute_attack_damage(
+                               m.damage, e.powers, e.debuffs, c.debuffs,
+                               /*strength_mult=*/1,
+                               player_vulnerable_multiplier(state_)))
+                         : 0.0f;
         o[base + kIntentOff + 2] = m.block > 0 ? 1.0f : 0.0f;
 
         // Buff and debuff are SEPARATE intents (ROB-96). One flag used to mean

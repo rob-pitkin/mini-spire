@@ -335,6 +335,13 @@ float vulnerable_damage_multiplier(const CombatState& state) {
   return state.has_relic(RelicId::PaperPhrog) ? 1.75f : 1.5f;
 }
 
+float player_vulnerable_multiplier(const CombatState& state) {
+  // Odd Mushroom: a Vulnerable player takes 25% more from NORMAL damage rather
+  // than 50% (VulnerablePower.atDamageReceive). An enemy attack is NORMAL; the
+  // callers are the hit itself and the intent a human reads.
+  return state.has_relic(RelicId::OddMushroom) ? 1.25f : 1.5f;
+}
+
 int boot_adjusted_damage(const CombatState& state, int unblocked) {
   // The Boot: raise 4-or-less UNBLOCKED attack damage to 5.
   //

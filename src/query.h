@@ -141,6 +141,10 @@ int strength_multiplier(CardId card);
 // itself, which takes status maps and cannot see relics.
 float vulnerable_damage_multiplier(const CombatState& state);
 
+// How much extra a Vulnerable PLAYER takes from an enemy attack: 1.5
+// normally, 1.25 with Odd Mushroom.
+float player_vulnerable_multiplier(const CombatState& state);
+
 // The Boot: raise 4-or-less UNBLOCKED attack damage to 5. Takes the damage
 // remaining after block and returns what should actually reach HP. Zero is NOT
 // raised — see the implementation for why, and for the two other edge cases.
