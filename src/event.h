@@ -135,6 +135,8 @@ inline constexpr int kDeadAdventurerFightGoldMin = 25;
 inline constexpr int kDeadAdventurerFightGoldMax = 35;
 inline constexpr int kMushroomsFightGoldMin = 20;
 inline constexpr int kMushroomsFightGoldMax = 30;
+inline constexpr int kMatchAndKeepAttempts = 5;
+inline constexpr int kMatchAndKeepBoard = 12;  // six cards, two of each
 
 // Dead Adventurer's three rewards, found one per successful search in an order
 // shuffled on entry; those not found by the fight go on its reward screen.

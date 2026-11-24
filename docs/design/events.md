@@ -2,7 +2,7 @@
 
 **Status:** AGREED (Rob, 2026-10-22): E1–E11 as recommended (§9); W1 from the
 wiki cross-check ruled 2026-11-03; B1–B3, raised while building step 3, ruled
-2026-11-07. Built in §8's order; steps 1–4 done (§10).
+2026-11-07. Built in §8's order; all five steps done (2026-11-08, §10).
 
 The other half of `v2-spec.md` §11 step 7. A `?` node that resolves to an event
 today sets `Phase::Event` and stops there (`run_state.cc`, `enter_room`): nothing
@@ -545,9 +545,10 @@ seed until a `?` lands on it. Selection is tested on the candidate lists as pure
 functions, and the shrine correlation by its invariant (the next `?` roll equals
 the shrine check), never by counting outcomes over seeds.
 
-**Between steps,** a `?` can already draw an event a later step builds. It ends
-at once with no effect (`begin_event` finishes an event that offers nothing),
-so the selection and its RNG are final from step 1 and a run never stalls.
+**Between steps,** a `?` could already draw an event a later step built. It
+ended at once with no effect (`begin_event` finishes an event that offers
+nothing), so the selection and its RNG were final from step 1 and a run never
+stalled. With step 5 built, every event plays.
 
 ## 10. As built
 
@@ -825,7 +826,53 @@ Not tested: that a find's relic is screenless while the fight's need not be.
 Which relic a draw yields decides whether the difference shows, and no test
 can fix that without stubbing the relic draw.
 
-## 9. Questions for Rob
+### Step 5 (2026-11-08)
+
+- Match and Keep!, auto-resolved under E9 (a) (`v2-spec.md` §9), with no new
+  rulings. Its screens (Play, Continue, Leave) each have one option, so
+  `begin_event` plays it and the event ends.
+- `match_and_keep_board`: `initializeCards` at Ascension 0, in its order: a
+  rare, an uncommon and a common class card (`getCard`, the class pools, so
+  Prismatic Shard does not widen them), an uncommon colorless card, a curse
+  (`CardLibrary.getCurse`, which skips Ascender's Bane, Necronomicurse, Curse
+  of the Bell and Pride: `CURSE_POOL`), and Bash; each twice. StS draws the
+  colorless card on `shuffleRng` and the rest on `cardRng`; the engine draws
+  all five on the floor's card stream (E3).
+- `play_match_and_keep`: per attempt, two different cards from those left,
+  uniform, with no memory; a pair (same id, as `cardID.equals`) leaves the
+  board and is kept. Pure, on the `AutoResolve` stream in play, which nothing
+  else draws from.
+- `resolve_match_and_keep`: the board shuffled on the event stream (the
+  constructor's `Collections.shuffle` on `miscRng`), five attempts, and each
+  kept card obtained through `add_card`. A match obtains `makeCopy()` through
+  `ShowCardAndObtainEffect`, which checks Omamori and runs `onObtainCard`; the
+  Eggs upgrade in `onObtainCard` (`onPreviewObtainCard` forwards to it), so the
+  kept card is upgraded as any obtained card is. The board's own preview
+  upgrades change no `cardID`, so they are not modelled.
+
+`tests/test_match_and_keep.cc`, 12 tests. Mutations, all caught:
+
+| # | mutation | caught by |
+|---|---|---|
+| MK1 | an attempt may turn over one card twice | `AnAttemptTurnsOverTwoDifferentCards` |
+| MK2 | a kept pair stays on the board | `AKeptPairLeavesTheBoard` |
+| MK3 | the attempt count ignored | `MakesOnlyTheAttemptsItIsGiven` |
+| MK4 | the uncommon drawn before the rare | `DrawsInTheSourcesOrderOnTheCardStream` |
+| MK5 | no copies, six cards | `IsSixPairsOfTheSourcesCards` |
+| MK6 | Prismatic Shard widens the rare | `PrismaticShardDoesNotWidenTheClassCards` |
+| MK7 | kept cards pushed onto the deck, not obtained | `KeptCardsAreObtainedAsAnyCardIs`, `OmamoriStopsAKeptCurse` |
+| MK8 | kept curses past Omamori | `OmamoriStopsAKeptCurse` |
+| MK9 | the board not shuffled | `KeepsWhatThePolicyFindsOnTheShuffledBoard` |
+| MK10 | the policy on the event stream | `KeepsWhatThePolicyFindsOnTheShuffledBoard` |
+| MK11 | four attempts | `KeptCardsAreObtainedAsAnyCardIs`, `OmamoriStopsAKeptCurse`, `KeepsWhatThePolicyFindsOnTheShuffledBoard` |
+
+Three ran alone. MK1 crashes the binary when the same card is erased
+twice, which stopped the other tests in its group; alone, its test fails on
+its assertion first. MK10 first passed because MK5 shared its group: a board
+with no copies has no pair, so the policy and its prediction both kept
+nothing on every seed. MK11 was run alone because it reaches the same tests
+as MK7, MK8 and MK9.
+
 
 **Ruled 2026-10-22: E1–E11 agreed as recommended.** E9 took option (a).
 

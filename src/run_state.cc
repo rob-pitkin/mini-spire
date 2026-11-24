@@ -2428,6 +2428,11 @@ void RunState::begin_event(EventId id) {
     case EventId::Mushrooms:
       event.hp_amount = truncated_share(max_hp, 0.25f);  // Eat's heal
       break;
+    case EventId::MatchAndKeep:
+      // Auto-resolved (v2-spec §9): its screens are Play, Continue and Leave,
+      // each the only option, and the game between them is the engine's.
+      resolve_match_and_keep(match_and_keep_board());
+      break;
     case EventId::WeMeetAgain: {
       // Three offers, rolled in this order, each only when there is something
       // to offer (getRandomPotion and getRandomNonBasicCard return null on an
@@ -2461,9 +2466,9 @@ void RunState::begin_event(EventId id) {
       break;
   }
 
-  // Nothing to decide: the event ends. Until events steps 4-5 land, that
-  // includes the events they build, which a `?` can already draw (events.md
-  // §8).
+  // Nothing to decide: the event ends. Lab, Wheel of Change, Match and Keep
+  // and Bonfire Spirits always end here (their screens each have one option,
+  // events.md §3.2); Bonfire Spirits' room exit waits for its offer.
   if (event_options().empty()) finish_event();
 }
 
@@ -2559,8 +2564,7 @@ std::vector<EventOption> RunState::event_options() const {
     case EventId::Mushrooms:
       return {O::MushroomsStomp, O::MushroomsEat};
     default:
-      // No decision (Bonfire Spirits, Wheel of Change, Lab), or Match and
-      // Keep, built in events step 5.
+      // No decision: Bonfire Spirits, Wheel of Change, Lab, Match and Keep.
       return {};
   }
 }
@@ -3015,7 +3019,7 @@ bool RunState::choose_event_option(EventOption option) {
       break;
 
     default:
-      return false;  // Match and Keep, built in events step 5
+      return false;  // not an option event_options offers
   }
   finish_event();
   return true;
@@ -3064,6 +3068,59 @@ void RunState::search_dead_adventurer(int roll) {
   }
   // After the third, only "Leave" is left, which advances on its own.
   if (event.attempts >= kDeadAdventurerRewards) finish_event();
+}
+
+std::vector<CardId> play_match_and_keep(std::vector<CardId> board,
+                                        std::mt19937& rng, int attempts) {
+  std::vector<CardId> kept;
+  // Twelve cards and five attempts never leave fewer than two; the guard is
+  // for a board a caller builds smaller.
+  for (int a = 0; a < attempts && board.size() >= 2; ++a) {
+    // Two different face-down cards: the second is drawn from the rest.
+    const int n = static_cast<int>(board.size());
+    const int first = std::uniform_int_distribution<int>(0, n - 1)(rng);
+    int second = std::uniform_int_distribution<int>(0, n - 2)(rng);
+    if (second >= first) ++second;
+    // Not a pair: both turn back over, and nothing is remembered.
+    if (board[first] != board[second]) continue;
+    kept.push_back(board[first]);
+    board.erase(board.begin() + std::max(first, second));
+    board.erase(board.begin() + std::min(first, second));
+  }
+  return kept;
+}
+
+std::vector<CardId> RunState::match_and_keep_board() {
+  // initializeCards' order. getCard draws the class pools, so Prismatic
+  // Shard does not widen them; getCurse is CURSE_POOL; the start card is Bash.
+  // StS draws the colorless card on shuffleRng and the rest on cardRng; the
+  // engine's cards use the floor's card stream (E3).
+  std::mt19937 rng = make_stream(run_seed, RngStream::CardReward,
+                                 static_cast<uint32_t>(floor));
+  std::vector<CardId> board;
+  board.push_back(draw_from(IRONCLAD_RARE_POOL, rng));
+  board.push_back(draw_from(IRONCLAD_UNCOMMON_POOL, rng));
+  board.push_back(draw_from(IRONCLAD_COMMON_POOL, rng));
+  board.push_back(draw_from(COLORLESS_UNCOMMON_POOL, rng));
+  board.push_back(draw_from(CURSE_POOL, rng));
+  board.push_back(CardId::Bash);
+  // Each card, then its copy (makeStatEquivalentCopy).
+  const std::vector<CardId> firsts = board;
+  board.insert(board.end(), firsts.begin(), firsts.end());
+  return board;
+}
+
+void RunState::resolve_match_and_keep(std::vector<CardId> board) {
+  std::shuffle(board.begin(), board.end(), event_rng_for_floor());
+  std::mt19937 rng = make_stream(run_seed, RngStream::AutoResolve,
+                                 static_cast<uint32_t>(floor));
+  // A match obtains makeCopy(), an unupgraded card, through
+  // ShowCardAndObtainEffect: Omamori may stop a curse, and the Eggs upgrade
+  // it in onObtainCard. add_card is that path.
+  for (CardId id : play_match_and_keep(std::move(board), rng,
+                                       kMatchAndKeepAttempts)) {
+    add_card(Card{id});
+  }
 }
 
 void RunState::take_event_damage(int amount, EventDamage kind) {

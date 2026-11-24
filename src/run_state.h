@@ -216,6 +216,15 @@ enum class DeckCardRarity : uint8_t {
 };
 DeckCardRarity deck_card_rarity(CardId id);
 
+// Match and Keep's auto-resolve policy (v2-spec §9, Rob E9 (a)): each of
+// `attempts` turns over two of the cards left on `board`, chosen uniformly,
+// with no memory of earlier attempts. Two cards with the same id are a pair
+// (GremlinMatchGame compares cardID): they leave the board and are kept.
+// Returns the kept ids in the order matched. Pure, so the policy is tested on
+// boards the test builds.
+std::vector<CardId> play_match_and_keep(std::vector<CardId> board,
+                                        std::mt19937& rng, int attempts);
+
 // What a transform of `id` can become (AbstractDungeon.transformCard): a class
 // card any common, uncommon or rare Ironclad card but itself; a colorless card
 // any colorless card but itself; a curse any curse in CURSE_POOL but itself.
@@ -902,6 +911,18 @@ struct RunState {
   // otherwise the next reward, and the event ends after the third. Public so
   // both outcomes and the boundary are tested without depending on the draw.
   void search_dead_adventurer(int roll);
+
+  // Match and Keep's twelve cards, unshuffled (initializeCards at Ascension
+  // 0): a rare, an uncommon and a common class card, an uncommon colorless
+  // card, a curse, and Bash, each twice. Drawn on the floor's card stream.
+  std::vector<CardId> match_and_keep_board();
+
+  // Plays Match and Keep on `board`: shuffled on the floor's event stream, as
+  // the constructor shuffles it, then play_match_and_keep on the AutoResolve
+  // stream, each kept card obtained through add_card (ShowCardAndObtainEffect:
+  // Omamori, then onObtainCard). Public so the obtain is tested on a board the
+  // test builds.
+  void resolve_match_and_keep(std::vector<CardId> board);
 
   // The floor's generator for an event's own rolls, made from (seed,
   // EventMisc, floor) on the floor's first draw and continued after that.
